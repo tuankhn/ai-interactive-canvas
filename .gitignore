@@ -15,6 +15,10 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
+**/.pytest_cache/
+**/.pytest_cache
+backend/.pytest_cache/
+
 
 # Node / Frontend
 node_modules/
