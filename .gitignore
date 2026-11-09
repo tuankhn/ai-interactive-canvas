@@ -1,7 +1,11 @@
 # Local task packages & SRS/template files (không đẩy lên repo chung)
 chia_task_sprint1/
-SRS_AI_Interactive_Canvas_IEEE830.docx
-task-template.xlsx
+*.docx
+*.doc
+*.xlsx
+*.xls
+~$*
+
 
 # Python
 __pycache__/
