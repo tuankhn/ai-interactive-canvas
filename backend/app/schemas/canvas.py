@@ -54,10 +54,10 @@ class PreprocessCanvasResponse(BaseModel):
     processed_base64: str
     has_strokes: bool
     bounding_box: List[int]  # [x, y, width, height]
-    background_type: str  # DARK_BOARD | LIGHT_BOARD
     original_dimensions: List[int]
     processed_dimensions: List[int]
     original_size_kb: float
     processed_size_kb: float
     compression_ratio_percent: float
+
 
