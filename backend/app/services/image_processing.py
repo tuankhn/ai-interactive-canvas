@@ -1,7 +1,6 @@
 # ==============================================================================
-# MODULE TIỀN XỬ LÝ ẢNH BẢNG VẼ BẰNG OPENCV VÀ PILLOW (TASK TF28506)
-# Phụ trách: Nguyễn Ngọc Gia Bảo (AI / Backend)
-# Tối ưu chuyên biệt cho Digital Smartboard Canvas
+# MODULE TIỀN XỬ LÝ ẢNH CANVAS TRÊN MÀN HÌNH TƯƠNG TÁC THÔNG MINH ALL-IN-ONE
+# (TASK TF28506) - Phụ trách: Nguyễn Ngọc Gia Bảo (AI / Backend)
 # ==============================================================================
 
 import base64
@@ -30,16 +29,14 @@ except ImportError:
 
 class ImageProcessingService:
     """
-    Dịch vụ tiền xử lý ảnh Canvas kỹ thuật số trên Bảng thông minh (Smartboard):
-    1. Nhận ảnh xuất từ Canvas (Base64 string hoặc Binary bytes).
-    2. Khử nhiễu, làm mịn nét bút cảm ứng (Stylus smoothing / Bilateral filter).
-    3. Tăng cường độ tương phản cho nét chữ viết tay.
-    4. Tự động phát hiện Bounding Box của toàn bộ nét vẽ và Cắt sát (Crop) vùng nội dung.
-    5. Nén ảnh và giảm dung lượng payload (60-85%) trước khi gửi sang AI Gemini / Mathpix.
+    Dịch vụ tiền xử lý nét vẽ kỹ thuật số trên Màn hình tương tác thông minh All-in-one:
+    1. Tiếp nhận ảnh Canvas (Base64 string hoặc Binary bytes) xuất từ màn hình cảm ứng All-in-one.
+    2. Khử răng cưa và làm mịn nét vẽ kỹ thuật số (Bilateral Filter / Smoothing).
+    3. Tăng cường độ tương phản giữa nét vẽ cảm ứng và nền hiển thị.
+    4. Tự động phát hiện Bounding Box của toàn bộ nét vẽ và Cắt sát (Crop) nội dung,
+       loại bỏ không gian trống lớn của màn hình độ phân giải 4K/FullHD.
+    5. Nén WebP và thu nhỏ dung lượng payload (giảm 60-85%) giúp AI Gemini/Mathpix phản hồi dưới 2 giây.
     """
-
-    # Màu nền mặc định của Bảng phấn thông minh: #1a2e26 (R:26, G:46, B:38)
-    CHALKBOARD_BG_COLOR = (26, 46, 38)
 
     @staticmethod
     def decode_input_to_image(image_input: Union[str, bytes, Image.Image]) -> Image.Image:
@@ -99,17 +96,17 @@ class ImageProcessingService:
     @classmethod
     def denoise_and_enhance(cls, pil_img: Image.Image) -> Image.Image:
         """
-        Khử nhiễu hạt và làm rõ biên độ nét bút cảm ứng trên bảng thông minh.
+        Khử răng cưa từ cảm ứng màn hình và tăng độ tương phản nét vẽ kỹ thuật số.
         Sử dụng OpenCV Bilateral Filter + CLAHE nếu có, hoặc Pillow Autocontrast.
         """
         if HAS_OPENCV and HAS_NUMPY:
             cv_img = cls.pil_to_cv2(pil_img)
             gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY) if len(cv_img.shape) == 3 else cv_img
 
-            # Khử nhiễu mịn nhưng giữ sắc cạnh nét chữ
+            # Khử răng cưa nét cảm ứng nhưng giữ sắc nét biên dạng
             denoised = cv2.bilateralFilter(gray, d=7, sigmaColor=50, sigmaSpace=50)
 
-            # Cân bằng tương phản thích ứng cục bộ (CLAHE)
+            # Tăng độ tương phản thích ứng (CLAHE)
             clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
             enhanced = clahe.apply(denoised)
             return cls.cv2_to_pil(enhanced)
@@ -128,7 +125,7 @@ class ImageProcessingService:
         min_stroke_area: int = 15
     ) -> Tuple[Optional[Tuple[int, int, int, int]], bool]:
         """
-        Tìm hộp bao quanh (Bounding Box) chứa toàn bộ các nét vẽ tay trên màn hình Bảng thông minh.
+        Xác định hộp bao quanh (Bounding Box) chứa toàn bộ các nét vẽ cảm ứng trên Màn hình All-in-one.
         Trả về: (x, y, w, h), has_strokes (True/False)
         """
         img_w, img_h = pil_img.size
@@ -137,10 +134,10 @@ class ImageProcessingService:
             cv_img = cls.pil_to_cv2(pil_img)
             gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY) if len(cv_img.shape) == 3 else cv_img
 
-            # Tách nét vẽ kỹ thuật số ra khỏi nền bảng tối màu
+            # Phân tách nét vẽ kỹ thuật số ra khỏi nền hiển thị
             _, mask = cv2.threshold(gray, stroke_threshold, 255, cv2.THRESH_BINARY)
 
-            # Khử chấm điểm li ti bằng toán tử hình thái học Morphological
+            # Khử nhiễu pixel cô lập bằng phép toán hình thái học
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
             clean_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
             clean_mask = cv2.morphologyEx(clean_mask, cv2.MORPH_CLOSE, kernel)
@@ -171,7 +168,7 @@ class ImageProcessingService:
 
             all_x1, all_y1, all_x2, all_y2 = bbox
 
-        # Áp dụng khoảng đệm an toàn (Padding) để nét chữ không bị sát lề
+        # Khoảng đệm an toàn (Padding) quanh vùng nét vẽ
         final_x1 = max(0, all_x1 - padding)
         final_y1 = max(0, all_y1 - padding)
         final_x2 = min(img_w, all_x2 + padding)
@@ -184,7 +181,7 @@ class ImageProcessingService:
 
     @classmethod
     def resize_max_dimension(cls, pil_img: Image.Image, max_dim: int = 1280) -> Image.Image:
-        """Thu nhỏ ảnh kích thước 4K/FullHD của Smartboard về mức tối ưu cho AI"""
+        """Chuẩn hóa kích thước màn hình All-in-one (4K/FullHD) về kích thước tối ưu cho AI Vision"""
         w, h = pil_img.size
         if max(w, h) <= max_dim:
             return pil_img
@@ -207,32 +204,32 @@ class ImageProcessingService:
         output_format: str = "WEBP"
     ) -> Dict[str, Any]:
         """
-        Quy trình tiền xử lý ảnh Canvas trên Smartboard trước khi gửi sang AI:
-        1. Nhận dữ liệu ảnh từ Canvas Bảng thông minh.
-        2. Tìm Bounding Box của toàn bộ nét vẽ tay trên màn hình.
-        3. Cắt sát vùng có chữ (Crop) để loại bỏ phần không gian bảng trống.
-        4. Khử nhiễu nét bút và tăng cường độ tương phản.
-        5. Chuẩn hóa độ phân giải tối đa và nén ảnh WebP.
-        6. Giảm 60-85% dung lượng payload gửi lên API Gemini / Mathpix.
+        Quy trình tiền xử lý ảnh hoàn chỉnh cho Màn hình tương tác thông minh All-in-one:
+        1. Nhận dữ liệu ảnh từ Canvas màn hình cảm ứng All-in-one.
+        2. Tự động xác định Bounding Box của toàn bộ nét vẽ tay.
+        3. Cắt sát vùng có nét vẽ (Crop), loại bỏ hoàn toàn khoảng trống của màn hình 4K/FullHD.
+        4. Khử răng cưa và làm rõ độ tương phản nét viết.
+        5. Thu nhỏ độ phân giải tối đa (max 1280px) và nén định dạng WebP.
+        6. Giảm 60-85% dung lượng payload gửi sang API AI Gemini / Mathpix.
         """
         pil_original = cls.decode_input_to_image(image_input)
         orig_w, orig_h = pil_original.size
 
-        # Đo dung lượng gốc trước xử lý
+        # Đo dung lượng ban đầu
         orig_buffer = BytesIO()
         pil_original.save(orig_buffer, format="PNG")
         original_size_bytes = len(orig_buffer.getvalue())
 
-        # Tìm tọa độ nét vẽ trên bảng
+        # Tìm tọa độ nét vẽ trên màn hình tương tác
         bbox, has_strokes = cls.find_strokes_bounding_box(
             pil_original, padding=padding
         )
 
         if has_strokes and bbox:
             x, y, w, h = bbox
-            # Cắt sát vùng có nét chữ
+            # Cắt sát vùng nội dung có nét vẽ
             cropped_img = pil_original.crop((x, y, x + w, y + h))
-            # Khử nhiễu và tăng tương phản
+            # Khử răng cưa và tăng tương phản
             enhanced_img = cls.denoise_and_enhance(cropped_img)
             if enhanced_img.mode != "RGB":
                 enhanced_img = enhanced_img.convert("RGB")
@@ -240,7 +237,7 @@ class ImageProcessingService:
             final_img = cls.resize_max_dimension(enhanced_img, max_dim=max_dim)
             bounding_box_result = list(bbox)
         else:
-            # Bảng trống không có nét vẽ
+            # Màn hình chưa có nét vẽ
             final_img = cls.resize_max_dimension(pil_original, max_dim=max_dim)
             bounding_box_result = [0, 0, orig_w, orig_h]
             has_strokes = False
