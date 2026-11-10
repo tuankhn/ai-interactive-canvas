@@ -19,6 +19,13 @@ class Settings:
     MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "board-snapshots")
     MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "false").lower() == "true"
 
+    SNAPSHOT_DIR: str = os.getenv("SNAPSHOT_DIR", "uploads/snapshots")
+
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "super_secret_jwt_key_for_development_purposes_only_32bytes")
+    ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "14"))
+
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     MATHPIX_APP_ID: str = os.getenv("MATHPIX_APP_ID", "")

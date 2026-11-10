@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 
 
 class RequestOTPRequest(BaseModel):
@@ -26,12 +26,11 @@ class TokenResponse(BaseModel):
 
 
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     full_name: str
     email: Optional[str]
     phone_number: str
     role: str
     is_active: bool
-
-    class Config:
-        from_attributes = True

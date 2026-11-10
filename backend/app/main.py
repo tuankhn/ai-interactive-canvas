@@ -34,9 +34,16 @@ try:
 except ImportError:
     pass
 
+try:
+    from app.api.auth_router import router as auth_router
+    app.include_router(auth_router)
+except ImportError:
+    pass
+
 active_connections: Dict[str, List[WebSocket]] = {}
 
 
+@app.get("/health", tags=["System Health"])
 @app.get("/api/v1/health", tags=["System Health"])
 async def health_check():
     """Kiểm tra trạng thái hoạt động của FastAPI, PostgreSQL 16+, Redis 7+ và MinIO."""

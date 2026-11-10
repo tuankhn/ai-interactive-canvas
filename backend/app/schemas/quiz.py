@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class AnswerOptionCreate(BaseModel):
@@ -10,10 +10,9 @@ class AnswerOptionCreate(BaseModel):
 
 
 class AnswerOptionOut(AnswerOptionCreate):
-    id: str
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: str
 
 
 class QuestionCreate(BaseModel):
@@ -24,14 +23,13 @@ class QuestionCreate(BaseModel):
 
 
 class QuestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     content: str
     question_type: str
     explanation: Optional[str]
     options: List[AnswerOptionOut] = []
-
-    class Config:
-        from_attributes = True
 
 
 class GradeMCQRequest(BaseModel):
