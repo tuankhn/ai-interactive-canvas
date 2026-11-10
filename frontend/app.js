@@ -745,7 +745,7 @@ ui.width.addEventListener('input', syncWidthSelection);
 document.querySelectorAll('[data-color]').forEach((button) => {
   button.addEventListener('click', () => {
     ui.color.value = button.dataset.color;
-    syncColorSelection();
+    syncColorSelection(); 
   });
 });
 document.querySelectorAll('[data-width]').forEach((button) => {
