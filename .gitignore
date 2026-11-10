@@ -2,6 +2,14 @@
 chia_task_sprint1/
 SRS_AI_Interactive_Canvas_IEEE830.docx
 task-template.xlsx
+*.docx
+*.xlsx
+~$*
+
+# Test results and temporary test output
+ket_qua_test/
+demo_output/
+test_results/
 
 # Python
 __pycache__/
@@ -9,8 +17,14 @@ __pycache__/
 *$py.class
 .venv/
 venv/
+backend/venv/
 env/
 .pytest_cache/
+**/.pytest_cache/
+backend/.pytest_cache/
+
+# Uploads & temporary snapshots
+uploads/
 
 # Node / Frontend
 node_modules/

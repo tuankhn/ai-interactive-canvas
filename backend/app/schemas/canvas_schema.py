@@ -16,6 +16,9 @@ class RecognizeRequest(BaseModel):
     page_number: int = Field(default=1, ge=1)
     image_base64: str = Field(..., description="Chuỗi ảnh vùng vẽ Canvas dạng Base64 (PNG/WebP)")
     stroke_hint: Optional[str] = Field(default=None, description="Gợi ý văn bản/biểu thức nếu có")
+    debounce_ms: int = Field(default=800, description="Thời gian dừng bút (debounce ms) trước khi gửi nhận diện")
+    provider: str = Field(default="auto", description="Bộ nhận diện: auto (kết hợp), gemini (Gemini 2.5 Flash), mathpix (Mathpix OCR)")
+    grade_level: Optional[str] = Field(default="THPT", description="Khối lớp (THCS, THPT)")
 
 
 class PreprocessInfo(BaseModel):
@@ -24,6 +27,12 @@ class PreprocessInfo(BaseModel):
     bounding_box: BoundingBox
     processed_base64: str
     size_reduction_percent: float
+
+
+class AmbiguousItem(BaseModel):
+    token: str
+    confidence: float
+    suggestions: List[str]
 
 
 class RecognizeResponse(BaseModel):
@@ -36,9 +45,13 @@ class RecognizeResponse(BaseModel):
     latex: str
     confidence: float
     needs_correction: bool
-    suggestions: List[str]
+    suggestions: List[str] = Field(default_factory=list)
+    ambiguous_tokens: List[Dict[str, Any]] = Field(default_factory=list)
     latency_ms: int
+    debounce_ms: int = 800
     preprocess: PreprocessInfo
+    visualization: Optional[Dict[str, Any]] = None
+    explanation: Optional[str] = None
 
 
 class PageSaveRequest(BaseModel):
