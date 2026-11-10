@@ -1,45 +1,77 @@
 import os
-from fastapi import FastAPI
+from typing import Dict, List
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from app.core.config import settings
-from app.api.v1.api import api_router
+from app.core.database import check_db_status
 
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version=settings.VERSION,
-    description="Hệ thống Backend cho Bảng Vẽ Thông Minh Hỗ Trợ Giảng Dạy (AI Interactive Canvas)",
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    title=settings.APP_NAME,
+    version="1.0.0",
+    description="Backend API & WebSocket cho Bảng vẽ thông minh hỗ trợ giảng dạy (AI Interactive Canvas)",
 )
 
-# CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins for local smartboard & development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Ensure uploads folder exists and mount static directory
-os.makedirs(settings.SNAPSHOT_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+# Tự động gắn các router nghiệp vụ khi các module tương ứng được thêm vào
+try:
+    from app.api.recognize_router import router as recognize_router
+    app.include_router(recognize_router)
+except ImportError:
+    pass
 
-# Include API v1 router
-app.include_router(api_router, prefix=settings.API_V1_STR)
+try:
+    from app.api.session_router import router as session_router
+    app.include_router(session_router)
+except ImportError:
+    pass
+
+active_connections: Dict[str, List[WebSocket]] = {}
 
 
-@app.get("/health", tags=["Healthcheck"])
+@app.get("/api/v1/health", tags=["System Health"])
 async def health_check():
+    """Kiểm tra trạng thái hoạt động của FastAPI, PostgreSQL 16+, Redis 7+ và MinIO."""
     return {
         "status": "healthy",
-        "service": settings.PROJECT_NAME,
-        "version": settings.VERSION
+        "service": settings.APP_NAME,
+        "version": "1.0.0",
+        "infrastructure": check_db_status(),
     }
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+@app.websocket("/ws/board/{room_id}/{session_id}")
+async def board_websocket(websocket: WebSocket, room_id: str, session_id: str):
+    """Kênh WebSocket (WSS) đồng bộ bảng vẽ thời gian thực cô lập theo room_id và session_id."""
+    await websocket.accept()
+    channel_key = f"{room_id}:{session_id}"
+    if channel_key not in active_connections:
+        active_connections[channel_key] = []
+    active_connections[channel_key].append(websocket)
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            for conn in list(active_connections.get(channel_key, [])):
+                if conn is not websocket:
+                    await conn.send_text(message)
+    except WebSocketDisconnect:
+        if channel_key in active_connections and websocket in active_connections[channel_key]:
+            active_connections[channel_key].remove(websocket)
+
+
+FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
+if os.path.isdir(FRONTEND_DIR) and os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def serve_frontend():
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))

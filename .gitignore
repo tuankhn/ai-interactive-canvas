@@ -1,11 +1,7 @@
 # Local task packages & SRS/template files (không đẩy lên repo chung)
 chia_task_sprint1/
-*.docx
-*.doc
-*.xlsx
-*.xls
-~$*
-
+SRS_AI_Interactive_Canvas_IEEE830.docx
+task-template.xlsx
 
 # Python
 __pycache__/
@@ -15,10 +11,6 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
-**/.pytest_cache/
-**/.pytest_cache
-backend/.pytest_cache/
-
 
 # Node / Frontend
 node_modules/
@@ -31,15 +23,3 @@ build/
 .DS_Store
 Thumbs.db
 *.log
-
-# Test outputs & Temporary images
-ket_qua_test/
-demo_output/
-test_results/
-backend/ket_qua_test/
-backend/demo_output/
-backend/uploads/
-uploads/
-*.tmp
-*.temp
-

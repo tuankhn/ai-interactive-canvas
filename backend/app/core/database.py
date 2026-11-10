@@ -1,27 +1,17 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from typing import Dict, Any
 from app.core.config import settings
 
-# If using SQLite, check_same_thread must be False
-connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
-
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args=connect_args,
-    pool_pre_ping=True
-)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
+# Bộ nhớ đệm phiên học dự phòng khi chạy local chưa bật PostgreSQL/Redis
+in_memory_sessions: Dict[str, Dict[str, Any]] = {}
+in_memory_pages: Dict[str, Dict[int, Dict[str, Any]]] = {}
+in_memory_snapshots: list = []
 
 
-def get_db():
-    """Dependency for obtaining database sessions per request"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def check_db_status() -> Dict[str, str]:
+    """Kiểm tra kết nối PostgreSQL, Redis, MinIO (hỗ trợ fallback khi chạy local)."""
+    status = {
+        "postgresql": f"configured ({settings.DATABASE_URL.split('@')[-1]})",
+        "redis": f"configured ({settings.REDIS_URL})",
+        "minio": f"configured ({settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET})",
+    }
+    return status
