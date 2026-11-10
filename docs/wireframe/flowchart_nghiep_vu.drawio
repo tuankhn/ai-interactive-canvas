@@ -1,0 +1,94 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Luồng nghiệp vụ" id="flow1">
+    <mxGraphModel dx="1471" dy="801" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="lane0" parent="1" style="swimlane;horizontal=1;startSize=40;fontStyle=1;fontSize=14;" value="Bảng vẽ tại lớp (giáo viên)" vertex="1">
+          <mxGeometry height="1180" width="320" x="30" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lane1" parent="1" style="swimlane;horizontal=1;startSize=40;fontStyle=1;fontSize=14;" value="Máy chủ" vertex="1">
+          <mxGeometry height="1180" width="320" x="370" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lane2" parent="1" style="swimlane;horizontal=1;startSize=40;fontStyle=1;fontSize=14;" value="Cổng xem lại tại nhà (học sinh, phụ huynh)" vertex="1">
+          <mxGeometry height="1180" width="320" x="710" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="start" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontStyle=1;" value="Bắt đầu" vertex="1">
+          <mxGeometry height="50" width="120" x="130" y="75" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="1. Giáo viên đăng nhập, chọn lớp, bấm Bắt đầu phiên học" vertex="1">
+          <mxGeometry height="70" width="300" x="40" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="2. Tạo phiên: cấp session_id và room_id riêng cho lớp, trạng thái active" vertex="1">
+          <mxGeometry height="70" width="300" x="380" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="3. Vẽ, viết, chèn hình trên bảng; nét vẽ gửi lên liên tục" vertex="1">
+          <mxGeometry height="70" width="300" x="40" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="4. Nhận nét vẽ, lưu theo room_id của lớp" vertex="1">
+          <mxGeometry height="70" width="300" x="380" y="440" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="5. Chụp snapshot theo chu kỳ hoặc khi bấm Chụp" vertex="1">
+          <mxGeometry height="70" width="300" x="40" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="s6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="6. Lưu snapshot (ảnh và dữ liệu) vào phiên" vertex="1">
+          <mxGeometry height="70" width="300" x="380" y="620" as="geometry" />
+        </mxCell>
+        <mxCell id="s7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="7. Cộng điểm cho học sinh, bấm Kết thúc phiên" vertex="1">
+          <mxGeometry height="70" width="300" x="40" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="s8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="8. Ghi lịch sử cộng điểm, đóng phiên, trạng thái ended" vertex="1">
+          <mxGeometry height="70" width="300" x="380" y="800" as="geometry" />
+        </mxCell>
+        <mxCell id="s9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="9. Học sinh hoặc phụ huynh đăng nhập, xem lịch học" vertex="1">
+          <mxGeometry height="70" width="300" x="720" y="890" as="geometry" />
+        </mxCell>
+        <mxCell id="s10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="10. Chọn phiên đã kết thúc, xem lại snapshot theo thời gian" vertex="1">
+          <mxGeometry height="70" width="300" x="720" y="980" as="geometry" />
+        </mxCell>
+        <mxCell id="s11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fontSize=13;" value="11. Xem điểm cộng và lịch sử điểm của con" vertex="1">
+          <mxGeometry height="70" width="300" x="720" y="1070" as="geometry" />
+        </mxCell>
+        <mxCell id="end" parent="1" style="ellipse;whiteSpace=wrap;html=1;fontStyle=1;" value="Kết thúc" vertex="1">
+          <mxGeometry height="50" width="120" x="810" y="1160" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" edge="1" parent="1" source="start" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="s1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="s2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="s3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="s4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="s5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="s6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="s7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="s8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="s9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="s10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="s11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="s11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" target="end">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
