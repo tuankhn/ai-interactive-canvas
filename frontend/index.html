@@ -4,18 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#202d66">
-  <meta name="description" content="Bảng vẽ tương tác với bút Stylus, công cụ hình học, tẩy, thước kẻ ảo và quản lý trang vẽ.">
-  <title>Bảng vẽ lớp học | AI Interactive Canvas</title>
+  <meta name="description" content="Bảng vẽ tương tác tích hợp AI nhận diện chữ viết tay và công thức LaTeX (Gemini 2.5 Flash & Mathpix OCR).">
+  <title>Bảng vẽ thông minh tích hợp AI | AI Interactive Canvas</title>
   <link rel="stylesheet" href="./style.css">
+  <!-- KaTeX hỗ trợ hiển thị công thức Toán học trực tiếp trên bảng -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 </head>
 <body> 
   <div class="app"> 
     <header class="topbar">
       <div class="class-meta">
-        <strong>Lớp <span id="className">[TÊN LỚP]</span></strong>
-        <span class="session-meta">Phiên: <span id="sessionId">local-session</span> | Phòng: <span id="roomId">local-room</span></span>
+        <strong>Lớp <span id="className">10A1</span></strong>
+        <span class="session-meta">Phiên: <span id="sessionId">session-10a1</span> | Phòng: <span id="roomId">room-10a1</span></span>
+        <div class="subject-wrapper">
+          <label for="subjectSelect" class="subject-label">Môn học:</label>
+          <select id="subjectSelect" class="subject-select" title="Chọn môn học để AI nhận diện tối ưu">
+            <option value="TOAN" selected>Toán học (LaTeX)</option>
+            <option value="VAT_LY">Vật lý (Công thức/Vector)</option>
+            <option value="HOA_HOC">Hóa học (Phương trình/Chất)</option>
+            <option value="TIENG_ANH">Tiếng Anh (Từ vựng/Khái niệm)</option>
+          </select>
+        </div>
       </div>
       <div class="session-actions">
+        <span class="ai-status-indicator" id="aiStatusIndicator" title="Trạng thái kết nối AI">AI: Sẵn sàng</span>
         <span class="timer" id="sessionTimer">Đang diễn ra 00:00</span>
         <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
       </div>
@@ -23,13 +36,22 @@
 
     <div class="workspace">
       <aside class="toolbar" id="toolbar" aria-label="Thanh công cụ vẽ">
-        <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" aria-pressed="true" title="Bút vẽ">Bút</button>
+        <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" aria-pressed="true" title="Bút vẽ cảm ứng Stylus">Bút</button>
         <button class="tool-button" id="highlighterTool" type="button" data-tool="highlighter" aria-pressed="false" title="Bút dạ quang">Dạ quang</button>
         <button class="tool-button" id="eraserMenu" type="button" aria-controls="eraserOptions" aria-expanded="false" title="Tùy chọn tẩy">Tẩy</button>
         <button class="tool-button" id="shapeMenu" type="button" aria-controls="shapeOptions" aria-expanded="false" title="Chọn hình học">Hình</button>
         <button class="tool-button" id="rulerTool" type="button" data-tool="ruler" aria-pressed="false" title="Thước kẻ ảo theo pixel">Thước</button>
         <button class="tool-button" id="textTool" type="button" data-tool="text" aria-pressed="false" title="Thêm chữ">Chữ</button>
         <button class="tool-button" id="colorMenu" type="button" aria-controls="colorOptions" aria-expanded="false" title="Màu sắc và độ dày nét">Màu</button>
+        
+        <div class="toolbar-divider" role="separator" aria-hidden="true"></div>
+        
+        <!-- Nút kích hoạt nhận diện AI thủ công & Bật/Tắt tự động Debounce 800ms -->
+        <button class="tool-button tool-ai" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini 2.5 Flash / Mathpix) bóc tách công thức">Nhận diện AI</button>
+        <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
+        
+        <div class="toolbar-divider" role="separator" aria-hidden="true"></div>
+
         <button class="tool-button" id="undoButton" type="button" title="Hoàn tác (Ctrl + Z)">Hoàn tác</button>
         <button class="tool-button" id="redoButton" type="button" title="Làm lại (Ctrl + Y)">Làm lại</button>
         <button class="tool-button" id="captureButton" type="button" title="Lưu hình PNG">Chụp</button>
@@ -93,8 +115,42 @@
           <div class="canvas-stage" id="canvasStage">
             <canvas id="boardCanvas" aria-label="Vùng vẽ"></canvas>
             <canvas id="previewCanvas" class="preview-canvas" aria-hidden="true"></canvas>
-            <div class="canvas-hint" id="canvasHint">Vùng vẽ (canvas)</div>
-            <div id="latencyStatus" class="latency-badge" title="Ước tính thời gian từ khi xử lý sự kiện bút/chuột đến khi hoàn thành vẽ khung hình; không bao gồm độ trễ màn hình thực tế">Độ trễ xử lý: -- ms</div>
+            <div class="canvas-hint" id="canvasHint">Vùng vẽ cảm ứng (Smartboard Canvas)</div>
+            <div id="latencyStatus" class="latency-badge" title="Ước tính thời gian từ khi xử lý sự kiện bút/chuột đến khi hoàn thành vẽ khung hình">Độ trễ vẽ: -- ms</div>
+
+            <!-- BẢNG OVERLAY HIỂN THỊ KẾT QUẢ NHẬN DIỆN AI TRÊN MẶT BẢNG (TASK TF28509) -->
+            <section id="aiOverlayPanel" class="ai-overlay-panel" hidden aria-label="Bảng kết quả nhận diện AI">
+              <div class="ai-panel-header">
+                <div class="ai-title-group">
+                  <span class="ai-sparkle-icon">✨</span>
+                  <strong id="aiPanelTitle">AI Nhận Diện Nét Viết</strong>
+                  <span id="aiProviderBadge" class="ai-provider-badge">Gemini 2.5 Flash</span>
+                </div>
+                <div class="ai-meta-group">
+                  <span id="aiConfidenceBadge" class="ai-badge ai-badge-confidence" title="Độ tin cậy">--%</span>
+                  <span id="aiLatencyBadge" class="ai-badge ai-badge-latency" title="Thời gian xử lý API">-- ms</span>
+                  <button id="closeAiPanelBtn" class="ai-close-btn" type="button" aria-label="Đóng bảng kết quả">✕</button>
+                </div>
+              </div>
+              <div class="ai-panel-body">
+                <div id="aiLoadingIndicator" class="ai-loading" hidden>
+                  <div class="ai-spinner" aria-hidden="true"></div>
+                  <span>Đang gửi ảnh nét vẽ lên AI (Debounce 800ms)...</span>
+                </div>
+                <div id="aiResultContent" class="ai-result-content">
+                  <div class="ai-formula-title">Công thức LaTeX nhận diện:</div>
+                  <div id="aiLatexBox" class="ai-latex-box" aria-live="polite">
+                    <div id="aiLatexRendered" class="ai-latex-rendered">Chưa có kết quả</div>
+                    <code id="aiLatexRaw" class="ai-latex-raw">--</code>
+                  </div>
+                  <div id="aiExplanationBox" class="ai-explanation-box"></div>
+                </div>
+              </div>
+              <div class="ai-panel-footer">
+                <button id="insertToBoardBtn" class="ai-btn ai-btn-primary" type="button" title="Chèn văn bản / công thức nhận diện trực tiếp vào vị trí bảng">Chèn vào mặt bảng</button>
+                <button id="reRecognizeBtn" class="ai-btn ai-btn-secondary" type="button" title="Gửi lại ảnh nét vẽ nhận diện">Nhận diện lại</button>
+              </div>
+            </section>
           </div>
         </div>
         <div class="sr-only" role="status" aria-live="polite">
@@ -110,7 +166,7 @@
           <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
           <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
         </div>
-        <p class="student-note">Danh sách minh họa, chưa có kết nối máy chủ.</p>
+        <p class="student-note">Danh sách minh họa lớp học trực tiếp.</p>
       </aside>
     </div>
 
@@ -120,7 +176,7 @@
         <span id="pageIndicator">Trang 1 / 1</span>
         <button id="nextPage" type="button" aria-label="Trang sau">&gt;</button>
       </div>
-      <span class="footer-status" id="footerStatus">Trạng thái: Chỉ lưu trong tab hiện tại · Chưa đồng bộ máy chủ</span>
+      <span class="footer-status" id="footerStatus">Trạng thái: Sẵn sàng kết nối Backend API (/api/v1/recognize)</span>
     </footer>
   </div>
   <script type="module" src="./app.js"></script>

@@ -1,5 +1,5 @@
 # ==============================================================================
-# KIỂM THỬ TỔNG HỢP GHÉP LUỒNG CANVAS VỚI NHẬN DIỆN AI (SPRINT 2 - NGÀY 8)
+# KIỂM THỬ TỔNG HỢP GHÉP LUỒNG CANVAS VỚI NHẬN DIỆN AI (TASK TF28509)
 # Phụ trách: Nguyễn Ngọc Gia Bảo (AI / Backend)
 # ==============================================================================
 
@@ -93,3 +93,51 @@ def test_canvas_alias_quick_recognition():
     assert data["subject"] == "MATH"
     assert "x^2" in data["latex"] or "y = x^2" in data["recognized_text"]
     assert data["visualization"]["type"] == "2D_GRAPH"
+
+
+def test_frontend_serving_index_html():
+    """Kiểm tra máy chủ FastAPI phân phát trực tiếp giao diện Frontend có chứa các phần tử AI (Task TF28509)"""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+    content = response.text
+    assert "aiOverlayPanel" in content
+    assert "aiRecognizeBtn" in content
+    assert "autoAiToggle" in content
+    assert "subjectSelect" in content
+    assert "katex" in content
+
+
+def test_frontend_serving_static_assets():
+    """Kiểm tra phân phát trực tiếp style.css và app.js chứa logic debounce 800ms và nhận diện AI"""
+    resp_css = client.get("/style.css")
+    assert resp_css.status_code == 200
+    assert ".ai-overlay-panel" in resp_css.text
+
+    resp_js = client.get("/app.js")
+    assert resp_js.status_code == 200
+    assert "scheduleAIDebounce" in resp_js.text
+    assert "performAIRecognition" in resp_js.text
+
+
+def test_canvas_multisubject_recognition_flow():
+    """Kiểm tra ghép luồng nhận diện nét vẽ cho nhiều môn học (Lý, Hóa, Anh)"""
+    canvas_b64 = make_canvas_image()
+    subjects = ["VAT_LY", "HOA_HOC", "TIENG_ANH"]
+    for subj in subjects:
+        resp = client.post(
+            "/api/v1/recognize",
+            json={
+                "session_id": "session-demo",
+                "room_id": "room-demo",
+                "subject": subj,
+                "image_base64": canvas_b64,
+                "debounce_ms": 800,
+                "provider": "auto"
+            }
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["subject"] == subj
+        assert len(data["recognized_text"]) > 0
+        assert data["latency_ms"] < 2000

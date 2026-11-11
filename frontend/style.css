@@ -391,3 +391,264 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
 }
+
+/* ==============================================================================
+   CÁC PHẦN TỬ KẾT NỐI VÀ HIỂN THỊ AI (TASK TF28509)
+   ============================================================================== */
+
+.subject-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.subject-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.subject-select {
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--primary);
+  cursor: pointer;
+}
+.ai-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+.ai-status-indicator.is-analyzing {
+  background: #eff6ff;
+  color: #1e40af;
+  border-color: #bfdbfe;
+  animation: pulseAi 1.5s infinite;
+}
+@keyframes pulseAi {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.toolbar-divider {
+  width: 80%;
+  height: 1px;
+  background: #d1d5db;
+  margin: 4px 0;
+}
+
+.tool-ai {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border: 2px solid #3730a3 !important;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.35);
+}
+.tool-ai:hover {
+  filter: brightness(1.1);
+}
+
+.tool-auto-ai {
+  font-size: 10px !important;
+  line-height: 1.2 !important;
+  padding: 2px 4px !important;
+  border: 2px solid #10b981 !important;
+  background: #ecfdf5 !important;
+  color: #065f46 !important;
+  font-weight: 700 !important;
+}
+.tool-auto-ai:not(.is-active) {
+  border-color: #9ca3af !important;
+  background: #f3f4f6 !important;
+  color: #6b7280 !important;
+}
+
+/* OVERLAY PANEL KẾT QUẢ AI NẰM TRỰC TIẾP TRÊN MẶT BẢNG */
+.ai-overlay-panel {
+  position: absolute;
+  top: 16px;
+  left: 20px;
+  z-index: 10;
+  width: min(450px, calc(100% - 40px));
+  background: rgba(255, 255, 255, 0.98);
+  border: 2px solid #4f46e5;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  animation: slideInAi 0.25s ease-out;
+}
+@keyframes slideInAi {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #f5f3ff;
+  border-bottom: 1.5px solid #e0e7ff;
+}
+.ai-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-sparkle-icon {
+  font-size: 16px;
+}
+.ai-title-group strong {
+  font-size: 14px;
+  color: #312e81;
+}
+.ai-provider-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+.ai-meta-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.ai-badge-confidence {
+  background: #dcfce7;
+  color: #166534;
+}
+.ai-badge-latency {
+  background: #f1f5f9;
+  color: #475569;
+}
+.ai-close-btn {
+  background: transparent;
+  border: 0;
+  font-size: 16px;
+  color: #64748b;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ai-close-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.ai-panel-body {
+  padding: 12px 14px;
+}
+.ai-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ai-spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spinAi 0.8s linear infinite;
+}
+@keyframes spinAi {
+  to { transform: rotate(360deg); }
+}
+
+.ai-formula-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4b5563;
+  margin-bottom: 6px;
+}
+.ai-latex-box {
+  background: #fafafa;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.ai-latex-rendered {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  overflow-x: auto;
+}
+.ai-latex-raw {
+  display: block;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #e5e7eb;
+  word-break: break-all;
+}
+.ai-explanation-box {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #374151;
+  background: #f0fdf4;
+  border-left: 3px solid #22c55e;
+  padding: 6px 10px;
+  border-radius: 0 6px 6px 0;
+}
+
+.ai-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+}
+.ai-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 0;
+  cursor: pointer;
+}
+.ai-btn-primary {
+  background: #4f46e5;
+  color: #fff;
+}
+.ai-btn-primary:hover {
+  background: #4338ca;
+}
+.ai-btn-secondary {
+  background: #e5e7eb;
+  color: #374151;
+}
+.ai-btn-secondary:hover {
+  background: #d1d5db;
+}
+

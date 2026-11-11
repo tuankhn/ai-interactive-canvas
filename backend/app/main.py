@@ -79,6 +79,10 @@ FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 if os.path.isdir(FRONTEND_DIR) and os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-    @app.get("/", include_in_schema=False)
-    async def serve_frontend():
+    @app.get("/{file_name:path}", include_in_schema=False)
+    async def serve_frontend(file_name: str = ""):
+        target_path = os.path.join(FRONTEND_DIR, file_name) if file_name else os.path.join(FRONTEND_DIR, "index.html")
+        if os.path.isfile(target_path):
+            return FileResponse(target_path)
         return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
