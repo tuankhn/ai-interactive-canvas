@@ -83,6 +83,15 @@ class GeminiAIService:
             clean_b64 = clean_b64.split(",", 1)[1]
 
         if not self.is_configured:
+            # Thử nạp lại key nếu người dùng vừa mới cập nhật file .env hoặc biến môi trường
+            import os
+            from app.core.config import settings
+            fresh_key = (os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "") or settings.GEMINI_API_KEY).strip()
+            if fresh_key:
+                self.api_key = fresh_key
+                self._init_client()
+
+        if not self.is_configured:
             logger.info("Gemini API Key chưa cấu hình. Kích hoạt Gemini Mock Engine dự phòng.")
             return self._mock_result(subject, clean_b64)
 
@@ -123,11 +132,11 @@ class GeminiAIService:
 
     def _mock_result(self, subject: str, clean_b64: str = "") -> RecognizeCanvasResponse:
         """
-        Dữ liệu mẫu phản hồi tức thì cho môi trường kiểm thử local
-        và đảm bảo độ trễ luôn < 2.0s trên Màn hình tương tác thông minh All-in-one.
+        Dữ liệu mẫu phản hồi tức thì khi CHƯA cấu hình GEMINI_API_KEY.
+        Cảnh báo rõ ràng cho người dùng biết cần điền GEMINI_API_KEY để nhận diện thực tế.
         """
         subj = subject.upper()
-        b64_hash = sum(ord(c) for c in clean_b64[-40:]) if clean_b64 else 0
+        mock_notice = "⚠️ Hệ thống đang chạy chế độ Mock dự phòng (chưa cấu hình GEMINI_API_KEY). Để AI Gemini 2.5 Flash nhận diện nét vẽ thực tế trên bảng, vui lòng cấu hình GEMINI_API_KEY trong file backend/.env."
 
         if "MATH" in subj or "TOAN" in subj:
             return RecognizeCanvasResponse(
@@ -149,6 +158,7 @@ class GeminiAIService:
                     },
                     latex_formula=r"y = x^2 - 4x + 3"
                 ),
+                explanation=mock_notice
             )
 
         elif "PHYS" in subj or "VAT_LY" in subj:
@@ -160,13 +170,13 @@ class GeminiAIService:
                 has_ambiguity=False,
                 ambiguous_tokens=[],
                 visualization=VisualizationData(
-                    type="2D_GRAPH",
-                    engine="plotly",
-                    title="Định luật II Newton: F = ma",
-                    parameters={"slope": 2.0, "x_label": "Gia tốc a (m/s2)", "y_label": "Lực F (N)"},
+                    type="IMAGE_ILLUSTRATION",
+                    engine="image",
+                    title="Minh họa Định luật II Newton (F = m.a)",
+                    parameters={},
                     latex_formula=r"F = m \cdot a"
                 ),
-                explanation="Gia tốc của một vật cùng hướng với lực tác dụng và tỉ lệ thuận với độ lớn của lực."
+                explanation=mock_notice
             )
 
         elif "CHEM" in subj or "HOA" in subj:

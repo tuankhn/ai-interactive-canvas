@@ -1008,7 +1008,10 @@ async function performAIRecognition({ isDebounced = false } = {}) {
 
     // Cập nhật thông tin giao diện kết quả
     if (aiElements.providerBadge) {
-      aiElements.providerBadge.textContent = data.provider || 'Gemini 2.5 Flash';
+      const prov = data.provider || 'Gemini 2.5 Flash';
+      const isMock = prov.toLowerCase().includes('mock');
+      aiElements.providerBadge.textContent = isMock ? 'Chế độ mẫu (Chưa cấu hình API Key)' : prov;
+      aiElements.providerBadge.classList.toggle('is-mock', isMock);
     }
     if (aiElements.confidenceBadge) {
       const confPercent = Math.round((data.confidence || 0.95) * 100);
