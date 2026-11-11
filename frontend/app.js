@@ -56,8 +56,12 @@ let previewFrame = 0;
 let lastInputTime = 0;
 let undoStack = [];
 let redoStack = [];
-let pages = [{ objects: [], background: '#ffffff' }];
+// Mỗi trang được giữ dưới dạng JSON của Fabric; nội dung hiện tại được tự động lưu.
+const PAGE_STORAGE_KEY = 'ai-interactive-canvas:pages:v1';
+const blankPage = () => ({ objects: [], background: '#ffffff' });
+let pages = [blankPage()];
 let pageIndex = 0;
+let pageBusy = false;
 let ended = false;
 
 const surface = fabricCanvas.upperCanvasEl;
@@ -82,8 +86,8 @@ function stateChanged(before) {
 }
 
 function updateHistoryButtons() {
-  $('undoButton').disabled = ended || undoStack.length === 0;
-  $('redoButton').disabled = ended || redoStack.length === 0;
+  $('undoButton').disabled = ended || pageBusy || undoStack.length === 0;
+  $('redoButton').disabled = ended || pageBusy || redoStack.length === 0;
 }
 
 function remember(before) {
@@ -92,6 +96,7 @@ function remember(before) {
   if (undoStack.length > 60) undoStack.shift();
   redoStack = [];
   updateHistoryButtons();
+  persistPages();
   return true;
 }
 
@@ -122,40 +127,184 @@ function restore(state) {
 }
 
 function undo() {
-  if (ended || undoStack.length === 0) return;
+  if (ended || pageBusy || undoStack.length === 0) return;
   redoStack.push(snapshot());
   restore(undoStack.pop());
   updateHistoryButtons();
+  persistPages();
   setStatus('Đã hoàn tác');
 }
 
 function redo() {
-  if (ended || redoStack.length === 0) return;
+  if (ended || pageBusy || redoStack.length === 0) return;
   undoStack.push(snapshot());
   restore(redoStack.pop());
   updateHistoryButtons();
+  persistPages();
   setStatus('Đã làm lại');
+}
+
+// Dữ liệu JSON được lưu riêng cho từng trang, không cần Fabric object còn ở canvas.
+function serializeCurrentPage() {
+  return {
+    objects: fabricCanvas.getObjects().map((object) =>
+      object.toObject(['_hitPoints', '_hitWidth'])
+    ),
+    background: fabricCanvas.backgroundColor || '#ffffff'
+  };
+}
+
+function persistPages() {
+  if (pageBusy) return false;
+  pages[pageIndex] = serializeCurrentPage();
+  try {
+    localStorage.setItem(PAGE_STORAGE_KEY, JSON.stringify({ version: 1, pageIndex, pages }));
+    ui.footer.textContent = 'Trạng thái: Đã tự động lưu trên trình duyệt · Chưa đồng bộ máy chủ';
+    return true;
+  } catch (error) {
+    console.warn('Không thể lưu trang vào localStorage:', error);
+    ui.footer.textContent = 'Cảnh báo: Không thể tự động lưu (có thể đã đầy bộ nhớ)';
+    return false;
+  }
+}
+
+function syncLoadedCanvas() {
+  stage.style.backgroundColor = fabricCanvas.backgroundColor || '#ffffff';
+  syncBackgroundButtons();
+  updateHint();
+  fabricCanvas.requestRenderAll();
+}
+
+// Fabric 6 loadFromJSON trả về Promise, phải await trước khi chuyển tiếp.
+async function loadPageData(data) {
+  const safePage = data && Array.isArray(data.objects) ? data : blankPage();
+  await fabricCanvas.loadFromJSON({
+    objects: safePage.objects,
+    background: safePage.background || '#ffffff'
+  }, (original, object) => {
+    if (!object) return;
+    object.set({ selectable: false, evented: false, objectCaching: false });
+    if (Array.isArray(original._hitPoints)) object._hitPoints = original._hitPoints;
+    if (Number.isFinite(original._hitWidth)) object._hitWidth = original._hitWidth;
+  });
+  syncLoadedCanvas();
 }
 
 function refreshPages() {
   $('pageIndicator').textContent = `Trang ${pageIndex + 1} / ${pages.length}`;
-  $('prevPage').disabled = ended || pageIndex === 0;
-  $('nextPage').disabled = ended;
+  $('prevPage').disabled = ended || pageBusy || pageIndex === 0;
+  $('nextPage').disabled = ended || pageBusy || pageIndex >= pages.length - 1;
+  $('addPageButton').disabled = ended || pageBusy;
+  // Luôn giữ lại ít nhất một trang bảng.
+  $('deletePageButton').disabled = ended || pageBusy || pages.length <= 1;
   updateHistoryButtons();
 }
 
-function switchPage(nextIndex) {
-  if (ended || nextIndex < 0) return;
-  pages[pageIndex] = snapshot();
-  if (nextIndex >= pages.length) {
-    pages.push({ objects: [], background: '#ffffff' });
-  }
-  pageIndex = nextIndex;
-  restore(pages[pageIndex]);
-  undoStack = [];
-  redoStack = [];
+async function switchPage(nextIndex) {
+  if (ended || pageBusy || stroke || nextIndex < 0 ||
+      nextIndex >= pages.length || nextIndex === pageIndex) return;
+
+  pages[pageIndex] = serializeCurrentPage();
+  const oldIndex = pageIndex;
+  pageBusy = true;
+  closePanels();
   refreshPages();
-  setStatus(`Đang ở trang ${pageIndex + 1}`);
+
+  try {
+    await loadPageData(pages[nextIndex]);
+    pageIndex = nextIndex;
+    undoStack = [];
+    redoStack = [];
+    setStatus(`Đang ở trang ${pageIndex + 1}`);
+  } catch (error) {
+    console.error('Không thể chuyển trang:', error);
+    try { await loadPageData(pages[oldIndex]); } catch (restoreError) {
+      console.error('Không thể khôi phục trang cũ:', restoreError);
+    }
+    setStatus('Không thể chuyển trang');
+  } finally {
+    pageBusy = false;
+    refreshPages();
+    persistPages();
+  }
+}
+
+async function addPage() {
+  if (ended || pageBusy || stroke) return;
+  const newPageIndex = pages.length;
+  pages.push(blankPage());
+  await switchPage(newPageIndex);
+  if (pageIndex !== newPageIndex) {
+    // Không giữ trang rỗng nếu khởi tạo/chuyển trang thất bại.
+    pages.splice(newPageIndex, 1);
+    refreshPages();
+    persistPages();
+  }
+}
+
+// Xóa HẲN trang đang mở. Chỉ thực hiện sau khi người dùng xác nhận trong dialog.
+// Nếu còn trang kế tiếp thì mở trang đó; nếu xóa trang cuối thì mở trang trước.
+async function deleteCurrentPage() {
+  if (ended || pageBusy || stroke || pages.length <= 1) return false;
+
+  pages[pageIndex] = serializeCurrentPage();
+  const removedIndex = pageIndex;
+  const removedPage = pages[removedIndex];
+  const targetIndex = removedIndex < pages.length - 1 ? removedIndex + 1 : removedIndex - 1;
+  const targetPage = pages[targetIndex];
+
+  pageBusy = true;
+  closePanels();
+  refreshPages();
+  try {
+    // Chỉ xóa trang khỏi mảng sau khi đã nạp thành công trang kế tiếp.
+    await loadPageData(targetPage);
+    pages.splice(removedIndex, 1);
+    pageIndex = targetIndex > removedIndex ? targetIndex - 1 : targetIndex;
+    undoStack = [];
+    redoStack = [];
+    setStatus(`Đã xóa trang ${removedIndex + 1}; còn ${pages.length} trang`);
+    return true;
+  } catch (error) {
+    console.error('Không thể xóa trang:', error);
+    try { await loadPageData(removedPage); } catch (restoreError) {
+      console.error('Không thể khôi phục trang vừa xóa:', restoreError);
+    }
+    setStatus('Không thể xóa trang. Các trang vẫn được giữ nguyên.');
+    return false;
+  } finally {
+    pageBusy = false;
+    refreshPages();
+    persistPages();
+  }
+}
+
+async function restoreSavedPages() {
+  pageBusy = true;
+  refreshPages();
+  try {
+    const raw = localStorage.getItem(PAGE_STORAGE_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (saved.version === 1 && Array.isArray(saved.pages) && saved.pages.length > 0 &&
+          saved.pages.every((page) => page && Array.isArray(page.objects) && typeof page.background === 'string')) {
+        pages = saved.pages;
+        pageIndex = Number.isInteger(saved.pageIndex)
+          ? Math.max(0, Math.min(saved.pageIndex, pages.length - 1)) : 0;
+        await loadPageData(pages[pageIndex]);
+        setStatus(`Đã khôi phục ${pages.length} trang`);
+      }
+    }
+  } catch (error) {
+    console.warn('Không thể khôi phục dữ liệu đã lưu:', error);
+    pages = [blankPage()];
+    pageIndex = 0;
+    await loadPageData(pages[0]);
+    setStatus('Không thể khôi phục bản lưu cũ');
+  } finally {
+    pageBusy = false;
+    refreshPages();
+  }
 }
 
 function closePanels() {
@@ -222,7 +371,7 @@ function syncWidthSelection() {
 }
 
 function setBackground(color) {
-  if (ended || color === fabricCanvas.backgroundColor) return;
+  if (ended || pageBusy || color === fabricCanvas.backgroundColor) return;
   const before = snapshot();
   fabricCanvas.backgroundColor = color;
   stage.style.backgroundColor = color;
@@ -637,7 +786,7 @@ function finishStroke(commit) {
 }
 
 function pointerDown(event) {
-  if (ended) return;
+  if (ended || pageBusy) return;
   const pointerType = event.pointerType;
   if (pointerType === 'pen') lastPenSeenAt = performance.now();
 
@@ -739,6 +888,71 @@ $('undoButton').addEventListener('click', undo);
 $('redoButton').addEventListener('click', redo);
 $('prevPage').addEventListener('click', () => switchPage(pageIndex - 1));
 $('nextPage').addEventListener('click', () => switchPage(pageIndex + 1));
+$('addPageButton').addEventListener('click', addPage);
+
+const deletePageDialog = $('deletePageDialog');
+const deletePageDialogTitle = $('deletePageDialogTitle');
+const deletePageDialogDescription = $('deletePageDialogDescription');
+const deletePageDialogError = $('deletePageDialogError');
+const cancelDeletePageButton = $('cancelDeletePageButton');
+const deletePageWithoutSavingButton = $('deletePageWithoutSavingButton');
+const saveAndDeletePageButton = $('saveAndDeletePageButton');
+let deleteDialogBusy = false;
+
+function setDeleteDialogBusy(busy) {
+  deleteDialogBusy = busy;
+  cancelDeletePageButton.disabled = busy;
+  deletePageWithoutSavingButton.disabled = busy;
+  saveAndDeletePageButton.disabled = busy;
+  saveAndDeletePageButton.textContent = busy ? 'Đang tạo ảnh...' : 'Lưu ảnh rồi xóa';
+}
+
+deletePageDialog.addEventListener('cancel', (event) => {
+  if (deleteDialogBusy) event.preventDefault();
+});
+
+$('deletePageButton').addEventListener('click', () => {
+  if (ended || pageBusy || stroke || pages.length <= 1) return;
+  closePanels();
+  deletePageDialogTitle.textContent = `Xóa trang ${pageIndex + 1}?`;
+  deletePageDialogDescription.textContent =
+    `Trang ${pageIndex + 1} sẽ biến mất khỏi danh sách và không thể hoàn tác. ` +
+    `${pages.length - 1} trang còn lại sẽ được giữ nguyên.`;
+  deletePageDialogError.textContent = '';
+  deletePageDialogError.hidden = true;
+  deletePageDialog.showModal();
+});
+
+cancelDeletePageButton.addEventListener('click', () => deletePageDialog.close());
+deletePageWithoutSavingButton.addEventListener('click', async () => {
+  if (deleteDialogBusy || pageBusy || ended) return;
+  deletePageDialog.close(); // Chính popup đã là bước xác nhận.
+  await deleteCurrentPage();
+});
+
+saveAndDeletePageButton.addEventListener('click', async () => {
+  if (deleteDialogBusy || pageBusy || ended) return;
+  deletePageDialogError.hidden = true;
+  setDeleteDialogBusy(true);
+  try {
+    const filename = await downloadCurrentPageSnapshot();
+    deletePageDialog.close();
+    // Browser chỉ xác nhận đã yêu cầu tải về, không xác nhận tệp đã nằm trên ổ đĩa.
+    if (window.confirm(`Đã yêu cầu tải ${filename}.\n\n` +
+      `Sau khi kiểm tra ảnh tải về, chọn OK để xóa hẳn trang ${pageIndex + 1}; ` +
+      'chọn Hủy để giữ nguyên trang.')) {
+      await deleteCurrentPage();
+    } else {
+      setStatus('Đã giữ nguyên trang; hãy kiểm tra ảnh đã tải');
+    }
+  } catch (error) {
+    console.error('Không thể tạo snapshot trước khi xóa trang:', error);
+    deletePageDialogError.textContent = error.message || 'Không thể tạo ảnh. Trang chưa bị xóa.';
+    deletePageDialogError.hidden = false;
+  } finally {
+    setDeleteDialogBusy(false);
+  }
+});
 
 ui.color.addEventListener('input', syncColorSelection);
 ui.width.addEventListener('input', syncWidthSelection);
@@ -763,6 +977,7 @@ document.addEventListener('pointerdown', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') { closePanels(); return; }
+  if ($('clearBoardDialog').open || deletePageDialog.open) return;
   const el = document.activeElement;
   if (el?.matches('input,textarea,select') || el?.isContentEditable) return;
   if (!(event.ctrlKey || event.metaKey)) return;
@@ -775,18 +990,93 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-$('clearButton').addEventListener('click', () => {
-  if (ended || fabricCanvas.getObjects().length === 0) return;
-  if (!window.confirm('Xóa toàn bộ nội dung của trang hiện tại?')) return;
+// Chụp ảnh PNG của CHỈ trang đang mở; không tác động đến các trang khác.
+async function downloadCurrentPageSnapshot() {
+  const filename = `snapshot-trang-${pageIndex + 1}-${new Date().toISOString().slice(0, 10)}.png`;
+  const dataUrl = fabricCanvas.toDataURL({ format: 'png', multiplier: 2 });
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = dataUrl;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  return filename;
+}
+
+// Xóa NỘI DUNG trang hiện tại, không xóa trang hay các trang đã tạo.
+// Sử dụng remember() để lưu localStorage và cho phép Hoàn tác ngay trên trang này.
+function clearCurrentPage() {
+  if (ended || pageBusy || stroke) return;
+  const objects = fabricCanvas.getObjects().slice();
+  if (!objects.length) {
+    setStatus(`Trang ${pageIndex + 1} đang trống`);
+    return;
+  }
+
   const before = snapshot();
-  fabricCanvas.remove(...fabricCanvas.getObjects().slice());
+  fabricCanvas.remove(...objects);
   fabricCanvas.requestRenderAll();
-  remember(before);
   updateHint();
-  setStatus('Đã xóa nội dung trang');
+  remember(before); // Ghi vào lịch sử hoàn tác và chỉ cập nhật trang hiện tại trong localStorage.
+  setStatus(`Đã xóa nét vẽ ở trang ${pageIndex + 1}; các trang khác được giữ nguyên`);
+}
+
+const clearDialog = $('clearBoardDialog');
+const clearDialogError = $('clearDialogError');
+const cancelClearButton = $('cancelClearButton');
+const clearWithoutSavingButton = $('clearWithoutSavingButton');
+const saveAndClearButton = $('saveAndClearButton');
+
+function setClearDialogBusy(busy) {
+  cancelClearButton.disabled = busy;
+  clearWithoutSavingButton.disabled = busy;
+  saveAndClearButton.disabled = busy;
+  saveAndClearButton.textContent = busy ? 'Đang tạo snapshot...' : 'Lưu snapshot rồi xóa';
+}
+
+$('clearButton').addEventListener('click', () => {
+  if (ended || pageBusy || stroke) return;
+  if (fabricCanvas.getObjects().length === 0) {
+    setStatus(`Trang ${pageIndex + 1} đang trống`);
+    return;
+  }
+  closePanels();
+  clearDialogError.hidden = true;
+  clearDialogError.textContent = '';
+  clearDialog.showModal();
+});
+
+cancelClearButton.addEventListener('click', () => clearDialog.close());
+clearWithoutSavingButton.addEventListener('click', () => {
+  if (!window.confirm(`Xóa nét vẽ ở trang ${pageIndex + 1} mà không lưu snapshot? Các trang khác sẽ được giữ nguyên.`)) return;
+  clearDialog.close();
+  clearCurrentPage();
+});
+
+saveAndClearButton.addEventListener('click', async () => {
+  if (pageBusy || ended) return;
+  clearDialogError.hidden = true;
+  setClearDialogBusy(true);
+  try {
+    const filename = await downloadCurrentPageSnapshot();
+    clearDialog.close();
+    // Tải xuống được yêu cầu chưa có nghĩa tệp đã lưu thành công trên thiết bị.
+    if (window.confirm(`Đã yêu cầu tải tệp ${filename}.\n\nChọn OK để xóa nét vẽ CHỈ TRÊN TRANG ${pageIndex + 1} sau khi kiểm tra ảnh tải về. Chọn Hủy để giữ nguyên trang hiện tại.`)) {
+      clearCurrentPage();
+    } else {
+      setStatus('Đã giữ nguyên trang hiện tại; bạn có thể kiểm tra snapshot');
+    }
+  } catch (error) {
+    console.error('Lỗi xuất snapshot:', error);
+    clearDialogError.textContent = error.message || 'Không thể lưu snapshot. Bảng chưa bị xóa.';
+    clearDialogError.hidden = false;
+  } finally {
+    setClearDialogBusy(false);
+  }
 });
 
 $('captureButton').addEventListener('click', () => {
+  if (pageBusy || stroke) return;
   closePanels();
   const link = document.createElement('a');
   link.download = `bang-ve-trang-${pageIndex + 1}.png`;
@@ -807,7 +1097,8 @@ const clock = setInterval(() => {
 }, 1000);
 
 $('endSession').addEventListener('click', () => {
-  if (ended || !window.confirm('Kết thúc phiên vẽ trên trình duyệt này?')) return;
+  if (pageBusy || ended || !window.confirm('Kết thúc phiên vẽ trên trình duyệt này?')) return;
+  persistPages();
   ended = true;
   clearInterval(clock);
   closePanels();
@@ -820,8 +1111,14 @@ $('endSession').addEventListener('click', () => {
   });
   $('prevPage').disabled = true;
   $('nextPage').disabled = true;
+  $('addPageButton').disabled = true;
+  $('deletePageButton').disabled = true;
   ui.footer.textContent = 'Phiên đã kết thúc · Chưa đồng bộ máy chủ';
   setStatus('Đã kết thúc phiên');
+});
+
+window.addEventListener('pagehide', () => {
+  if (!pageBusy) persistPages();
 });
 
 // Trạng thái khởi tạo.
@@ -831,3 +1128,4 @@ syncWidthSelection();
 syncBackgroundButtons();
 updateHint();
 refreshPages();
+await restoreSavedPages();
