@@ -9,148 +9,139 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div class="app">
-    <header class="topbar">
-      <div class="class-meta">
-        <strong>Lớp <span id="className">[TÊN LỚP]</span></strong>
-        <span class="session-meta">Phiên: <span id="sessionId">local-session</span> | Phòng: <span id="roomId">local-room</span></span>
-      </div>
-      <div class="session-actions">
-        <span class="timer" id="sessionTimer">Đang diễn ra 00:00</span>
-        <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
-      </div>
-    </header>
-
-    <div class="workspace">
-      <aside class="toolbar" id="toolbar" aria-label="Thanh công cụ vẽ">
-        <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" aria-pressed="true" title="Bút vẽ">Bút</button>
-        <button class="tool-button" id="highlighterTool" type="button" data-tool="highlighter" aria-pressed="false" title="Bút dạ quang">Dạ quang</button>
-        <button class="tool-button" id="eraserMenu" type="button" aria-controls="eraserOptions" aria-expanded="false" title="Tùy chọn tẩy">Tẩy</button>
-        <button class="tool-button" id="shapeMenu" type="button" aria-controls="shapeOptions" aria-expanded="false" title="Chọn hình học">Hình</button>
-        <button class="tool-button" id="rulerTool" type="button" data-tool="ruler" aria-pressed="false" title="Thước kẻ ảo theo pixel">Thước</button>
-        <button class="tool-button" id="textTool" type="button" data-tool="text" aria-pressed="false" title="Thêm chữ">Chữ</button>
-        <button class="tool-button" id="colorMenu" type="button" aria-controls="colorOptions" aria-expanded="false" title="Màu sắc và độ dày nét">Màu</button>
-        <button class="tool-button" id="undoButton" type="button" title="Hoàn tác (Ctrl + Z)">Hoàn tác</button>
-        <button class="tool-button" id="redoButton" type="button" title="Làm lại (Ctrl + Y)">Làm lại</button>
-        <button class="tool-button" id="captureButton" type="button" title="Lưu hình PNG của trang hiện tại">Chụp</button>
-        <button class="tool-button tool-danger" id="clearButton" type="button" title="Xóa nét vẽ ở trang đang mở">Xóa bảng</button>
-
-        <section class="tool-popover" id="eraserOptions" aria-label="Chọn loại tẩy" hidden>
-          <h3>Công cụ tẩy</h3>
-          <p class="popover-help">Chọn kiểu tẩy rồi thao tác trên bảng.</p>
-          <div class="popover-grid">
-            <button class="option-button" id="eraserTool" type="button" data-tool="eraser" aria-pressed="false">Tẩy nét</button>
-            <button class="option-button" id="areaEraserTool" type="button" data-tool="areaEraser" aria-pressed="false">Tẩy vùng</button>
-          </div>
-          <p class="popover-help">Tẩy nét xóa cả nét chạm phải. Tẩy vùng xóa các đối tượng giao với khung chọn.</p>
-        </section>
-
-        <section class="tool-popover" id="shapeOptions" aria-label="Công cụ hình học" hidden>
-          <h3>Vẽ hình nhanh</h3>
-          <div class="popover-grid">
-            <button class="option-button" id="lineTool" type="button" data-tool="line" aria-pressed="false">Đường thẳng</button>
-            <button class="option-button" id="triangleTool" type="button" data-tool="triangle" aria-pressed="false">Tam giác</button>
-            <button class="option-button" id="circleTool" type="button" data-tool="circle" aria-pressed="false">Hình tròn</button>
-            <button class="option-button" id="ellipseTool" type="button" data-tool="ellipse" aria-pressed="false">Hình elip</button>
-          </div>
-          <p class="popover-help">Kéo trên bảng để xác định kích thước hình.</p>
-        </section>
-
-        <section class="tool-popover color-popover" id="colorOptions" aria-label="Tùy chỉnh màu và nét" hidden>
-          <h3>Màu sắc và cỡ nét</h3>
-          <label class="control-label" for="colorPicker">Màu bút</label>
-          <div class="color-input-row">
-            <input id="colorPicker" type="color" value="#172554" aria-label="Chọn màu bút tùy chỉnh">
-            <div class="preset-colors" aria-label="Bảng màu bút">
-              <button class="swatch" type="button" data-color="#172554" style="--swatch:#172554" aria-label="Xanh đậm" title="Xanh đậm"></button>
-              <button class="swatch" type="button" data-color="#ef4444" style="--swatch:#ef4444" aria-label="Đỏ" title="Đỏ"></button>
-              <button class="swatch" type="button" data-color="#16a34a" style="--swatch:#16a34a" aria-label="Xanh lá" title="Xanh lá"></button>
-              <button class="swatch" type="button" data-color="#eab308" style="--swatch:#eab308" aria-label="Vàng" title="Vàng"></button>
-              <button class="swatch" type="button" data-color="#ffffff" style="--swatch:#ffffff" aria-label="Trắng" title="Trắng"></button>
-              <button class="swatch" type="button" data-color="#111827" style="--swatch:#111827" aria-label="Đen" title="Đen"></button>
-            </div>
-          </div>
-          <label class="control-label" for="widthRange">Độ dày nét: <output id="widthValue" for="widthRange">4 px</output></label>
-          <input class="width-range" id="widthRange" type="range" min="1" max="30" value="4">
-          <div class="width-presets" role="group" aria-label="Chọn nhanh cỡ bút">
-            <button type="button" data-width="2">2</button>
-            <button type="button" data-width="4">4</button>
-            <button type="button" data-width="8">8</button>
-            <button type="button" data-width="16">16</button>
-            <button type="button" data-width="24">24</button>
-          </div>
-          <span class="control-label">Màu nền bảng</span>
-          <div class="background-options" role="group" aria-label="Chọn nền bảng">
-            <button type="button" class="background-button is-selected" data-background="#ffffff" aria-pressed="true">Bảng trắng</button>
-            <button type="button" class="background-button" data-background="#111827" aria-pressed="false">Bảng đen</button>
-          </div>
-          <p class="popover-help">Có thể đổi nền ngay cả khi đã vẽ.</p>
-        </section>
-      </aside>
-
-      <main class="board-panel" aria-label="Bảng vẽ lớp học">
-        <div class="canvas-frame">
-          <div class="canvas-stage" id="canvasStage">
-            <canvas id="boardCanvas" aria-label="Vùng vẽ"></canvas>
-            <canvas id="previewCanvas" class="preview-canvas" aria-hidden="true"></canvas>
-            <div class="canvas-hint" id="canvasHint">Vùng vẽ (canvas)</div>
-            <div id="latencyStatus" class="latency-badge" title="Ước tính thời gian từ khi xử lý sự kiện bút/chuột đến khi hoàn thành vẽ khung hình; không bao gồm độ trễ màn hình thực tế">Độ trễ xử lý: -- ms</div>
-          </div>
-        </div>
-        <div class="sr-only" role="status" aria-live="polite">
-          <span id="inputStatus">Chưa có thao tác</span>
-          <span id="saveState">Sẵn sàng</span>
-        </div>
-      </main>
-
-      <aside class="students" aria-label="Học sinh">
-        <h2>Học sinh</h2>
-        <div id="studentList">
-          <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
-          <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
-          <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
-        </div>
-        <p class="student-note">Danh sách minh họa, chưa có kết nối máy chủ.</p>
-      </aside>
+<div class="app">
+  <header class="topbar">
+    <div class="class-meta">
+      <strong>Lớp <span id="className">[TÊN LỚP]</span></strong>
+      <span class="session-meta">Phiên: <span id="sessionId">local-session</span> | Phòng: <span id="roomId">local-room</span></span>
     </div>
+    <div class="session-actions">
+      <span class="timer" id="sessionTimer">Đang diễn ra 00:00</span>
+      <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
+    </div>
+  </header>
+  <div class="workspace">
+    <aside class="toolbar" id="toolbar" aria-label="Thanh công cụ vẽ">
+      <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" aria-pressed="true" title="Bút vẽ">Bút</button>
+      <button class="tool-button" id="highlighterTool" type="button" data-tool="highlighter" aria-pressed="false" title="Bút dạ quang">Dạ quang</button>
+      <button class="tool-button" id="eraserMenu" type="button" aria-controls="eraserOptions" aria-expanded="false" title="Tùy chọn tẩy">Tẩy</button>
+      <button class="tool-button" id="shapeMenu" type="button" aria-controls="shapeOptions" aria-expanded="false" title="Chọn hình học">Hình</button>
+      <button class="tool-button" id="rulerTool" type="button" data-tool="ruler" aria-pressed="false" title="Thước kẻ ảo theo pixel">Thước</button>
+      <button class="tool-button" id="textTool" type="button" data-tool="text" aria-pressed="false" title="Thêm chữ">Chữ</button>
+      <button class="tool-button" id="colorMenu" type="button" aria-controls="colorOptions" aria-expanded="false" title="Màu sắc và độ dày nét">Màu</button>
+      <button class="tool-button" id="undoButton" type="button" title="Hoàn tác (Ctrl + Z)">Hoàn tác</button>
+      <button class="tool-button" id="redoButton" type="button" title="Làm lại (Ctrl + Y)">Làm lại</button>
+      <button class="tool-button" id="captureButton" type="button" title="Lưu hình PNG của trang hiện tại">Chụp</button>
+      <button class="tool-button tool-danger" id="clearButton" type="button" title="Xóa nét vẽ ở trang đang mở">Xóa bảng</button>
 
-    <footer class="footer">
-      <div class="pagination" aria-label="Quản lý các trang bảng">
-        <button id="prevPage" type="button" aria-label="Trang trước" title="Trang trước">&lt;</button>
-        <span id="pageIndicator" aria-live="polite">Trang 1 / 1</span>
-        <button id="nextPage" type="button" aria-label="Trang sau" title="Trang sau">&gt;</button>
-        <button id="addPageButton" class="add-page-button" type="button" title="Thêm trang bảng mới">+ Thêm trang</button>
-        <button id="deletePageButton" class="delete-page-button" type="button" title="Xóa trang hiện tại (không xóa các trang khác)" aria-label="Xóa trang hiện tại">Xóa trang</button>
+      <section class="tool-popover" id="eraserOptions" aria-label="Chọn loại tẩy" hidden>
+        <h3>Công cụ tẩy</h3>
+        <p class="popover-help">Chọn kiểu tẩy rồi thao tác trên bảng.</p>
+        <div class="popover-grid">
+          <button class="option-button" id="eraserTool" type="button" data-tool="eraser" aria-pressed="false">Tẩy nét</button>
+          <button class="option-button" id="areaEraserTool" type="button" data-tool="areaEraser" aria-pressed="false">Tẩy vùng</button>
+        </div>
+        <p class="popover-help">Tẩy nét xóa cả nét chạm phải. Tẩy vùng xóa các đối tượng giao với khung chọn.</p>
+      </section>
+      <section class="tool-popover" id="shapeOptions" aria-label="Công cụ hình học" hidden>
+        <h3>Vẽ hình nhanh</h3>
+        <div class="popover-grid">
+          <button class="option-button" id="lineTool" type="button" data-tool="line" aria-pressed="false">Đường thẳng</button>
+          <button class="option-button" id="triangleTool" type="button" data-tool="triangle" aria-pressed="false">Tam giác</button>
+          <button class="option-button" id="circleTool" type="button" data-tool="circle" aria-pressed="false">Hình tròn</button>
+          <button class="option-button" id="ellipseTool" type="button" data-tool="ellipse" aria-pressed="false">Hình elip</button>
+        </div>
+        <p class="popover-help">Kéo trên bảng để xác định kích thước hình.</p>
+      </section>
+      <section class="tool-popover color-popover" id="colorOptions" aria-label="Tùy chỉnh màu và nét" hidden>
+        <h3>Màu sắc và cỡ nét</h3>
+        <label class="control-label" for="colorPicker">Màu bút</label>
+        <div class="color-input-row">
+          <input id="colorPicker" type="color" value="#172554" aria-label="Chọn màu bút tùy chỉnh">
+          <div class="preset-colors" aria-label="Bảng màu bút">
+            <button class="swatch" type="button" data-color="#172554" style="--swatch:#172554" aria-label="Xanh đậm" title="Xanh đậm"></button>
+            <button class="swatch" type="button" data-color="#ef4444" style="--swatch:#ef4444" aria-label="Đỏ" title="Đỏ"></button>
+            <button class="swatch" type="button" data-color="#16a34a" style="--swatch:#16a34a" aria-label="Xanh lá" title="Xanh lá"></button>
+            <button class="swatch" type="button" data-color="#eab308" style="--swatch:#eab308" aria-label="Vàng" title="Vàng"></button>
+            <button class="swatch" type="button" data-color="#ffffff" style="--swatch:#ffffff" aria-label="Trắng" title="Trắng"></button>
+            <button class="swatch" type="button" data-color="#111827" style="--swatch:#111827" aria-label="Đen" title="Đen"></button>
+          </div>
+        </div>
+        <label class="control-label" for="widthRange">Độ dày nét: <output id="widthValue" for="widthRange">4 px</output></label>
+        <input class="width-range" id="widthRange" type="range" min="1" max="30" value="4">
+        <div class="width-presets" role="group" aria-label="Chọn nhanh cỡ bút">
+          <button type="button" data-width="2">2</button>
+          <button type="button" data-width="4">4</button>
+          <button type="button" data-width="8">8</button>
+          <button type="button" data-width="16">16</button>
+          <button type="button" data-width="24">24</button>
+        </div>
+        <span class="control-label">Màu nền bảng</span>
+        <div class="background-options" role="group" aria-label="Chọn nền bảng">
+          <button type="button" class="background-button is-selected" data-background="#ffffff" aria-pressed="true">Bảng trắng</button>
+          <button type="button" class="background-button" data-background="#111827" aria-pressed="false">Bảng đen</button>
+        </div>
+        <p class="popover-help">Có thể đổi nền ngay cả khi đã vẽ.</p>
+      </section>
+    </aside>
+    <main class="board-panel" aria-label="Bảng vẽ lớp học">
+      <div class="canvas-frame">
+        <div class="canvas-stage" id="canvasStage">
+          <canvas id="boardCanvas" aria-label="Vùng vẽ"></canvas>
+          <canvas id="previewCanvas" class="preview-canvas" aria-hidden="true"></canvas>
+          <div class="canvas-hint" id="canvasHint">Vùng vẽ (canvas)</div>
+          <div id="latencyStatus" class="latency-badge" title="Ước tính thời gian xử lý sự kiện đến khi vẽ xong khung hình; không đo độ trễ màn hình thực tế">Độ trễ xử lý: -- ms</div>
+        </div>
       </div>
-      <span class="footer-status" id="footerStatus">Trạng thái: Tự động lưu trên trình duyệt · Chưa đồng bộ máy chủ</span>
-    </footer>
+      <div class="sr-only" role="status" aria-live="polite">
+        <span id="inputStatus">Chưa có thao tác</span>
+        <span id="saveState">Sẵn sàng</span>
+      </div>
+    </main>
+    <aside class="students" aria-label="Học sinh">
+      <h2>Học sinh</h2>
+      <div id="studentList">
+        <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
+        <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
+        <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
+      </div>
+      <p class="student-note">Danh sách minh họa, chưa có kết nối máy chủ.</p>
+    </aside>
   </div>
-
-  <dialog id="clearBoardDialog" class="clear-dialog" aria-labelledby="clearDialogTitle" aria-describedby="clearDialogDescription">
-    <h2 id="clearDialogTitle">Xóa nội dung trang hiện tại?</h2>
-    <p id="clearDialogDescription">Chỉ xóa nét vẽ trên <strong>trang đang mở</strong>. Các trang khác và màu nền của trang này được giữ nguyên. Có thể bấm Hoàn tác ngay sau khi xóa.</p>
-    <p class="dialog-note">Bạn có thể lưu ảnh PNG của trang hiện tại trước khi xóa nét vẽ.</p>
-    <p id="clearDialogError" class="dialog-error" role="alert" hidden></p>
-    <div class="dialog-actions">
-      <button id="cancelClearButton" class="dialog-cancel" type="button">Hủy</button>
-      <button id="clearWithoutSavingButton" class="dialog-danger" type="button">Xóa không lưu</button>
-      <button id="saveAndClearButton" class="dialog-primary" type="button">Lưu snapshot rồi xóa</button>
+  <footer class="footer">
+    <div class="pagination" aria-label="Quản lý các trang bảng">
+      <button id="prevPage" type="button" aria-label="Trang trước" title="Trang trước">&lt;</button>
+      <span id="pageIndicator" aria-live="polite">Trang 1 / 1</span>
+      <button id="nextPage" type="button" aria-label="Trang sau" title="Trang sau">&gt;</button>
+      <button id="addPageButton" class="add-page-button" type="button" title="Thêm trang bảng mới">+ Thêm trang</button>
+      <button id="deletePageButton" class="delete-page-button" type="button" title="Xóa trang hiện tại (không xóa các trang khác)" aria-label="Xóa trang hiện tại">Xóa trang</button>
     </div>
-  </dialog>
+    <span class="footer-status" id="footerStatus">Trạng thái: Tự động lưu trên trình duyệt · Chưa đồng bộ máy chủ</span>
+  </footer>
+</div>
 
-  <!-- Xóa hẳn trang đang mở, độc lập với nút Xóa bảng (chỉ xóa nét vẽ). -->
-  <dialog id="deletePageDialog" class="clear-dialog" aria-labelledby="deletePageDialogTitle" aria-describedby="deletePageDialogDescription">
-    <h2 id="deletePageDialogTitle">Xóa trang hiện tại?</h2>
-    <p id="deletePageDialogDescription">Trang này sẽ bị xóa khỏi danh sách và <strong>không thể hoàn tác</strong>. Những trang khác và nét vẽ trên đó vẫn được giữ nguyên.</p>
-    <p class="dialog-note">Bạn có thể lưu snapshot PNG của trang này trước khi xóa.</p>
-    <p id="deletePageDialogError" class="dialog-error" role="alert" hidden></p>
-    <div class="dialog-actions">
-      <button id="cancelDeletePageButton" class="dialog-cancel" type="button">Hủy</button>
-      <button id="deletePageWithoutSavingButton" class="dialog-danger" type="button">Xóa trang</button>
-      <button id="saveAndDeletePageButton" class="dialog-primary" type="button">Lưu ảnh rồi xóa</button>
-    </div>
-  </dialog>
-
-  <script type="module" src="./app.js"></script>
+<dialog id="clearBoardDialog" class="clear-dialog" aria-labelledby="clearDialogTitle" aria-describedby="clearDialogDescription">
+  <h2 id="clearDialogTitle">Xóa nội dung trang hiện tại?</h2>
+  <p id="clearDialogDescription">Chỉ xóa nét vẽ trên <strong>trang đang mở</strong>. Các trang khác và màu nền của trang này được giữ nguyên. Có thể bấm Hoàn tác ngay sau khi xóa.</p>
+  <p class="dialog-note">Bạn có thể lưu ảnh PNG của trang hiện tại trước khi xóa nét vẽ.</p>
+  <p id="clearDialogError" class="dialog-error" role="alert" hidden></p>
+  <div class="dialog-actions">
+    <button id="cancelClearButton" class="dialog-cancel" type="button">Hủy</button>
+    <button id="clearWithoutSavingButton" class="dialog-danger" type="button">Xóa không lưu</button>
+    <button id="saveAndClearButton" class="dialog-primary" type="button">Lưu snapshot rồi xóa</button>
+  </div>
+</dialog>
+<dialog id="deletePageDialog" class="clear-dialog" aria-labelledby="deletePageDialogTitle" aria-describedby="deletePageDialogDescription">
+  <h2 id="deletePageDialogTitle">Xóa trang hiện tại?</h2>
+  <p id="deletePageDialogDescription">Trang này sẽ bị xóa khỏi danh sách và <strong>không thể hoàn tác</strong>. Những trang khác và nét vẽ trên đó vẫn được giữ nguyên.</p>
+  <p class="dialog-note">Bạn có thể lưu snapshot PNG của trang này trước khi xóa.</p>
+  <p id="deletePageDialogError" class="dialog-error" role="alert" hidden></p>
+  <div class="dialog-actions">
+    <button id="cancelDeletePageButton" class="dialog-cancel" type="button">Hủy</button>
+    <button id="deletePageWithoutSavingButton" class="dialog-danger" type="button">Xóa trang</button>
+    <button id="saveAndDeletePageButton" class="dialog-primary" type="button">Lưu ảnh rồi xóa</button>
+  </div>
+</dialog>
+<script type="module" src="./app.js"></script>
 </body>
 </html>
