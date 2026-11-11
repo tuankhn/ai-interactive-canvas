@@ -141,3 +141,100 @@ def test_canvas_multisubject_recognition_flow():
         assert data["subject"] == subj
         assert len(data["recognized_text"]) > 0
         assert data["latency_ms"] < 2000
+
+
+def test_api_404_prevention_no_domino_html():
+    """Kiểm tra chống lỗi Domino: Route API không tồn tại phải trả về 404 JSON, KHÔNG ĐƯỢC trả về index.html"""
+    resp = client.get("/api/v1/non_existent_endpoint")
+    assert resp.status_code == 404
+    # Đảm bảo không trả về HTML gây hỏng JSON parsing
+    assert "text/html" not in resp.headers.get("content-type", "")
+    data = resp.json()
+    assert "detail" in data
+
+
+def test_session_pages_and_snapshot_sync():
+    """Kiểm tra đồng bộ lưu trang bảng và lưu snapshot bài giảng qua cả 2 định dạng URL (số ít / số nhiều)"""
+    canvas_b64 = make_canvas_image()
+
+    # 1. Lưu trang qua /api/v1/sessions/pages
+    resp_page = client.post(
+        "/api/v1/sessions/pages",
+        json={
+            "session_id": "session-sync-test",
+            "room_id": "room-10a1",
+            "page_number": 1,
+            "canvas_json": {"objects": []},
+            "recognized_latex": "y = x^2"
+        }
+    )
+    assert resp_page.status_code == 200
+    assert resp_page.json()["status"] == "ok"
+
+    # 2. Lưu trang qua alias /api/v1/session/page/save
+    resp_alias_page = client.post(
+        "/api/v1/session/page/save",
+        json={
+            "session_id": "session-sync-test",
+            "room_id": "room-10a1",
+            "page_number": 2,
+            "canvas_json": {"objects": []},
+            "recognized_latex": "E = mc^2"
+        }
+    )
+    assert resp_alias_page.status_code == 200
+    assert resp_alias_page.json()["status"] == "ok"
+
+    # 3. Lưu snapshot trước khi xóa bảng (Auto-snapshot on clear)
+    resp_snap = client.post(
+        "/api/v1/sessions/snapshots",
+        json={
+            "session_id": "session-sync-test",
+            "room_id": "room-10a1",
+            "class_name": "10A1",
+            "teacher_name": "Nguyễn Tuấn Khang",
+            "subject": "TOAN",
+            "period_number": 1,
+            "page_number": 1,
+            "trigger_type": "BEFORE_CLEAR",
+            "image_base64": canvas_b64,
+            "recognized_latex": "y = x^2"
+        }
+    )
+    assert resp_snap.status_code == 200
+    snap_data = resp_snap.json()
+    assert snap_data["status"] == "saved"
+    assert "snapshot_id" in snap_data
+    assert "image_url" in snap_data
+
+
+def test_websocket_board_isolation_and_broadcast():
+    """Kiểm tra kênh WebSocket đồng bộ bảng vẽ thời gian thực giữa 2 client trong cùng phòng học"""
+    with client.websocket_connect("/ws/board/room-a/session-1") as ws1:
+        with client.websocket_connect("/ws/board/room-a/session-1") as ws2:
+            # Gửi tin nhắn từ ws1
+            test_msg = '{"type":"STROKE_FINISHED","page":0,"timestamp":1700000000}'
+            ws1.send_text(test_msg)
+            # ws2 phải nhận được tin nhắn broadcast từ ws1
+            received = ws2.receive_text()
+            assert received == test_msg
+
+
+def test_canvas_rapid_concurrent_recognitions():
+    """Kiểm tra độ ổn định khi nhiều nét vẽ gửi liên tiếp (Rapid strokes / Concurrency)"""
+    canvas_b64 = make_canvas_image()
+    for i in range(5):
+        resp = client.post(
+            "/api/v1/recognize",
+            json={
+                "session_id": f"session-concurrency-{i}",
+                "room_id": "room-10a1",
+                "subject": "TOAN",
+                "page_number": 1,
+                "image_base64": canvas_b64,
+                "debounce_ms": 800,
+                "provider": "auto"
+            }
+        )
+        assert resp.status_code == 200
+        assert resp.json()["latency_ms"] < 2000

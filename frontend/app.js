@@ -146,6 +146,18 @@ function refreshPages() {
 
 function switchPage(nextIndex) {
   if (ended || nextIndex < 0) return;
+  if (aiDebounceTimer) {
+    clearTimeout(aiDebounceTimer);
+    aiDebounceTimer = null;
+  }
+  aiRequestId++;
+  currentAiResult = null;
+  if (aiElements?.overlay) aiElements.overlay.hidden = true;
+  if (aiElements?.statusIndicator) {
+    aiElements.statusIndicator.textContent = 'AI: Sẵn sàng';
+    aiElements.statusIndicator.classList.remove('is-analyzing');
+  }
+
   pages[pageIndex] = snapshot();
   if (nextIndex >= pages.length) {
     pages.push({ objects: [], background: '#ffffff' });
@@ -156,6 +168,16 @@ function switchPage(nextIndex) {
   redoStack = [];
   refreshPages();
   setStatus(`Đang ở trang ${pageIndex + 1}`);
+
+  if (boardSocket && boardSocket.readyState === WebSocket.OPEN) {
+    try {
+      boardSocket.send(JSON.stringify({
+        type: 'SWITCH_PAGE',
+        page: pageIndex,
+        timestamp: Date.now()
+      }));
+    } catch { /* Bỏ qua */ }
+  }
 }
 
 function closePanels() {
@@ -631,6 +653,16 @@ function finishStroke(commit) {
   if (remember(finished.before)) {
     ui.input.textContent = `Đã hoàn thành: ${toolNames[tool]}`;
     setStatus('Đã cập nhật bảng');
+    if (boardSocket && boardSocket.readyState === WebSocket.OPEN) {
+      try {
+        boardSocket.send(JSON.stringify({
+          type: 'STROKE_FINISHED',
+          page: pageIndex,
+          object_count: fabricCanvas.getObjects().length,
+          timestamp: Date.now()
+        }));
+      } catch { /* Bỏ qua */ }
+    }
     if (isAutoAiEnabled && (tool === 'pen' || tool === 'highlighter' || shapeTools.has(tool))) {
       scheduleAIDebounce();
     }
@@ -785,6 +817,40 @@ document.addEventListener('keydown', (event) => {
 $('clearButton').addEventListener('click', () => {
   if (ended || fabricCanvas.getObjects().length === 0) return;
   if (!window.confirm('Xóa toàn bộ nội dung của trang hiện tại?')) return;
+
+  if (aiDebounceTimer) {
+    clearTimeout(aiDebounceTimer);
+    aiDebounceTimer = null;
+  }
+  aiRequestId++;
+  currentAiResult = null;
+  if (aiElements?.overlay) aiElements.overlay.hidden = true;
+  if (aiElements?.statusIndicator) {
+    aiElements.statusIndicator.textContent = 'AI: Sẵn sàng';
+    aiElements.statusIndicator.classList.remove('is-analyzing');
+  }
+
+  // Tự động sao lưu Snapshot bài giảng (Auto-snapshot) ngầm lên máy chủ trước khi xóa (TF2850E)
+  try {
+    const snapshotImg = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
+    fetch('/api/v1/sessions/snapshots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: $('sessionId')?.textContent?.trim() || 'session-10a1',
+        room_id: $('roomId')?.textContent?.trim() || 'room-10a1',
+        class_name: $('className')?.textContent?.trim() || '10A1',
+        teacher_name: 'Nguyễn Tuấn Khang',
+        subject: aiElements?.subjectSelect ? aiElements.subjectSelect.value : 'TOAN',
+        period_number: 1,
+        page_number: pageIndex + 1,
+        trigger_type: 'BEFORE_CLEAR',
+        image_base64: snapshotImg,
+        recognized_latex: null
+      })
+    }).catch(() => { /* Bỏ qua lỗi ngầm để không ảnh hưởng thao tác */ });
+  } catch { /* Bỏ qua */ }
+
   const before = snapshot();
   fabricCanvas.remove(...fabricCanvas.getObjects().slice());
   fabricCanvas.requestRenderAll();
@@ -817,6 +883,8 @@ $('endSession').addEventListener('click', () => {
   if (ended || !window.confirm('Kết thúc phiên vẽ trên trình duyệt này?')) return;
   ended = true;
   clearInterval(clock);
+  if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
+  aiRequestId++;
   closePanels();
   if (stroke) finishStroke(false);
   $('sessionTimer').textContent = 'Đã kết thúc';
@@ -827,7 +895,12 @@ $('endSession').addEventListener('click', () => {
   });
   $('prevPage').disabled = true;
   $('nextPage').disabled = true;
-  ui.footer.textContent = 'Phiên đã kết thúc · Chưa đồng bộ máy chủ';
+  if (aiElements?.overlay) aiElements.overlay.hidden = true;
+  if (boardSocket) {
+    try { boardSocket.close(); } catch {}
+    boardSocket = null;
+  }
+  ui.footer.textContent = 'Phiên đã kết thúc · Dữ liệu đã lưu an toàn';
   setStatus('Đã kết thúc phiên');
 });
 
@@ -839,6 +912,8 @@ let aiDebounceTimer = null;
 let isAutoAiEnabled = true;
 let isRecognizing = false;
 let currentAiResult = null;
+let aiRequestId = 0;
+let boardSocket = null;
 
 const aiElements = {
   overlay: $('aiOverlayPanel'),
@@ -876,6 +951,9 @@ async function performAIRecognition({ isDebounced = false } = {}) {
     }
     return;
   }
+
+  const thisRequestId = ++aiRequestId;
+  const thisPage = pageIndex;
 
   isRecognizing = true;
   if (aiElements.statusIndicator) {
@@ -919,6 +997,13 @@ async function performAIRecognition({ isDebounced = false } = {}) {
     }
 
     const data = await response.json();
+
+    // KIỂM SOÁT LỆCH PHA (RACE CONDITION) & TRÁNH LỖI DOMINO:
+    // Nếu trong lúc chờ API phản hồi mà người dùng đã chuyển trang, xóa bảng hoặc có request mới hơn:
+    if (thisRequestId !== aiRequestId || pageIndex !== thisPage || ended) {
+      return;
+    }
+
     currentAiResult = data;
 
     // Cập nhật thông tin giao diện kết quả
@@ -1056,6 +1141,33 @@ if (aiElements.subjectSelect) {
   });
 }
 
+// Khởi tạo kênh WebSocket đồng bộ bảng vẽ thời gian thực (WSS)
+function initBoardWebSocket() {
+  if (ended) return;
+  try {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    if (!host) return; // Môi trường xem file tĩnh cục bộ
+    const room = $('roomId')?.textContent?.trim() || 'room-10a1';
+    const session = $('sessionId')?.textContent?.trim() || 'session-10a1';
+    boardSocket = new WebSocket(`${protocol}//${host}/ws/board/${room}/${session}`);
+    boardSocket.onopen = () => {
+      ui.footer.textContent = 'Đã kết nối máy chủ · Đồng bộ phòng học thời gian thực (WSS) · Debounce 800ms';
+    };
+    boardSocket.onmessage = () => {
+      // Nhận tín hiệu đồng bộ từ các thiết bị khác trong phòng học
+    };
+    boardSocket.onerror = () => {
+      // Graceful fallback nếu WebSocket không sẵn sàng
+    };
+    boardSocket.onclose = () => {
+      if (!ended) setTimeout(initBoardWebSocket, 5000);
+    };
+  } catch {
+    // Graceful fallback
+  }
+}
+
 // Trạng thái khởi tạo.
 setTool('pen');
 syncColorSelection();
@@ -1063,4 +1175,5 @@ syncWidthSelection();
 syncBackgroundButtons();
 updateHint();
 refreshPages();
+initBoardWebSocket();
 

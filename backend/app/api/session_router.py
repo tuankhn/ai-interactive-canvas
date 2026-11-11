@@ -10,6 +10,8 @@ router = APIRouter(prefix="/api/v1/sessions", tags=["Board Pages & Snapshots (Mi
 
 
 @router.post("/pages")
+@router.post("/page/save", include_in_schema=False)
+@router.post("/pages/save", include_in_schema=False)
 async def save_board_page(payload: PageSaveRequest):
     """Lưu trạng thái trang bảng vẽ theo session_id và room_id (FR-CAN-03, NFR-SCALE-01)."""
     key = f"{payload.room_id}:{payload.session_id}"
@@ -42,6 +44,9 @@ async def get_board_pages(room_id: str, session_id: str):
 
 
 @router.post("/snapshots")
+@router.post("/snapshot", include_in_schema=False)
+@router.post("/snapshot/save", include_in_schema=False)
+@router.post("/snapshots/save", include_in_schema=False)
 async def save_snapshot(payload: SnapshotSaveRequest):
     """
     Task TF2850E: Xuất ảnh bảng độ phân giải cao (.webp/.png) lưu vào MinIO khi bấm Lưu bài hoặc Xóa bảng.
@@ -117,3 +122,14 @@ async def list_snapshots(
             or q_low in (r.get("recognized_latex") or "").lower()
         ]
     return {"count": len(results), "items": results}
+
+
+# Router tương thích cho tiền tố số ít /api/v1/session
+alias_router = APIRouter(prefix="/api/v1/session", tags=["Session Alias"], include_in_schema=False)
+alias_router.add_api_route("/pages", save_board_page, methods=["POST"])
+alias_router.add_api_route("/page/save", save_board_page, methods=["POST"])
+alias_router.add_api_route("/pages/save", save_board_page, methods=["POST"])
+alias_router.add_api_route("/snapshots", save_snapshot, methods=["POST"])
+alias_router.add_api_route("/snapshot", save_snapshot, methods=["POST"])
+alias_router.add_api_route("/snapshot/save", save_snapshot, methods=["POST"])
+alias_router.add_api_route("/snapshots/save", save_snapshot, methods=["POST"])

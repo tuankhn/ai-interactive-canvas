@@ -29,8 +29,9 @@ except ImportError:
     pass
 
 try:
-    from app.api.session_router import router as session_router
+    from app.api.session_router import router as session_router, alias_router as session_alias_router
     app.include_router(session_router)
+    app.include_router(session_alias_router)
 except ImportError:
     pass
 
@@ -67,12 +68,23 @@ async def board_websocket(websocket: WebSocket, room_id: str, session_id: str):
     try:
         while True:
             message = await websocket.receive_text()
+            dead_connections = []
             for conn in list(active_connections.get(channel_key, [])):
                 if conn is not websocket:
-                    await conn.send_text(message)
-    except WebSocketDisconnect:
+                    try:
+                        await conn.send_text(message)
+                    except Exception:
+                        dead_connections.append(conn)
+            for dead in dead_connections:
+                if channel_key in active_connections and dead in active_connections[channel_key]:
+                    active_connections[channel_key].remove(dead)
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
         if channel_key in active_connections and websocket in active_connections[channel_key]:
             active_connections[channel_key].remove(websocket)
+        if channel_key in active_connections and not active_connections[channel_key]:
+            active_connections.pop(channel_key, None)
 
 
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
@@ -81,6 +93,11 @@ if os.path.isdir(FRONTEND_DIR) and os.path.isfile(os.path.join(FRONTEND_DIR, "in
 
     @app.get("/{file_name:path}", include_in_schema=False)
     async def serve_frontend(file_name: str = ""):
+        clean_path = file_name.strip("/")
+        if clean_path.startswith("api") or clean_path.startswith("ws"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail=f"API endpoint '/{clean_path}' không tồn tại.")
+
         target_path = os.path.join(FRONTEND_DIR, file_name) if file_name else os.path.join(FRONTEND_DIR, "index.html")
         if os.path.isfile(target_path):
             return FileResponse(target_path)
