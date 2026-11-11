@@ -1,4 +1,15 @@
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Tự động nạp biến môi trường từ file .env nếu có
+_candidate_envs = [
+    Path(__file__).resolve().parent.parent.parent / ".env",
+    Path(__file__).resolve().parent.parent.parent.parent / ".env",
+]
+for _env_path in _candidate_envs:
+    if _env_path.exists():
+        load_dotenv(_env_path, override=True)
 
 
 class Settings:

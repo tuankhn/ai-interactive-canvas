@@ -50,11 +50,17 @@ def upload_snapshot_to_minio(
 
     if HAS_MINIO:
         try:
+            import urllib3
+            http_client = urllib3.PoolManager(
+                timeout=urllib3.Timeout(connect=0.5, read=1.0),
+                retries=False,
+            )
             client = Minio(
                 settings.MINIO_ENDPOINT,
                 access_key=settings.MINIO_ACCESS_KEY,
                 secret_key=settings.MINIO_SECRET_KEY,
                 secure=settings.MINIO_SECURE,
+                http_client=http_client,
             )
             if not client.bucket_exists(settings.MINIO_BUCKET):
                 client.make_bucket(settings.MINIO_BUCKET)

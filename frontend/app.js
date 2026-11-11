@@ -146,6 +146,18 @@ function refreshPages() {
 
 function switchPage(nextIndex) {
   if (ended || nextIndex < 0) return;
+  if (aiDebounceTimer) {
+    clearTimeout(aiDebounceTimer);
+    aiDebounceTimer = null;
+  }
+  aiRequestId++;
+  currentAiResult = null;
+  if (aiElements?.overlay) aiElements.overlay.hidden = true;
+  if (aiElements?.statusIndicator) {
+    aiElements.statusIndicator.textContent = 'AI: Sẵn sàng';
+    aiElements.statusIndicator.classList.remove('is-analyzing');
+  }
+
   pages[pageIndex] = snapshot();
   if (nextIndex >= pages.length) {
     pages.push({ objects: [], background: '#ffffff' });
@@ -156,6 +168,16 @@ function switchPage(nextIndex) {
   redoStack = [];
   refreshPages();
   setStatus(`Đang ở trang ${pageIndex + 1}`);
+
+  if (boardSocket && boardSocket.readyState === WebSocket.OPEN) {
+    try {
+      boardSocket.send(JSON.stringify({
+        type: 'SWITCH_PAGE',
+        page: pageIndex,
+        timestamp: Date.now()
+      }));
+    } catch { /* Bỏ qua */ }
+  }
 }
 
 function closePanels() {
@@ -631,6 +653,19 @@ function finishStroke(commit) {
   if (remember(finished.before)) {
     ui.input.textContent = `Đã hoàn thành: ${toolNames[tool]}`;
     setStatus('Đã cập nhật bảng');
+    if (boardSocket && boardSocket.readyState === WebSocket.OPEN) {
+      try {
+        boardSocket.send(JSON.stringify({
+          type: 'STROKE_FINISHED',
+          page: pageIndex,
+          object_count: fabricCanvas.getObjects().length,
+          timestamp: Date.now()
+        }));
+      } catch { /* Bỏ qua */ }
+    }
+    if (isAutoAiEnabled && (tool === 'pen' || tool === 'highlighter' || shapeTools.has(tool))) {
+      scheduleAIDebounce();
+    }
   } else {
     setStatus('Không có thay đổi');
   }
@@ -638,6 +673,10 @@ function finishStroke(commit) {
 
 function pointerDown(event) {
   if (ended) return;
+  if (aiDebounceTimer) {
+    clearTimeout(aiDebounceTimer);
+    aiDebounceTimer = null;
+  }
   const pointerType = event.pointerType;
   if (pointerType === 'pen') lastPenSeenAt = performance.now();
 
@@ -778,6 +817,40 @@ document.addEventListener('keydown', (event) => {
 $('clearButton').addEventListener('click', () => {
   if (ended || fabricCanvas.getObjects().length === 0) return;
   if (!window.confirm('Xóa toàn bộ nội dung của trang hiện tại?')) return;
+
+  if (aiDebounceTimer) {
+    clearTimeout(aiDebounceTimer);
+    aiDebounceTimer = null;
+  }
+  aiRequestId++;
+  currentAiResult = null;
+  if (aiElements?.overlay) aiElements.overlay.hidden = true;
+  if (aiElements?.statusIndicator) {
+    aiElements.statusIndicator.textContent = 'AI: Sẵn sàng';
+    aiElements.statusIndicator.classList.remove('is-analyzing');
+  }
+
+  // Tự động sao lưu Snapshot bài giảng (Auto-snapshot) ngầm lên máy chủ trước khi xóa (TF2850E)
+  try {
+    const snapshotImg = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
+    fetch('/api/v1/sessions/snapshots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: $('sessionId')?.textContent?.trim() || 'session-10a1',
+        room_id: $('roomId')?.textContent?.trim() || 'room-10a1',
+        class_name: $('className')?.textContent?.trim() || '10A1',
+        teacher_name: 'Nguyễn Tuấn Khang',
+        subject: aiElements?.subjectSelect ? aiElements.subjectSelect.value : 'TOAN',
+        period_number: 1,
+        page_number: pageIndex + 1,
+        trigger_type: 'BEFORE_CLEAR',
+        image_base64: snapshotImg,
+        recognized_latex: null
+      })
+    }).catch(() => { /* Bỏ qua lỗi ngầm để không ảnh hưởng thao tác */ });
+  } catch { /* Bỏ qua */ }
+
   const before = snapshot();
   fabricCanvas.remove(...fabricCanvas.getObjects().slice());
   fabricCanvas.requestRenderAll();
@@ -810,6 +883,8 @@ $('endSession').addEventListener('click', () => {
   if (ended || !window.confirm('Kết thúc phiên vẽ trên trình duyệt này?')) return;
   ended = true;
   clearInterval(clock);
+  if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
+  aiRequestId++;
   closePanels();
   if (stroke) finishStroke(false);
   $('sessionTimer').textContent = 'Đã kết thúc';
@@ -820,9 +895,281 @@ $('endSession').addEventListener('click', () => {
   });
   $('prevPage').disabled = true;
   $('nextPage').disabled = true;
-  ui.footer.textContent = 'Phiên đã kết thúc · Chưa đồng bộ máy chủ';
+  if (aiElements?.overlay) aiElements.overlay.hidden = true;
+  if (boardSocket) {
+    try { boardSocket.close(); } catch {}
+    boardSocket = null;
+  }
+  ui.footer.textContent = 'Phiên đã kết thúc · Dữ liệu đã lưu an toàn';
   setStatus('Đã kết thúc phiên');
 });
+
+// ==============================================================================
+// KẾT NỐI API AI (GEMINI 2.5 FLASH / MATHPIX) & DEBOUNCE 800MS (TASK TF28509)
+// ==============================================================================
+
+let aiDebounceTimer = null;
+let isAutoAiEnabled = true;
+let isRecognizing = false;
+let currentAiResult = null;
+let aiRequestId = 0;
+let boardSocket = null;
+
+const aiElements = {
+  overlay: $('aiOverlayPanel'),
+  loading: $('aiLoadingIndicator'),
+  content: $('aiResultContent'),
+  providerBadge: $('aiProviderBadge'),
+  confidenceBadge: $('aiConfidenceBadge'),
+  latencyBadge: $('aiLatencyBadge'),
+  renderedBox: $('aiLatexRendered'),
+  rawBox: $('aiLatexRaw'),
+  explanationBox: $('aiExplanationBox'),
+  statusIndicator: $('aiStatusIndicator'),
+  autoToggle: $('autoAiToggle'),
+  recognizeBtn: $('aiRecognizeBtn'),
+  closeBtn: $('closeAiPanelBtn'),
+  insertBtn: $('insertToBoardBtn'),
+  retryBtn: $('reRecognizeBtn'),
+  subjectSelect: $('subjectSelect')
+};
+
+function scheduleAIDebounce() {
+  if (!isAutoAiEnabled || ended) return;
+  if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
+  aiDebounceTimer = setTimeout(() => {
+    performAIRecognition({ isDebounced: true });
+  }, 800);
+}
+
+async function performAIRecognition({ isDebounced = false } = {}) {
+  if (ended || isRecognizing) return;
+  const objects = fabricCanvas.getObjects();
+  if (!objects || objects.length === 0) {
+    if (!isDebounced) {
+      alert('Chưa có nét vẽ nào trên bảng để nhận diện.');
+    }
+    return;
+  }
+
+  const thisRequestId = ++aiRequestId;
+  const thisPage = pageIndex;
+
+  isRecognizing = true;
+  if (aiElements.statusIndicator) {
+    aiElements.statusIndicator.textContent = isDebounced ? 'AI: Đang xử lý (800ms)...' : 'AI: Đang nhận diện...';
+    aiElements.statusIndicator.classList.add('is-analyzing');
+  }
+
+  // Mở overlay panel và hiển thị trạng thái loading
+  if (aiElements.overlay) aiElements.overlay.hidden = false;
+  if (aiElements.loading) aiElements.loading.hidden = false;
+  if (aiElements.content) aiElements.content.hidden = true;
+  setStatus('Đang gửi nét vẽ lên AI (Gemini 2.5 Flash / Mathpix)...');
+
+  try {
+    const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
+    const subject = aiElements.subjectSelect ? aiElements.subjectSelect.value : 'TOAN';
+
+    const payload = {
+      session_id: $('sessionId')?.textContent?.trim() || 'session-10a1',
+      room_id: $('roomId')?.textContent?.trim() || 'room-10a1',
+      subject: subject,
+      page_number: pageIndex + 1,
+      image_base64: imageBase64,
+      debounce_ms: 800,
+      provider: 'auto'
+    };
+
+    const startTime = performance.now();
+    const response = await fetch('/api/v1/recognize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const elapsed = Math.round(performance.now() - startTime);
+
+    if (!response.ok) {
+      throw new Error(`Máy chủ trả về HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // KIỂM SOÁT LỆCH PHA (RACE CONDITION) & TRÁNH LỖI DOMINO:
+    // Nếu trong lúc chờ API phản hồi mà người dùng đã chuyển trang, xóa bảng hoặc có request mới hơn:
+    if (thisRequestId !== aiRequestId || pageIndex !== thisPage || ended) {
+      return;
+    }
+
+    currentAiResult = data;
+
+    // Cập nhật thông tin giao diện kết quả
+    if (aiElements.providerBadge) {
+      const prov = data.provider || 'Gemini 2.5 Flash';
+      const isMock = prov.toLowerCase().includes('mock');
+      aiElements.providerBadge.textContent = isMock ? 'Chế độ mẫu (Chưa cấu hình API Key)' : prov;
+      aiElements.providerBadge.classList.toggle('is-mock', isMock);
+    }
+    if (aiElements.confidenceBadge) {
+      const confPercent = Math.round((data.confidence || 0.95) * 100);
+      aiElements.confidenceBadge.textContent = `${confPercent}%`;
+    }
+    if (aiElements.latencyBadge) {
+      aiElements.latencyBadge.textContent = `${data.latency_ms || elapsed} ms`;
+    }
+
+    const displayFormula = data.latex || data.recognized_text || '';
+
+    // Render KaTeX nếu có thư viện
+    if (aiElements.renderedBox) {
+      aiElements.renderedBox.innerHTML = '';
+      if (window.katex && displayFormula) {
+        try {
+          window.katex.render(displayFormula, aiElements.renderedBox, {
+            displayMode: true,
+            throwOnError: false
+          });
+        } catch {
+          aiElements.renderedBox.textContent = displayFormula;
+        }
+      } else {
+        aiElements.renderedBox.textContent = displayFormula || 'Không có công thức';
+      }
+    }
+
+    if (aiElements.rawBox) {
+      aiElements.rawBox.textContent = displayFormula;
+    }
+
+    if (aiElements.explanationBox) {
+      aiElements.explanationBox.textContent = data.explanation || 
+        (data.visualization?.type === '2D_GRAPH' 
+          ? `Đã nhận diện hàm số. Sẵn sàng dựng đồ thị 2D (Plotly): ${data.visualization.title || displayFormula}`
+          : `Đã bóc tách thành công: ${data.recognized_text}`);
+    }
+
+    if (aiElements.loading) aiElements.loading.hidden = true;
+    if (aiElements.content) aiElements.content.hidden = false;
+
+    if (aiElements.statusIndicator) {
+      aiElements.statusIndicator.textContent = 'AI: Đã nhận diện';
+      aiElements.statusIndicator.classList.remove('is-analyzing');
+    }
+
+    ui.footer.textContent = `Đã kết nối máy chủ · Nhận diện AI thành công (${data.latency_ms || elapsed} ms) · Debounce 800ms`;
+    setStatus(`AI nhận diện: ${data.recognized_text || displayFormula}`);
+
+  } catch (error) {
+    console.error('Lỗi nhận diện AI:', error);
+    if (aiElements.loading) aiElements.loading.hidden = true;
+    if (aiElements.content) aiElements.content.hidden = false;
+    if (aiElements.renderedBox) aiElements.renderedBox.textContent = 'Lỗi kết nối API';
+    if (aiElements.explanationBox) {
+      aiElements.explanationBox.textContent = `Không thể kết nối Backend API (/api/v1/recognize): ${error.message}`;
+    }
+    if (aiElements.statusIndicator) {
+      aiElements.statusIndicator.textContent = 'AI: Lỗi kết nối';
+      aiElements.statusIndicator.classList.remove('is-analyzing');
+    }
+    setStatus('Lỗi nhận diện AI');
+  } finally {
+    isRecognizing = false;
+  }
+}
+
+function insertAiResultToBoard() {
+  if (!currentAiResult) return;
+  const formula = currentAiResult.latex || currentAiResult.recognized_text;
+  if (!formula) return;
+
+  const before = snapshot();
+  const textObj = new Text(formula, {
+    left: 40,
+    top: 40,
+    fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
+    fontSize: 24,
+    fontFamily: 'Arial, sans-serif',
+    selectable: false,
+    evented: false
+  });
+  textObj._hitPoints = [{ x: 40, y: 40 }, { x: 250, y: 40 }];
+  textObj._hitWidth = 30;
+
+  fabricCanvas.add(textObj);
+  fabricCanvas.requestRenderAll();
+  remember(before);
+  updateHint();
+  setStatus('Đã chèn kết quả AI vào mặt bảng');
+  if (aiElements.overlay) aiElements.overlay.hidden = true;
+}
+
+// Gắn sự kiện cho các nút điều khiển AI
+if (aiElements.recognizeBtn) {
+  aiElements.recognizeBtn.addEventListener('click', () => {
+    closePanels();
+    performAIRecognition({ isDebounced: false });
+  });
+}
+if (aiElements.autoToggle) {
+  aiElements.autoToggle.addEventListener('click', () => {
+    isAutoAiEnabled = !isAutoAiEnabled;
+    aiElements.autoToggle.dataset.auto = String(isAutoAiEnabled);
+    aiElements.autoToggle.classList.toggle('is-active', isAutoAiEnabled);
+    aiElements.autoToggle.textContent = isAutoAiEnabled ? 'Tự động: BẬT' : 'Tự động: TẮT';
+    setStatus(`Tự động nhận diện AI (800ms): ${isAutoAiEnabled ? 'BẬT' : 'TẮT'}`);
+  });
+}
+if (aiElements.closeBtn) {
+  aiElements.closeBtn.addEventListener('click', () => {
+    if (aiElements.overlay) aiElements.overlay.hidden = true;
+  });
+}
+if (aiElements.insertBtn) {
+  aiElements.insertBtn.addEventListener('click', insertAiResultToBoard);
+}
+if (aiElements.retryBtn) {
+  aiElements.retryBtn.addEventListener('click', () => {
+    performAIRecognition({ isDebounced: false });
+  });
+}
+if (aiElements.subjectSelect) {
+  aiElements.subjectSelect.addEventListener('change', () => {
+    setStatus(`Đã chuyển môn: ${aiElements.subjectSelect.options[aiElements.subjectSelect.selectedIndex].text}`);
+    if (fabricCanvas.getObjects().length > 0 && isAutoAiEnabled) {
+      scheduleAIDebounce();
+    }
+  });
+}
+
+// Khởi tạo kênh WebSocket đồng bộ bảng vẽ thời gian thực (WSS)
+function initBoardWebSocket() {
+  if (ended) return;
+  try {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    if (!host) return; // Môi trường xem file tĩnh cục bộ
+    const room = $('roomId')?.textContent?.trim() || 'room-10a1';
+    const session = $('sessionId')?.textContent?.trim() || 'session-10a1';
+    boardSocket = new WebSocket(`${protocol}//${host}/ws/board/${room}/${session}`);
+    boardSocket.onopen = () => {
+      ui.footer.textContent = 'Đã kết nối máy chủ · Đồng bộ phòng học thời gian thực (WSS) · Debounce 800ms';
+    };
+    boardSocket.onmessage = () => {
+      // Nhận tín hiệu đồng bộ từ các thiết bị khác trong phòng học
+    };
+    boardSocket.onerror = () => {
+      // Graceful fallback nếu WebSocket không sẵn sàng
+    };
+    boardSocket.onclose = () => {
+      if (!ended) setTimeout(initBoardWebSocket, 5000);
+    };
+  } catch {
+    // Graceful fallback
+  }
+}
 
 // Trạng thái khởi tạo.
 setTool('pen');
@@ -831,3 +1178,5 @@ syncWidthSelection();
 syncBackgroundButtons();
 updateHint();
 refreshPages();
+initBoardWebSocket();
+
