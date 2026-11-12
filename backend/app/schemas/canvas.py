@@ -36,6 +36,7 @@ class RecognizeCanvasResponse(BaseModel):
     ambiguous_tokens: List[AmbiguousToken] = Field(default_factory=list)
     visualization: Optional[VisualizationData] = None
     explanation: Optional[str] = None
+    subject_details: Optional[Dict[str, Any]] = None
     latency_ms: Optional[int] = None
     provider: Optional[str] = None
     debounce_ms: Optional[int] = 800

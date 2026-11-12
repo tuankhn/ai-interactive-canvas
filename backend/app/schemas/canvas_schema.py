@@ -52,6 +52,7 @@ class RecognizeResponse(BaseModel):
     preprocess: PreprocessInfo
     visualization: Optional[Dict[str, Any]] = None
     explanation: Optional[str] = None
+    subject_details: Optional[Dict[str, Any]] = None
 
 
 class PageSaveRequest(BaseModel):
