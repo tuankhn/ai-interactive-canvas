@@ -7,6 +7,7 @@
   <meta name="description" content="Bảng vẽ tương tác với bút Stylus, công cụ hình học, tẩy, thước kẻ ảo và quản lý trang vẽ.">
   <title>Bảng vẽ lớp học | AI Interactive Canvas</title>
   <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./src/extensions/handwriting.css">
 </head>
 <body>
 <div class="app">
@@ -28,6 +29,7 @@
       <button class="tool-button" id="shapeMenu" type="button" aria-controls="shapeOptions" aria-expanded="false" title="Chọn hình học">Hình</button>
       <button class="tool-button" id="rulerTool" type="button" data-tool="ruler" aria-pressed="false" title="Thước kẻ ảo theo pixel">Thước</button>
       <button class="tool-button" id="textTool" type="button" data-tool="text" aria-pressed="false" title="Thêm chữ">Chữ</button>
+      <button class="tool-button" id="handwritingTool" type="button" aria-pressed="false" title="Khoanh vùng chữ viết tay để chuyển thành văn bản hoặc LaTeX">Chuyển chữ</button>
       <button class="tool-button" id="colorMenu" type="button" aria-controls="colorOptions" aria-expanded="false" title="Màu sắc và độ dày nét">Màu</button>
       <button class="tool-button" id="undoButton" type="button" title="Hoàn tác (Ctrl + Z)">Hoàn tác</button>
       <button class="tool-button" id="redoButton" type="button" title="Làm lại (Ctrl + Y)">Làm lại</button>
@@ -142,6 +144,6 @@
     <button id="saveAndDeletePageButton" class="dialog-primary" type="button">Lưu ảnh rồi xóa</button>
   </div>
 </dialog>
-<script type="module" src="./app.js"></script>
+<script type="module" src="./src/extensions/handwriting-entry.js"></script>
 </body>
 </html>
