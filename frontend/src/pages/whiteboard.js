@@ -4,6 +4,7 @@ import { syncBackgroundButtons, updateHint, setupHistoryShortcuts } from '../com
 import { refreshPages, restoreSavedPages, persistPages, setupPageControls } from '../components/pageManager.js';
 import { finishStroke, setupDrawingCanvas } from '../components/drawingCanvas.js';
 import { setupBoardDialogs } from '../components/boardDialogs.js';
+import { setupAIRecognition } from '../components/aiRecognition.js';
 
 export async function initWhiteboard() {
   setupToolbar();
@@ -11,6 +12,7 @@ export async function initWhiteboard() {
   setupPageControls();
   setupDrawingCanvas();
   setupBoardDialogs();
+  setupAIRecognition();
 
   // Phần đếm giờ và kết thúc phiên: chỉ chạy khi ứng dụng đã khởi tạo.
   const startedAt = Date.now();

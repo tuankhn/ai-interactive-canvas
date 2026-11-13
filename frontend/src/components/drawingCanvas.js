@@ -4,6 +4,7 @@ import { isPalmTouch, getPoint } from '../utils/pointer.js';
 import { createPath, drawRuler, previewShape, isNearObject, intersects, makeShape, makeRuler } from '../utils/geometry.js';
 import { snapshot, restore, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
+import { scheduleAIDebounce } from './aiRecognition.js';
 
 function resizeCanvas() {
   // clientWidth/clientHeight không tính viền đứt nét của canvas-stage.
@@ -185,6 +186,7 @@ export function finishStroke(commit) {
   if (remember(finished.before)) {
     ui.input.textContent = `Đã hoàn thành: ${toolNames[state.tool]}`;
     setStatus('Đã cập nhật bảng');
+    scheduleAIDebounce();
   } else {
     setStatus('Không có thay đổi');
   }
