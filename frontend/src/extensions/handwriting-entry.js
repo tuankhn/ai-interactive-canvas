@@ -1,9 +1,10 @@
-// Khởi chạy bảng vẽ gốc trước, sau đó mới cài tiện ích chuyển chữ.
-// Giữ nguyên frontend/app.js và toàn bộ các module sẵn có.
+// Khởi chạy bảng vẽ, nhận dạng chữ viết tay và đồ thị Plotly.js.
+// Dùng duy nhất index.html, không cần thêm entry hay trang HTML mới.
 try {
   await import('../../app.js');
-  const { setupHandwriting } = await import('./handwriting.js');
+  const { setupHandwriting, setupGraphExtension } = await import('./handwriting.js');
   setupHandwriting();
+  setupGraphExtension();
 } catch (error) {
   console.error('Không thể khởi chạy bảng vẽ:', error);
   const notice = document.createElement('div');

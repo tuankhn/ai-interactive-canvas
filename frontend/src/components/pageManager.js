@@ -6,7 +6,7 @@ import { closePanels } from './toolbar.js';
 function serializeCurrentPage() {
   return {
     objects: fabricCanvas.getObjects().map((object) =>
-      object.toObject(['_hitPoints', '_hitWidth'])
+      object.toObject(['_hitPoints', '_hitWidth', '_isPlotlyGraph'])
     ),
     background: fabricCanvas.backgroundColor || '#ffffff'
   };
@@ -43,6 +43,7 @@ async function loadPageData(data) {
     object.set({ selectable: false, evented: false, objectCaching: false });
     if (Array.isArray(original._hitPoints)) object._hitPoints = original._hitPoints;
     if (Number.isFinite(original._hitWidth)) object._hitWidth = original._hitWidth;
+    if (original._isPlotlyGraph === true) object._isPlotlyGraph = true;
   });
   syncLoadedCanvas();
 }
