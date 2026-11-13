@@ -117,15 +117,64 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
       aiElements.latencyBadge.textContent = `${data.latency_ms || elapsed} ms`;
     }
 
-    // Hiển thị công thức LaTeX / Text bằng KaTeX
+    // Hiển thị công thức LaTeX / Text bằng KaTeX hoặc Thẻ từ vựng Tiếng Anh
+    const isEnglish = (data.subject || '').toUpperCase().includes('ENG') || (data.subject || '').toUpperCase().includes('TIENG_ANH');
+    const details = data.subject_details || {};
     const displayFormula = data.latex || data.recognized_text || '\\text{Không có nội dung}';
+
     if (aiElements.rawBox) {
       aiElements.rawBox.textContent = displayFormula;
     }
 
     if (aiElements.renderedBox) {
       aiElements.renderedBox.innerHTML = '';
-      if (window.katex && data.latex) {
+
+      if (isEnglish && (details.ipa || details.word_type || details.vietnamese_meaning || details.grammar_structure)) {
+        // Giao diện thẻ học Tiếng Anh chuyên sâu (Từ vựng hoặc Cấu trúc Ngữ pháp)
+        const engContainer = document.createElement('div');
+        engContainer.className = 'ai-eng-card';
+
+        if (details.grammar_structure) {
+          const headLine = document.createElement('div');
+          headLine.className = 'ai-eng-head';
+          headLine.innerHTML = `<strong class="ai-eng-word">${details.grammar_structure}</strong>`;
+          engContainer.appendChild(headLine);
+
+          const sentenceLine = document.createElement('div');
+          sentenceLine.className = 'ai-eng-example';
+          sentenceLine.innerHTML = `<strong>Câu:</strong> ${data.recognized_text}`;
+          engContainer.appendChild(sentenceLine);
+
+          if (details.usage) {
+            const usageLine = document.createElement('div');
+            usageLine.className = 'ai-eng-meaning';
+            usageLine.textContent = `Cách dùng: ${details.usage}`;
+            engContainer.appendChild(usageLine);
+          }
+        } else {
+          const headLine = document.createElement('div');
+          headLine.className = 'ai-eng-head';
+          headLine.innerHTML = `<strong class="ai-eng-word">${details.word || data.recognized_text}</strong> <span class="ai-eng-type">[${details.word_type || 'Word'}]</span> <span class="ai-eng-ipa">${details.ipa || ''}</span>`;
+          engContainer.appendChild(headLine);
+
+          if (details.vietnamese_meaning) {
+            const meaningLine = document.createElement('div');
+            meaningLine.className = 'ai-eng-meaning';
+            meaningLine.textContent = `Nghĩa: ${details.vietnamese_meaning}`;
+            engContainer.appendChild(meaningLine);
+          }
+
+          if (details.example_sentence) {
+            const exLine = document.createElement('div');
+            exLine.className = 'ai-eng-example';
+            exLine.innerHTML = `<em>Ex:</em> ${details.example_sentence} <br><span class="ai-eng-trans">(${details.example_translation || ''})</span>`;
+            engContainer.appendChild(exLine);
+          }
+        }
+
+        aiElements.renderedBox.appendChild(engContainer);
+
+      } else if (window.katex && data.latex) {
         try {
           window.katex.render(data.latex, aiElements.renderedBox, {
             throwOnError: false,
@@ -154,7 +203,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
       aiElements.statusIndicator.classList.remove('is-analyzing');
     }
 
-    ui.footer.textContent = `Đã kết nối máy chủ · Nhận diện AI thành công (${data.latency_ms || elapsed} ms) · Debounce 800ms`;
+    ui.footer.textContent = `Đã kết nối máy chủ · Nhận diện AI (${data.subject || 'Đa môn'}) thành công (${data.latency_ms || elapsed} ms) · Debounce 800ms`;
     setStatus(`AI nhận diện: ${data.recognized_text || displayFormula}`);
 
   } catch (error) {
@@ -178,15 +227,34 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
 
 export function insertAiResultToBoard() {
   if (!currentAiResult) return;
-  const formula = currentAiResult.latex || currentAiResult.recognized_text;
-  if (!formula) return;
+  let textToInsert = currentAiResult.latex || currentAiResult.recognized_text;
+
+  const isEng = (currentAiResult.subject || '').toUpperCase().includes('ENG') || 
+                (currentAiResult.subject || '').toUpperCase().includes('ANH');
+  if (isEng && currentAiResult.subject_details) {
+    const d = currentAiResult.subject_details;
+    if (d.topic === 'VOCABULARY' || d.ipa || d.word_type) {
+      const word = d.word || currentAiResult.recognized_text || '';
+      const type = (d.word_type || d.part_of_speech) ? ` [${d.word_type || d.part_of_speech}]` : '';
+      const ipa = d.ipa ? ` ${d.ipa}` : '';
+      const meaning = d.vietnamese_meaning ? `\n- Nghĩa: ${d.vietnamese_meaning}` : '';
+      const example = d.example_sentence ? `\n- Ví dụ: ${d.example_sentence}` : '';
+      textToInsert = `${word}${type}${ipa}${meaning}${example}`;
+    } else if (d.topic === 'GRAMMAR_SENTENCE') {
+      const sentence = currentAiResult.recognized_text || '';
+      const struct = d.grammar_structure ? `\n- Ngữ pháp: ${d.grammar_structure}` : '';
+      textToInsert = `${sentence}${struct}`;
+    }
+  }
+
+  if (!textToInsert) return;
 
   const before = snapshot();
-  const textObj = new Text(formula, {
+  const textObj = new Text(textToInsert, {
     left: 40,
     top: 40,
     fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
-    fontSize: 24,
+    fontSize: 22,
     fontFamily: 'Arial, sans-serif',
     selectable: false,
     evented: false

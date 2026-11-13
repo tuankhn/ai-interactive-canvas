@@ -150,6 +150,9 @@ class AIRecognitionService:
                 if g_res.visualization:
                     visualization_dict = g_res.visualization.model_dump()
 
+        # Trích xuất subject_details nếu có
+        subject_details = getattr(g_res, "subject_details", None) if 'g_res' in locals() else None
+
         # Đảm bảo có visualization cho đồ thị hàm số 2D nếu là môn Toán/MATH
         if (display_subject in ["MATH", "TOAN"]) and not visualization_dict:
             visualization_dict = self._build_math_visualization(latex_formula or recognized_text)
@@ -178,6 +181,7 @@ class AIRecognitionService:
             preprocess=preprocess_info,
             visualization=visualization_dict,
             explanation=explanation,
+            subject_details=subject_details,
         )
 
     def _normalize_subject(self, subject: str) -> str:
