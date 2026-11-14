@@ -4,9 +4,9 @@ from pydantic import BaseModel, Field
 
 class AmbiguousToken(BaseModel):
     bbox: List[int] = Field(default_factory=lambda: [0, 0, 0, 0])  # [x, y, width, height]
-    detected_text: str
-    confidence: float
-    suggestions: List[str]  # e.g., ["sin", "sim", "sum"]
+    detected_text: str = Field(default="")
+    confidence: float = Field(default=0.8)
+    suggestions: List[str] = Field(default_factory=list)  # e.g., ["sin", "sim", "sum"]
 
 
 class VisualizationData(BaseModel):
@@ -37,9 +37,41 @@ class RecognizeCanvasResponse(BaseModel):
     visualization: Optional[VisualizationData] = None
     explanation: Optional[str] = None
     subject_details: Optional[Dict[str, Any]] = None
+    illustration: Optional[ChalkIllustrationData] = None
     latency_ms: Optional[int] = None
     provider: Optional[str] = None
     debounce_ms: Optional[int] = 800
+
+
+class ChalkIllustrationData(BaseModel):
+    concept: str
+    subject: str = "TIENG_ANH"
+    illustration_type: str = "CHALK_SVG"
+    svg_content: str
+    image_data_url: str
+    caption: str
+    suggested_position: Dict[str, int] = Field(default_factory=lambda: {"x": 300, "y": 60, "width": 220, "height": 220})
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+
+
+class IllustrationRequest(BaseModel):
+    concept: str = Field(..., description="Từ vựng tiếng Anh hoặc khái niệm Sinh, Địa cần minh họa")
+    subject: str = Field(default="TIENG_ANH", description="Môn học: TIENG_ANH, SINH_HOC, DIA_LY")
+    style: str = Field(default="white_chalk", description="Phong cách nét vẽ: white_chalk")
+    target_bbox: Optional[List[int]] = Field(default=None, description="Tọa độ vùng chữ viết [x, y, w, h] trên bảng")
+
+
+class IllustrationResponse(BaseModel):
+    concept: str
+    subject: str
+    illustration_type: str = "CHALK_SVG"
+    svg_content: str
+    image_data_url: str
+    caption: str
+    suggested_position: Dict[str, int]
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
 
 
 class CorrectTokenRequest(BaseModel):
@@ -65,3 +97,4 @@ class PreprocessCanvasResponse(BaseModel):
     original_size_kb: float
     processed_size_kb: float
     compression_ratio_percent: float
+

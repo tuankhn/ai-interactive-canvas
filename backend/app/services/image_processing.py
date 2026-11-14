@@ -134,8 +134,13 @@ class ImageProcessingService:
             cv_img = cls.pil_to_cv2(pil_img)
             gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY) if len(cv_img.shape) == 3 else cv_img
 
+            # Tự động ước lượng màu nền qua 4 góc ảnh để phân tách nét vẽ bất kể nền trắng hay nền tối
+            corners = [gray[0, 0], gray[0, -1], gray[-1, 0], gray[-1, -1]]
+            bg_val = int(np.median(corners))
+            diff = cv2.absdiff(gray, bg_val)
+
             # Phân tách nét vẽ kỹ thuật số ra khỏi nền hiển thị
-            _, mask = cv2.threshold(gray, stroke_threshold, 255, cv2.THRESH_BINARY)
+            _, mask = cv2.threshold(diff, stroke_threshold, 255, cv2.THRESH_BINARY)
 
             # Khử nhiễu pixel cô lập bằng phép toán hình thái học
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -161,7 +166,8 @@ class ImageProcessingService:
         else:
             # Fallback với Pillow
             gray = pil_img.convert("L")
-            mask = gray.point(lambda p: 255 if p > stroke_threshold else 0)
+            bg_val = gray.getpixel((0, 0))
+            mask = gray.point(lambda p: 255 if abs(p - bg_val) > stroke_threshold else 0)
             bbox = mask.getbbox()
             if not bbox:
                 return None, False

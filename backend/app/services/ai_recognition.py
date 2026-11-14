@@ -11,12 +11,14 @@ from app.core.config import settings
 from app.ai.gemini_service import gemini_service
 from app.ai.mathpix_service import mathpix_service
 from app.services.image_preprocess import preprocess_canvas_image
+from app.services.illustration_service import illustration_service
 from app.schemas.canvas_schema import (
     RecognizeRequest,
     RecognizeResponse,
     PreprocessInfo,
     BoundingBox,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,43 @@ class AIRecognitionService:
         # Trích xuất subject_details nếu có
         subject_details = getattr(g_res, "subject_details", None) if 'g_res' in locals() else None
 
+        # Task TF2850F: Tạo hình ảnh minh họa nét phấn trắng (Chalkboard Sketch)
+        # khi giáo viên viết từ vựng Tiếng Anh hoặc khái niệm Sinh, Địa
+        illustration_dict: Optional[Dict[str, Any]] = None
+        target_bbox_list = [
+            bbox_dict.get("x", 40),
+            bbox_dict.get("y", 40),
+            bbox_dict.get("width", 150),
+            bbox_dict.get("height", 60)
+        ]
+
+        # Xác định từ khóa khái niệm để minh họa
+        concept_to_illustrate = None
+        if subject_details and isinstance(subject_details, dict):
+            concept_to_illustrate = subject_details.get("word") or subject_details.get("concept") or subject_details.get("topic")
+
+        if not concept_to_illustrate:
+            concept_to_illustrate = recognized_text.split("\n")[0].split("(")[0].split("/")[0].strip()
+
+        # Kiểm tra điều kiện tự động tạo minh họa phấn trắng:
+        # 1. Thuộc môn Tiếng Anh, Sinh học hoặc Địa lý
+        # 2. Hoặc từ khóa khớp với kho khái niệm phổ biến (như Photosynthesis, Solar System, Volcano,...)
+        should_illustrate = (
+            subject_norm in ["TIENG_ANH", "SINH_HOC", "DIA_LY"] or
+            illustration_service.find_matching_template(concept_to_illustrate) is not None
+        )
+
+        if should_illustrate and concept_to_illustrate:
+            try:
+                chalk_illu = illustration_service.generate_chalk_illustration(
+                    concept=concept_to_illustrate,
+                    subject=subject_norm,
+                    target_bbox=target_bbox_list
+                )
+                illustration_dict = chalk_illu.model_dump()
+            except Exception as ill_err:
+                logger.warning(f"Không thể tạo ảnh minh họa phấn trắng: {ill_err}")
+
         # Đảm bảo có visualization cho đồ thị hàm số 2D nếu là môn Toán/MATH
         if (display_subject in ["MATH", "TOAN"]) and not visualization_dict:
             visualization_dict = self._build_math_visualization(latex_formula or recognized_text)
@@ -182,6 +221,7 @@ class AIRecognitionService:
             visualization=visualization_dict,
             explanation=explanation,
             subject_details=subject_details,
+            illustration=illustration_dict,
         )
 
     def _normalize_subject(self, subject: str) -> str:
@@ -195,7 +235,12 @@ class AIRecognitionService:
             return "HOA_HOC"
         elif sub in ["ENG", "TIENG_ANH", "ENGLISH"]:
             return "TIENG_ANH"
+        elif sub in ["BIO", "SINH", "SINH_HOC", "BIOLOGY"]:
+            return "SINH_HOC"
+        elif sub in ["GEO", "DIA", "DIA_LY", "GEOGRAPHY"]:
+            return "DIA_LY"
         return sub
+
 
     def _build_math_visualization(self, latex: str) -> Optional[Dict[str, Any]]:
         """Tự động phân tích phương trình và tạo thông số vẽ đồ thị Plotly nếu là hàm số."""

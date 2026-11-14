@@ -38,7 +38,7 @@ class Settings:
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "14"))
 
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     MATHPIX_APP_ID: str = os.getenv("MATHPIX_APP_ID", "")
     MATHPIX_APP_KEY: str = os.getenv("MATHPIX_APP_KEY", "")
 

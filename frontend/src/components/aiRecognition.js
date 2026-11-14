@@ -1,4 +1,4 @@
-import { Text } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
+import { Text, FabricImage } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 import { $, fabricCanvas, state, ui, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
@@ -26,8 +26,20 @@ const getAiElements = () => ({
   closeBtn: $('closeAiPanelBtn'),
   insertBtn: $('insertToBoardBtn'),
   retryBtn: $('reRecognizeBtn'),
-  subjectSelect: $('subjectSelect')
+  subjectSelect: $('subjectSelect'),
+  // Task TF2850F: Các phần tử cho tính năng minh họa nét phấn trắng
+  illustrationBox: $('aiIllustrationBox'),
+  illustrationTitle: $('aiIllustrationTitle'),
+  illustrationPreview: $('aiIllustrationPreview'),
+  illustrationDesc: $('aiIllustrationDesc'),
+  insertIllustrationBtn: $('insertIllustrationBtn'),
+  illustrateBtn: $('aiIllustrateBtn'),
+  illustrateDialog: $('illustrateDialog'),
+  illustrateInput: $('illustrateInput'),
+  cancelIllustrateBtn: $('cancelIllustrateBtn'),
+  submitIllustrateBtn: $('submitIllustrateBtn'),
 });
+
 
 export function scheduleAIDebounce() {
   if (!isAutoAiEnabled || state.ended) return;
@@ -188,6 +200,24 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
       }
     }
 
+    // Task TF2850F: Hiển thị hình minh họa nét phấn trắng nếu có
+    if (aiElements.illustrationBox) {
+      if (data.illustration && (data.illustration.svg_content || data.illustration.image_data_url)) {
+        aiElements.illustrationBox.hidden = false;
+        if (aiElements.illustrationTitle) {
+          aiElements.illustrationTitle.textContent = data.illustration.caption || `Minh họa: ${data.illustration.concept}`;
+        }
+        if (aiElements.illustrationPreview) {
+          aiElements.illustrationPreview.innerHTML = data.illustration.svg_content || '';
+        }
+        if (aiElements.illustrationDesc) {
+          aiElements.illustrationDesc.textContent = data.illustration.description || '';
+        }
+      } else {
+        aiElements.illustrationBox.hidden = true;
+      }
+    }
+
     // Hiển thị giải thích hoặc gợi ý
     if (aiElements.explanationBox) {
       if (data.explanation) {
@@ -225,12 +255,60 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
   }
 }
 
-export function insertAiResultToBoard() {
+/**
+ * Task TF2850F: Chèn hình ảnh minh họa nét phấn trắng lên mặt bảng
+ * tại tọa độ xác định (mặc định đặt ngay cạnh từ vựng / khái niệm).
+ */
+export async function insertIllustrationToBoard(illuData, targetX = null, targetY = null) {
+  if (!illuData || !illuData.image_data_url) return null;
+  try {
+    const img = new Image();
+    img.src = illuData.image_data_url;
+    if (img.decode) {
+      await img.decode();
+    } else {
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = rej;
+      });
+    }
+
+    const x = targetX !== null ? targetX : (illuData.suggested_position?.x || 340);
+    const y = targetY !== null ? targetY : (illuData.suggested_position?.y || 40);
+    const w = illuData.suggested_position?.width || 220;
+    const h = illuData.suggested_position?.height || 220;
+
+    const fabricImg = new FabricImage(img, {
+      left: x,
+      top: y,
+      scaleX: w / (img.naturalWidth || 320),
+      scaleY: h / (img.naturalHeight || 240),
+      selectable: false,
+      evented: false,
+      objectCaching: false
+    });
+    fabricImg._hitPoints = [{ x, y }, { x: x + w, y: y + h }];
+    fabricImg._hitWidth = 30;
+
+    fabricCanvas.add(fabricImg);
+    return fabricImg;
+  } catch (err) {
+    console.error('Không thể chèn hình minh họa lên bảng:', err);
+    return null;
+  }
+}
+
+export async function insertAiResultToBoard() {
   if (!currentAiResult) return;
   let textToInsert = currentAiResult.latex || currentAiResult.recognized_text;
 
   const isEng = (currentAiResult.subject || '').toUpperCase().includes('ENG') || 
                 (currentAiResult.subject || '').toUpperCase().includes('ANH');
+  const isBio = (currentAiResult.subject || '').toUpperCase().includes('SINH') || 
+                (currentAiResult.subject || '').toUpperCase().includes('BIO');
+  const isGeo = (currentAiResult.subject || '').toUpperCase().includes('DIA') || 
+                (currentAiResult.subject || '').toUpperCase().includes('GEO');
+
   if (isEng && currentAiResult.subject_details) {
     const d = currentAiResult.subject_details;
     if (d.topic === 'VOCABULARY' || d.ipa || d.word_type) {
@@ -245,31 +323,50 @@ export function insertAiResultToBoard() {
       const struct = d.grammar_structure ? `\n- Ngữ pháp: ${d.grammar_structure}` : '';
       textToInsert = `${sentence}${struct}`;
     }
+  } else if ((isBio || isGeo) && currentAiResult.subject_details) {
+    const d = currentAiResult.subject_details;
+    const name = d.vietnamese_name || d.concept || currentAiResult.recognized_text || '';
+    const formula = d.formula ? `\n- Công thức: ${d.formula}` : '';
+    const summary = d.summary || d.geographical_significance ? `\n- Khái niệm: ${d.summary || d.geographical_significance}` : '';
+    textToInsert = `${name}${formula}${summary}`;
   }
 
-  if (!textToInsert) return;
+  if (!textToInsert && !currentAiResult.illustration) return;
 
   const before = snapshot();
-  const textObj = new Text(textToInsert, {
-    left: 40,
-    top: 40,
-    fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
-    fontSize: 22,
-    fontFamily: 'Arial, sans-serif',
-    selectable: false,
-    evented: false
-  });
-  textObj._hitPoints = [{ x: 40, y: 40 }, { x: 250, y: 40 }];
-  textObj._hitWidth = 30;
+  let textWidth = 260;
 
-  fabricCanvas.add(textObj);
+  if (textToInsert) {
+    const textObj = new Text(textToInsert, {
+      left: 40,
+      top: 40,
+      fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
+      fontSize: 22,
+      fontFamily: 'Arial, sans-serif',
+      selectable: false,
+      evented: false
+    });
+    textObj._hitPoints = [{ x: 40, y: 40 }, { x: 250, y: 40 }];
+    textObj._hitWidth = 30;
+    fabricCanvas.add(textObj);
+    textWidth = Math.max(220, textObj.width || 260);
+  }
+
+  // Task TF2850F: Tự động đặt hình minh họa nét phấn trắng bên cạnh từ vựng
+  if (currentAiResult.illustration) {
+    const illuX = 40 + textWidth + 35; // Đặt cạnh từ vựng
+    const illuY = 40;
+    await insertIllustrationToBoard(currentAiResult.illustration, illuX, illuY);
+  }
+
   fabricCanvas.requestRenderAll();
   remember(before);
   updateHint();
-  setStatus('Đã chèn kết quả AI vào mặt bảng');
+  setStatus('Đã chèn kết quả AI và hình minh họa nét phấn vào bảng');
   const aiElements = getAiElements();
   if (aiElements.overlay) aiElements.overlay.hidden = true;
 }
+
 
 export function initBoardWebSocket() {
   if (state.ended) return;
@@ -322,6 +419,21 @@ export function setupAIRecognition() {
   if (aiElements.insertBtn) {
     aiElements.insertBtn.addEventListener('click', insertAiResultToBoard);
   }
+  if (aiElements.insertIllustrationBtn) {
+    aiElements.insertIllustrationBtn.addEventListener('click', async () => {
+      if (currentAiResult?.illustration) {
+        const illuX = currentAiResult.illustration.suggested_position?.x || 320;
+        const illuY = currentAiResult.illustration.suggested_position?.y || 40;
+        const before = snapshot();
+        await insertIllustrationToBoard(currentAiResult.illustration, illuX, illuY);
+        fabricCanvas.requestRenderAll();
+        remember(before);
+        updateHint();
+        setStatus(`Đã chèn hình minh họa: ${currentAiResult.illustration.concept}`);
+        if (aiElements.overlay) aiElements.overlay.hidden = true;
+      }
+    });
+  }
   if (aiElements.retryBtn) {
     aiElements.retryBtn.addEventListener('click', () => {
       performAIRecognition({ isDebounced: false });
@@ -336,5 +448,79 @@ export function setupAIRecognition() {
     });
   }
 
+  // Task TF2850F: Xử lý nút mở Modal Tạo ảnh minh họa từ vựng / khái niệm
+  if (aiElements.illustrateBtn) {
+    aiElements.illustrateBtn.addEventListener('click', () => {
+      closePanels();
+      if (aiElements.illustrateInput) aiElements.illustrateInput.value = '';
+      if (aiElements.illustrateDialog) aiElements.illustrateDialog.showModal();
+    });
+  }
+  if (aiElements.cancelIllustrateBtn && aiElements.illustrateDialog) {
+    aiElements.cancelIllustrateBtn.addEventListener('click', () => {
+      aiElements.illustrateDialog.close();
+    });
+  }
+  if (aiElements.submitIllustrateBtn && aiElements.illustrateDialog) {
+    aiElements.submitIllustrateBtn.addEventListener('click', async () => {
+      const concept = aiElements.illustrateInput?.value?.trim();
+      if (!concept) {
+        alert('Vui lòng nhập từ vựng hoặc khái niệm cần tạo minh họa.');
+        return;
+      }
+      aiElements.illustrateDialog.close();
+      setStatus(`Đang gọi AI tạo hình minh họa nét phấn trắng: "${concept}"...`);
+
+      try {
+        const subject = aiElements.subjectSelect?.value || 'TIENG_ANH';
+        const response = await fetch('/api/v1/illustrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            concept: concept,
+            subject: subject,
+            style: 'white_chalk',
+            target_bbox: [50, 50, 150, 50]
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Máy chủ trả về HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const before = snapshot();
+
+        // Chèn nhãn từ vựng / khái niệm lên bảng
+        const labelObj = new Text(concept, {
+          left: 40,
+          top: 60,
+          fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
+          fontSize: 24,
+          fontFamily: 'Arial, sans-serif',
+          fontWeight: 'bold',
+          selectable: false,
+          evented: false
+        });
+        fabricCanvas.add(labelObj);
+
+        // Đặt hình minh họa nét phấn trắng ngay cạnh từ vựng
+        const illuX = 40 + Math.max(180, labelObj.width || 180) + 30;
+        const illuY = 40;
+        await insertIllustrationToBoard(data, illuX, illuY);
+
+        fabricCanvas.requestRenderAll();
+        remember(before);
+        updateHint();
+        setStatus(`Đã tạo hình minh họa nét phấn trắng cho "${concept}" thành công!`);
+      } catch (err) {
+        console.error('Lỗi tạo hình minh họa AI:', err);
+        alert(`Không thể tạo hình minh họa: ${err.message}`);
+        setStatus('Lỗi tạo hình minh họa AI');
+      }
+    });
+  }
+
   initBoardWebSocket();
 }
+

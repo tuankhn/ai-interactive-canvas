@@ -10,12 +10,16 @@ from fastapi import APIRouter, HTTPException, status
 from app.core.config import settings
 from app.services.ai_recognition import ai_recognition_service
 from app.services.image_processing import image_processing_service
+from app.services.illustration_service import illustration_service
 from app.schemas.canvas_schema import RecognizeRequest, RecognizeResponse
 from app.schemas.canvas import (
     PreprocessCanvasRequest,
     PreprocessCanvasResponse,
     CorrectTokenRequest,
+    IllustrationRequest,
+    IllustrationResponse,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +163,60 @@ async def get_providers_status():
 
 
 @router.post(
+    "/illustrate",
+    response_model=IllustrationResponse,
+    summary="Tạo hình ảnh minh họa nét phấn trắng cho từ vựng và khái niệm (Task TF2850F)",
+    description="Khi giáo viên viết từ vựng Tiếng Anh hoặc khái niệm Sinh, Địa (như Photosynthesis, Solar System, Volcano), gọi AI tạo hình minh họa nét vẽ phấn trắng và đặt cạnh từ vựng.",
+)
+async def create_illustration(request: IllustrationRequest):
+    """
+    API tạo ảnh minh họa phấn trắng học đường (Chalkboard Sketch Vector):
+    - Hỗ trợ từ vựng Tiếng Anh, khái niệm Sinh học, Địa lý.
+    - Trả về mã SVG nét phấn trắng, Data URL Base64 và tọa độ đặt cạnh từ vựng.
+    """
+    if not request.concept or not request.concept.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tên khái niệm hoặc từ vựng không được để trống",
+        )
+
+    try:
+        result = illustration_service.generate_chalk_illustration(
+            concept=request.concept,
+            subject=request.subject,
+            target_bbox=request.target_bbox,
+        )
+        return IllustrationResponse(**result.model_dump())
+    except Exception as e:
+        logger.error(f"Lỗi tạo ảnh minh họa nét phấn: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Tạo ảnh minh họa thất bại: {str(e)}",
+        )
+
+
+@router.post(
+    "/canvas/illustrate",
+    summary="Endpoint tương thích tạo ảnh minh họa phấn trắng cho SmartCanvas",
+)
+async def canvas_illustrate_alias(payload: Dict[str, Any]):
+    concept = payload.get("concept") or payload.get("keyword") or payload.get("text") or ""
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tên khái niệm hoặc từ vựng không được để trống",
+        )
+
+    req = IllustrationRequest(
+        concept=str(concept),
+        subject=payload.get("subject", "TIENG_ANH"),
+        style=payload.get("style", "white_chalk"),
+        target_bbox=payload.get("target_bbox"),
+    )
+    return await create_illustration(req)
+
+
+@router.post(
     "/canvas/correct-token",
     summary="Sửa ký tự mơ hồ hoặc công thức nhận diện chưa chuẩn",
 )
@@ -176,3 +234,4 @@ async def correct_token(request: CorrectTokenRequest):
         "updated_latex": updated_latex,
         "message": "Đã cập nhật ký tự và công thức LaTeX thành công",
     }
+

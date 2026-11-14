@@ -24,8 +24,11 @@
             <option value="TOAN" selected>Toán học (LaTeX)</option>
             <option value="VAT_LY">Vật lý (Công thức/Vector)</option>
             <option value="HOA_HOC">Hóa học (Phương trình/Chất)</option>
-            <option value="TIENG_ANH">Tiếng Anh (Từ vựng/Khái niệm)</option>
+            <option value="TIENG_ANH">Tiếng Anh (Từ vựng/Minh họa)</option>
+            <option value="SINH_HOC">Sinh học (Quang hợp/Tế bào)</option>
+            <option value="DIA_LY">Địa lý (Núi lửa/Hệ Mặt Trời)</option>
           </select>
+
         </div>
       </div>
       <div class="session-actions">
@@ -50,7 +53,9 @@
         
         <!-- Nút kích hoạt nhận diện AI thủ công & Bật/Tắt tự động Debounce 800ms -->
         <button class="tool-button tool-ai" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini 2.5 Flash / Mathpix) bóc tách công thức">Nhận diện AI</button>
+        <button class="tool-button tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét vẽ phấn trắng từ vựng và khái niệm (Task TF2850F)">Minh họa AI</button>
         <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
+
         
         <div class="toolbar-divider" role="separator" aria-hidden="true"></div>
 
@@ -145,8 +150,20 @@
                     <code id="aiLatexRaw" class="ai-latex-raw">--</code>
                   </div>
                   <div id="aiExplanationBox" class="ai-explanation-box"></div>
+                  
+                  <!-- Khung hiển thị hình minh họa nét phấn trắng AI (Task TF2850F) -->
+                  <div id="aiIllustrationBox" class="ai-illustration-box" hidden>
+                    <div class="ai-illustration-head">
+                      <span class="ai-chalk-badge">Nét phấn trắng AI</span>
+                      <strong id="aiIllustrationTitle" class="ai-illustration-title">Minh họa khái niệm</strong>
+                    </div>
+                    <div id="aiIllustrationPreview" class="ai-illustration-preview"></div>
+                    <div id="aiIllustrationDesc" class="ai-illustration-desc"></div>
+                    <button id="insertIllustrationBtn" class="ai-btn ai-btn-chalk" type="button" title="Chèn riêng hình minh họa nét phấn trắng vào cạnh từ vựng">Chèn hình cạnh từ vựng</button>
+                  </div>
                 </div>
               </div>
+
               <div class="ai-panel-footer">
                 <button id="insertToBoardBtn" class="ai-btn ai-btn-primary" type="button" title="Chèn văn bản / công thức nhận diện trực tiếp vào vị trí bảng">Chèn vào mặt bảng</button>
                 <button id="reRecognizeBtn" class="ai-btn ai-btn-secondary" type="button" title="Gửi lại ảnh nét vẽ nhận diện">Nhận diện lại</button>
@@ -207,6 +224,19 @@
     </div>
   </dialog>
 
+  <dialog id="illustrateDialog" class="clear-dialog" aria-labelledby="illustrateDialogTitle">
+    <h2 id="illustrateDialogTitle">🎨 AI Tạo hình minh họa nét phấn trắng</h2>
+    <p>Nhập từ vựng Tiếng Anh hoặc khái niệm Sinh học, Địa lý (như <strong>Photosynthesis, Solar System, Volcano, Cell, Heart, Apple...</strong>) để AI tạo hình minh họa nét phấn trắng và đặt cạnh từ vựng trên bảng vẽ:</p>
+    <div style="margin: 14px 0;">
+      <input id="illustrateInput" type="text" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:6px;border:1px solid #cbd5e1;font-size:15px;" placeholder="Ví dụ: Photosynthesis, Solar System, Volcano, Apple, Heart..." />
+    </div>
+    <div class="dialog-actions">
+      <button id="cancelIllustrateBtn" class="dialog-cancel" type="button">Hủy</button>
+      <button id="submitIllustrateBtn" class="dialog-primary" type="button">Tạo và chèn lên bảng</button>
+    </div>
+  </dialog>
+
   <script type="module" src="./src/extensions/handwriting-entry.js"></script>
+
 </body>
 </html>
