@@ -58,3 +58,143 @@ body.hw-selecting .toolbar .tool-button.is-active:not(#handwritingTool) {
   .hw-dialog h2 { font-size: 18px; }
   .hw-dialog .hw-actions button { flex: 1 1 auto; }
 }
+
+
+/* Đồ thị Plotly nổi: cửa sổ độc lập, không bị canvas cắt, có kéo / thu phóng. */
+.pg-panel {
+  position: fixed; z-index: 1200; left: 12px; top: 65px;
+  width: min(720px, calc(100vw - 24px)); height: min(690px, calc(100dvh - 80px));
+  min-width: min(320px, calc(100vw - 16px)); min-height: min(330px, calc(100dvh - 16px));
+  max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px);
+  display: flex; flex-direction: column; resize: both; overflow: hidden;
+  border: 2px solid #243474; border-radius: 12px; background: #fff;
+  color: #1e293b; box-shadow: 0 16px 50px #0f172a55;
+  font: 13px/1.4 Arial, Helvetica, sans-serif;
+  touch-action: auto; user-select: text;
+}
+.pg-panel[hidden] { display: none !important; }
+.pg-panel *, .pg-panel *::before, .pg-panel *::after { box-sizing: border-box; }
+.pg-header {
+  flex: 0 0 auto; min-height: 56px; z-index: 3;
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; padding: 3px 6px 3px 14px;
+  color: #fff; background: #222f71; cursor: move;
+  touch-action: none; user-select: none;
+}
+.pg-header strong { font-size: 14px; }
+.pg-header small { font-weight: 400; font-size: 11px; opacity: .85; }
+.pg-window-actions { display: flex; gap: 5px; flex: 0 0 auto; }
+.pg-window-actions button {
+  flex: 0 0 48px; width: 48px; height: 48px; border: 1px solid #93a4ea;
+  border-radius: 8px; background: #354789; color: white;
+  font: bold 23px/1 Arial, sans-serif; cursor: pointer;
+}
+.pg-window-actions button:hover { background: #4b60a6; }
+.pg-body { min-height: 0; flex: 1 1 auto; overflow: auto; overscroll-behavior: contain; padding: 12px 16px 14px; }
+.pg-body label { display: block; font-size: 12px; font-weight: 700; margin: 7px 0 6px; }
+.pg-body input, .pg-body button, .pg-body select { font: inherit; }
+.pg-body input[type=text], .pg-body select {
+  min-width: 0; width: 100%; min-height: 48px; padding: 9px;
+  border: 1px solid #94a3b8; border-radius: 8px; background: #fff; color: #172033;
+}
+.pg-equation-row { display: flex; gap: 8px; align-items: stretch; }
+.pg-equation-row input { flex: 1; }
+.pg-equation-row button, .pg-actions button {
+  min-height: 48px; min-width: 48px; padding: 8px 12px; border: 1px solid #253a91;
+  border-radius: 8px; background: #253a91; color: #fff; font-weight: 700; cursor: pointer;
+}
+.pg-chart-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 5px 0 8px; }
+.pg-chart-actions button {
+  min-height: 48px; min-width: 80px; flex: 1 1 0;
+  padding: 8px; border: 1px solid #8390b8; border-radius: 8px;
+  background: #eef2ff; color: #1e326d; font-weight: 700; cursor: pointer;
+}
+.pg-chart-actions button:hover { background: #dbe5ff; }
+.pg-message { margin: 6px 0; font-size: 12px; min-height: 17px; color: #475569; }
+.pg-message.pg-error { color: #b91c1c; font-weight: 700; }
+.pg-chart {
+  display: block; width: 100%; height: 330px; min-height: 260px;
+  border: 1px solid #e2e8f0; border-radius: 8px; background: white;
+}
+.pg-chart-tip { margin: 4px 0 8px; color: #64748b; font-size: 11px; }
+.pg-formula { padding: 6px 4px; min-height: 28px; font-size: 13px; font-weight: 700; color: #172554; overflow-wrap: anywhere; }
+.pg-sliders { display: grid; gap: 7px; margin: 3px 0 8px; }
+.pg-slider-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 70px; align-items: center; gap: 8px; }
+.pg-slider-row label { margin: 0; font-size: 14px; font-weight: 700; }
+.pg-slider-row input[type=range] { min-width: 0; width: 100%; height: 48px; accent-color: #253a91; }
+.pg-slider-row input[type=number] { width: 70px; min-width: 0; min-height: 48px; padding: 5px; border: 1px solid #94a3b8; border-radius: 6px; }
+.pg-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.pg-actions button { flex: 1; }
+.pg-actions button:last-child { background: #fff; color: #243474; }
+.pg-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.pg-note { font-size: 11px; color: #64748b; margin: 8px 0 0; }
+.pg-panel.pg-minimized { height: 56px !important; min-height: 56px; resize: none; }
+.pg-panel.pg-minimized .pg-body { display: none; }
+.pg-panel.pg-maximized {
+  left: 8px !important; top: 8px !important;
+  width: calc(100vw - 16px) !important; height: calc(100dvh - 16px) !important;
+  resize: none;
+}
+.pg-panel.pg-maximized .pg-chart { height: min(54vh, 560px); }
+.pg-panel button:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+.pg-failure { position: fixed; z-index: 9999; left: 15px; right: 15px; bottom: 12px; padding: 12px; border: 1px solid #fda4af; border-radius: 8px; background: #fff1f2; color: #9f1239; font: 14px Arial, sans-serif; }
+#pgFromHandwriting { border-color: #243474; color: #243474; background: #eef2ff; }
+@media (max-width: 690px) {
+  .pg-panel { width: calc(100vw - 16px); height: min(660px, calc(100dvh - 16px)); }
+  .pg-header small { display: none; }
+  .pg-body { padding: 10px; }
+  .pg-chart { height: 255px; min-height: 220px; }
+  .pg-chart-actions { gap: 4px; }
+}
+
+
+/* Chỉnh PHẦN ẢNH ĐỒ THỊ ĐÃ CHÈN LÊN BẢNG: không ảnh hưởng tool bút/tẩy. */
+.pg-edit-tool { font-size: 11px; line-height: 1.15; white-space: normal; }
+.pg-board-edit-layer {
+  position: absolute; inset: 0; z-index: 8; overflow: hidden;
+  background: rgba(37, 99, 235, .025);
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  cursor: move;
+}
+.pg-board-edit-layer[hidden] { display: none !important; }
+.pg-board-selection {
+  position: absolute; border: 2px solid #2563eb;
+  outline: 1px solid rgba(255,255,255,.85);
+  pointer-events: none; box-shadow: 0 0 0 1px rgba(37,99,235,.12);
+}
+.pg-board-selection[hidden] { display: none !important; }
+.pg-board-selection .pg-handle {
+  position: absolute; width: 18px; height: 18px; border: 2px solid #fff;
+  border-radius: 4px; background: #2563eb; box-shadow: 0 1px 4px #0004;
+}
+.pg-board-selection .pg-nw { left: -10px; top: -10px; }
+.pg-board-selection .pg-ne { right: -10px; top: -10px; }
+.pg-board-selection .pg-sw { left: -10px; bottom: -10px; }
+.pg-board-selection .pg-se { right: -10px; bottom: -10px; }
+.pg-board-controls {
+  position: absolute; top: 9px; left: 9px; z-index: 2;
+  display: flex; gap: 7px; padding: 5px; border-radius: 10px;
+  background: rgba(255, 255, 255, .95); border: 1px solid #bfcbdf;
+  box-shadow: 0 3px 14px #17255424;
+}
+.pg-board-controls[hidden] { display: none !important; }
+.pg-board-controls button {
+  min-width: 48px; min-height: 48px; padding: 8px 12px;
+  border: 1px solid #7b8fbd; background: #eff4ff; color: #203475;
+  border-radius: 7px; cursor: pointer; font: 700 17px Arial, sans-serif;
+}
+.pg-board-controls button:last-child { font-size: 13px; }
+.pg-board-controls button:hover { background: #dce7ff; }
+.pg-board-controls button:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+.pg-board-help {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: calc(100% - 22px); text-align: center;
+  background: #eff6ff; color: #1e40af; padding: 8px 12px;
+  border: 1px solid #93c5fd; border-radius: 9px; font: 12px/1.5 Arial, sans-serif;
+  pointer-events: none;
+}
+.pg-board-help[hidden] { display: none !important; }
+@media (max-width: 690px) {
+  .pg-board-controls { top: 7px; left: 7px; }
+  .pg-board-help { top: 70px; }
+}
