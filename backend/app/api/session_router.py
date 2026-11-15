@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from typing import Optional
 import uuid
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from app.schemas.canvas_schema import PageSaveRequest, SnapshotSaveRequest
 from app.core.database import in_memory_pages, in_memory_snapshots
 from app.core.storage import upload_snapshot_to_minio
+from app.api.auth_router import assert_user_can_access_class, get_current_user_from_header
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["Board Pages & Snapshots (MinIO + PostgreSQL)"])
 
@@ -32,8 +33,14 @@ async def save_board_page(payload: PageSaveRequest):
 
 
 @router.get("/pages/{room_id}/{session_id}")
-async def get_board_pages(room_id: str, session_id: str):
-    """Lấy danh sách các trang bảng trong phiên học hiện tại."""
+async def get_board_pages(
+    room_id: str,
+    session_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Lấy danh sách các trang bảng trong phiên học hiện tại (kiểm tra phân quyền lớp nếu là HS/PH)."""
+    user = get_current_user_from_header(authorization, required=False)
+    assert_user_can_access_class(user, requested_room_id=room_id)
     key = f"{room_id}:{session_id}"
     pages = in_memory_pages.get(key, {})
     return {
@@ -105,9 +112,16 @@ async def list_snapshots(
     subject: Optional[str] = Query(default=None, description="Lọc theo môn học (vd: TOAN)"),
     date: Optional[str] = Query(default=None, description="Lọc theo ngày YYYY-MM-DD"),
     q: Optional[str] = Query(default=None, description="Tìm kiếm theo nội dung văn bản OCR / LaTeX"),
+    authorization: Optional[str] = Header(default=None),
 ):
     """Truy vấn và tìm kiếm danh sách Snapshot theo lớp, môn học, ngày học và nội dung OCR."""
+    user = get_current_user_from_header(authorization, required=False)
+    assert_user_can_access_class(user, requested_class_name=class_name)
+
     results = in_memory_snapshots
+    if user and user.get("role") in ("STUDENT", "PARENT"):
+        allowed = set(user.get("allowed_classes") or [])
+        results = [r for r in results if r["tags"]["class_name"].replace(" ", "").upper() in allowed]
     if class_name:
         results = [r for r in results if r["tags"]["class_name"].lower() == class_name.lower()]
     if subject:

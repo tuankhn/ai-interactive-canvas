@@ -7,8 +7,9 @@ in_memory_pages: Dict[str, Dict[int, Dict[str, Any]]] = {}
 in_memory_snapshots: list = []
 synced_offline_ids: Dict[str, Dict[str, Any]] = {}
 
-# Bộ nhớ đệm xác thực & phiên thiết bị phòng học 14 ngày (TF28514)
+# Bộ nhớ đệm xác thực & phiên thiết bị phòng học 14 ngày (TF28514, TF28515)
 in_memory_users: Dict[str, Dict[str, Any]] = {}
+in_memory_student_bindings: Dict[str, str] = {}  # student_code -> user_id (1 học sinh = 1 tài khoản)
 in_memory_otps: Dict[str, Dict[str, Any]] = {}
 in_memory_refresh_sessions: Dict[str, Dict[str, Any]] = {}
 revoked_token_jtis: set = set()

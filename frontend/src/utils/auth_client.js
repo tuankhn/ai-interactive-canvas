@@ -374,3 +374,84 @@ export function setupTeacherAuth() {
     refreshStoredTeacherSession();
   }
 }
+
+// ==============================================================================
+// TASK TF28515: API HELPER CHO CỔNG HỌC SINH / PHỤ HUYNH (SĐT & PHÂN QUYỀN LỚP)
+// ==============================================================================
+const PORTAL_SESSION_KEY = 'ai-canvas:portal-session:v1';
+
+async function authJsonFetch(url, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  return data;
+}
+
+export function readPortalSession() {
+  try {
+    const raw = localStorage.getItem(PORTAL_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getPortalAuthHeaders() {
+  const session = readPortalSession();
+  return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+}
+
+export async function registerStudentOrParent({ fullName, phoneNumber, password, schoolLevel, className, studentCode, role }) {
+  const data = await authJsonFetch('/api/v1/auth/student/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      full_name: fullName,
+      phone_number: phoneNumber,
+      password,
+      school_level: schoolLevel,
+      class_name: className,
+      student_code: studentCode,
+      role,
+    }),
+  });
+  localStorage.setItem(PORTAL_SESSION_KEY, JSON.stringify(data));
+  return data;
+}
+
+export async function loginStudentOrParent({ phoneNumber, password, rememberMe = true }) {
+  const data = await authJsonFetch('/api/v1/auth/student/login', {
+    method: 'POST',
+    body: JSON.stringify({ phone_number: phoneNumber, password, remember_me: rememberMe }),
+  });
+  localStorage.setItem(PORTAL_SESSION_KEY, JSON.stringify(data));
+  return data;
+}
+
+export function requestPasswordResetOtp(phoneNumber) {
+  return authJsonFetch('/api/v1/auth/forgot-password/request-otp', {
+    method: 'POST',
+    body: JSON.stringify({ phone_number: phoneNumber }),
+  });
+}
+
+export function resetPasswordWithOtp({ phoneNumber, otpCode, newPassword }) {
+  return authJsonFetch('/api/v1/auth/forgot-password/reset', {
+    method: 'POST',
+    body: JSON.stringify({ phone_number: phoneNumber, otp_code: otpCode, new_password: newPassword }),
+  });
+}
+
+export function fetchStudentClassLessons({ className, subject } = {}) {
+  const params = new URLSearchParams();
+  if (className) params.set('class_name', className);
+  if (subject) params.set('subject', subject);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return authJsonFetch(`/api/v1/auth/student/lessons${qs}`, {
+    method: 'GET',
+    headers: getPortalAuthHeaders(),
+  });
+}
+
