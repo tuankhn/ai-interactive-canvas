@@ -33,6 +33,8 @@
       </div>
       <div class="session-actions">
         <span class="offline-sync-badge" id="offlineSyncBadge" title="Số ảnh snapshot lưu tạm trong IndexedDB chờ đồng bộ" hidden></span>
+        <span class="teacher-session-pill" id="teacherSessionPill" hidden></span>
+        <button class="teacher-auth-btn" id="teacherAuthBtn" type="button" title="Đăng nhập Giáo viên qua OTP Email (duy trì 14 ngày)">Đăng nhập GV</button>
         <span class="ai-status-indicator" id="aiStatusIndicator" title="Trạng thái kết nối AI">AI: Sẵn sàng</span>
         <span class="timer" id="sessionTimer">Đang diễn ra 00:00</span>
         <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
@@ -234,6 +236,125 @@
     <div class="dialog-actions">
       <button id="cancelIllustrateBtn" class="dialog-cancel" type="button">Hủy</button>
       <button id="submitIllustrateBtn" class="dialog-primary" type="button">Tạo và chèn lên bảng</button>
+    </div>
+  </dialog>
+
+  <dialog id="teacherLoginDialog" class="clear-dialog auth-dialog" aria-labelledby="teacherLoginTitle">
+    <h2 id="teacherLoginTitle">Đăng nhập Giáo viên (OTP Email)</h2>
+    <p id="teacherLoginSubtitle">Xác thực bằng Email và SĐT để duy trì phiên giảng dạy <strong>14 ngày</strong> trên thiết bị phòng học.</p>
+
+    <form id="teacherOtpRequestForm" novalidate>
+      <div class="auth-field">
+        <label for="teacherEmailInput">Email giáo viên</label>
+        <span id="teacherEmailHint" class="auth-hint">Ví dụ: giaovien@truong.edu.vn</span>
+        <input
+          type="email"
+          id="teacherEmailInput"
+          name="email"
+          autocomplete="username"
+          spellcheck="false"
+          required
+          autofocus
+          enterkeyhint="next"
+          aria-describedby="teacherEmailHint"
+          data-error="teacherEmailError"
+        />
+        <div id="teacherEmailError" class="auth-error-msg">
+          <span role="img" aria-label="Lỗi">❌</span> Vui lòng nhập đúng định dạng Email giáo viên.
+        </div>
+      </div>
+
+      <div class="auth-field">
+        <label for="teacherPhoneInput">Số điện thoại giáo viên</label>
+        <span id="teacherPhoneHint" class="auth-hint">Định dạng: 10 chữ số (ví dụ 0987654321)</span>
+        <input
+          type="tel"
+          id="teacherPhoneInput"
+          name="phone"
+          autocomplete="tel"
+          inputmode="tel"
+          pattern="(\+?84|0)[0-9]{8,11}"
+          required
+          enterkeyhint="done"
+          aria-describedby="teacherPhoneHint"
+          data-error="teacherPhoneError"
+        />
+        <div id="teacherPhoneError" class="auth-error-msg">
+          <span role="img" aria-label="Lỗi">❌</span> Nhập số điện thoại hợp lệ gồm 9–12 chữ số.
+        </div>
+      </div>
+
+      <p id="teacherRequestError" class="dialog-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="cancelTeacherLoginBtn" class="dialog-cancel" type="button">Đóng</button>
+        <button id="sendTeacherOtpBtn" class="dialog-primary" type="submit">Gửi mã OTP</button>
+      </div>
+    </form>
+
+    <form id="teacherOtpVerifyForm" novalidate hidden>
+      <div id="otpSentNotice" class="auth-otp-notice" role="status" aria-live="polite"></div>
+
+      <div class="auth-field">
+        <label for="teacherOtpInput">Mã OTP 6 số</label>
+        <span id="teacherOtpHint" class="auth-hint">Nhập đúng 6 chữ số đã gửi về Email của bạn</span>
+        <input
+          type="text"
+          id="teacherOtpInput"
+          name="otp"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          pattern="[0-9]{6}"
+          maxlength="6"
+          required
+          enterkeyhint="next"
+          aria-describedby="teacherOtpHint"
+          data-error="teacherOtpError"
+        />
+        <div id="teacherOtpError" class="auth-error-msg">
+          <span role="img" aria-label="Lỗi">❌</span> Mã OTP gồm đúng 6 chữ số.
+        </div>
+      </div>
+
+      <div class="auth-field">
+        <label for="teacherPasswordInput">Mật khẩu dự phòng (tùy chọn — băm Argon2/BCrypt)</label>
+        <span id="teacherPasswordHint" class="auth-hint">Tối thiểu 6 ký tự nếu muốn đặt mật khẩu nhanh</span>
+        <div class="auth-password-row">
+          <input
+            type="password"
+            id="teacherPasswordInput"
+            name="password"
+            autocomplete="current-password"
+            minlength="6"
+            enterkeyhint="done"
+            aria-describedby="teacherPasswordHint"
+            data-error="teacherPasswordError"
+          />
+          <button id="toggleTeacherPwBtn" class="auth-pw-toggle" type="button" aria-pressed="false">Hiện</button>
+        </div>
+        <div id="teacherPasswordError" class="auth-error-msg">
+          <span role="img" aria-label="Lỗi">❌</span> Mật khẩu tối thiểu 6 ký tự.
+        </div>
+      </div>
+
+      <label class="auth-remember-row">
+        <input type="checkbox" id="remember14DaysCheckbox" checked />
+        <span>Ghi nhớ thiết bị phòng học trong 14 ngày</span>
+      </label>
+
+      <p id="teacherVerifyError" class="dialog-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="backToOtpRequestBtn" class="dialog-cancel" type="button">Nhập lại Email</button>
+        <button id="verifyTeacherOtpBtn" class="dialog-primary" type="submit">Xác thực &amp; Đăng nhập</button>
+      </div>
+    </form>
+
+    <div id="teacherLoggedInView" class="auth-session-card" hidden>
+      <div id="teacherSessionSummary" class="auth-session-summary"></div>
+      <div class="dialog-actions">
+        <button id="closeSessionViewBtn" class="dialog-cancel" type="button">Đóng</button>
+        <button id="refreshTeacherSessionBtn" class="dialog-cancel" type="button">Làm mới phiên</button>
+        <button id="logoutTeacherBtn" class="dialog-danger" type="button">Đăng xuất</button>
+      </div>
     </div>
   </dialog>
 
