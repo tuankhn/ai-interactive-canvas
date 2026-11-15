@@ -2,6 +2,12 @@ import { Text, FabricImage } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+es
 import { $, fabricCanvas, state, ui, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
+import {
+  isOfflineMode,
+  markNetworkOffline,
+  handlePossibleNetworkError,
+  showCornerNotification,
+} from '../utils/offline_sync.js';
 
 let isAutoAiEnabled = true;
 let isRecognizing = false;
@@ -42,7 +48,7 @@ const getAiElements = () => ({
 
 
 export function scheduleAIDebounce() {
-  if (!isAutoAiEnabled || state.ended) return;
+  if (!isAutoAiEnabled || state.ended || isOfflineMode()) return;
   if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
   aiDebounceTimer = setTimeout(() => {
     performAIRecognition({ isDebounced: true });
@@ -51,6 +57,13 @@ export function scheduleAIDebounce() {
 
 export async function performAIRecognition({ isDebounced = false } = {}) {
   if (state.ended || isRecognizing) return;
+  if (isOfflineMode()) {
+    if (!isDebounced) {
+      await markNetworkOffline('manual-ai-while-offline');
+      setStatus('AI đang tạm dừng do mất mạng');
+    }
+    return;
+  }
   const objects = fabricCanvas.getObjects();
   if (!objects || objects.length === 0) {
     if (!isDebounced) {
@@ -238,18 +251,24 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
 
   } catch (error) {
     console.error('Lỗi nhận diện AI:', error);
+    const wentOffline = await handlePossibleNetworkError(error);
     if (aiElements.loading) aiElements.loading.hidden = true;
     if (aiElements.content) aiElements.content.hidden = false;
-    if (aiElements.renderedBox) aiElements.renderedBox.textContent = 'Lỗi kết nối API';
-    if (aiElements.explanationBox) {
-      aiElements.explanationBox.textContent = `Không thể kết nối Backend API (/api/v1/recognize): ${error.message}`;
-      aiElements.explanationBox.hidden = false;
+    if (wentOffline) {
+      if (aiElements.overlay) aiElements.overlay.hidden = true;
+      setStatus('Đã tạm dừng AI do mất mạng; nét vẽ vẫn được giữ');
+    } else {
+      if (aiElements.renderedBox) aiElements.renderedBox.textContent = 'Lỗi kết nối API';
+      if (aiElements.explanationBox) {
+        aiElements.explanationBox.textContent = `Không thể kết nối Backend API (/api/v1/recognize): ${error.message}`;
+        aiElements.explanationBox.hidden = false;
+      }
+      if (aiElements.statusIndicator) {
+        aiElements.statusIndicator.textContent = 'AI: Lỗi kết nối';
+        aiElements.statusIndicator.classList.remove('is-analyzing');
+      }
+      setStatus('Lỗi nhận diện AI');
     }
-    if (aiElements.statusIndicator) {
-      aiElements.statusIndicator.textContent = 'AI: Lỗi kết nối';
-      aiElements.statusIndicator.classList.remove('is-analyzing');
-    }
-    setStatus('Lỗi nhận diện AI');
   } finally {
     isRecognizing = false;
   }
@@ -369,7 +388,10 @@ export async function insertAiResultToBoard() {
 
 
 export function initBoardWebSocket() {
-  if (state.ended) return;
+  if (state.ended || isOfflineMode()) return;
+  if (boardSocket && (boardSocket.readyState === WebSocket.OPEN || boardSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
   try {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
@@ -378,7 +400,9 @@ export function initBoardWebSocket() {
     const session = $('sessionId')?.textContent?.trim() || 'session-10a1';
     boardSocket = new WebSocket(`${protocol}//${host}/ws/board/${room}/${session}`);
     boardSocket.onopen = () => {
-      ui.footer.textContent = 'Đã kết nối máy chủ · Đồng bộ phòng học thời gian thực (WSS) · Debounce 800ms';
+      if (!isOfflineMode()) {
+        ui.footer.textContent = 'Đã kết nối máy chủ · Đồng bộ phòng học thời gian thực (WSS) · Debounce 800ms';
+      }
     };
     boardSocket.onmessage = () => {
       // Nhận tín hiệu đồng bộ từ các thiết bị khác trong phòng học
@@ -387,7 +411,8 @@ export function initBoardWebSocket() {
       // Graceful fallback nếu WebSocket không sẵn sàng
     };
     boardSocket.onclose = () => {
-      if (!state.ended) setTimeout(initBoardWebSocket, 5000);
+      boardSocket = null;
+      if (!state.ended && !isOfflineMode()) setTimeout(initBoardWebSocket, 5000);
     };
   } catch {
     // Graceful fallback
@@ -469,6 +494,16 @@ export function setupAIRecognition() {
         return;
       }
       aiElements.illustrateDialog.close();
+      if (isOfflineMode()) {
+        showCornerNotification({
+          title: 'AI tạm dừng do mất mạng',
+          body: 'Không thể tạo hình minh họa lúc mất mạng. Bảng vẽ vẫn hoạt động bình thường.',
+          variant: 'offline',
+          autoDismissMs: 4000,
+        });
+        setStatus('AI tạm dừng do mất mạng');
+        return;
+      }
       setStatus(`Đang gọi AI tạo hình minh họa nét phấn trắng: "${concept}"...`);
 
       try {
@@ -515,11 +550,21 @@ export function setupAIRecognition() {
         setStatus(`Đã tạo hình minh họa nét phấn trắng cho "${concept}" thành công!`);
       } catch (err) {
         console.error('Lỗi tạo hình minh họa AI:', err);
-        alert(`Không thể tạo hình minh họa: ${err.message}`);
-        setStatus('Lỗi tạo hình minh họa AI');
+        const wentOffline = await handlePossibleNetworkError(err);
+        if (!wentOffline) {
+          alert(`Không thể tạo hình minh họa: ${err.message}`);
+          setStatus('Lỗi tạo hình minh họa AI');
+        }
       }
     });
   }
+
+  window.addEventListener('app:network-offline', () => {
+    if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
+  });
+  window.addEventListener('app:network-online', () => {
+    initBoardWebSocket();
+  });
 
   initBoardWebSocket();
 }

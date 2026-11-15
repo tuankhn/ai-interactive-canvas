@@ -676,4 +676,132 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   background: #0369a1;
 }
 
+/* ==============================================================================
+   TASK TF28510: CHẾ ĐỘ MẤT MẠNG (OFFLINE MODE) & TỰ ĐỒNG BỘ INDEXEDDB
+   ============================================================================== */
+.ai-status-indicator.is-offline {
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+.offline-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+}
+
+.offline-toast-region {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 900;
+}
+
+[popover].offline-toast {
+  position: fixed;
+  inset: auto 16px 52px auto;
+  margin: 0;
+  width: min(360px, calc(100vw - 32px));
+  max-width: calc(100vw - 24px);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1.5px solid #f59e0b;
+  background: #fffbeb;
+  color: #78350f;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+  pointer-events: auto;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease, display 0.2s ease, overlay 0.2s ease;
+  transition-behavior: allow-discrete;
+}
+
+[popover].offline-toast:is(:popover-open, .\:popover-open) {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@starting-style {
+  [popover].offline-toast:is(:popover-open, .\:popover-open) {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+[popover].offline-toast[data-variant="synced"],
+[popover].offline-toast[data-variant="online"] {
+  border-color: #10b981;
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.offline-toast-content {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.offline-toast-title {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: 4px;
+}
+
+.offline-toast-body {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.offline-toast-close {
+  flex: 0 0 auto;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.offline-toast-close:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [popover].offline-toast {
+    transition: none;
+    transform: none;
+  }
+  @starting-style {
+    [popover].offline-toast:is(:popover-open, .\:popover-open) {
+      transform: none;
+    }
+  }
+}
+
+@media (max-width: 480px) {
+  [popover].offline-toast {
+    inset: auto 12px 12px 12px;
+    width: auto;
+  }
+}
+
+
 

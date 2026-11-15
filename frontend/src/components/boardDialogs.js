@@ -2,6 +2,7 @@ import { $, fabricCanvas, state, ui, setStatus } from '../utils/context.js';
 import { snapshot, updateHint, remember } from './history.js';
 import { closePanels } from './toolbar.js';
 import { deleteCurrentPage } from './pageManager.js';
+import { captureAndSaveSnapshot } from '../utils/offline_sync.js';
 
 const deletePageDialog = $('deletePageDialog');
 const deletePageDialogTitle = $('deletePageDialogTitle');
@@ -20,7 +21,7 @@ const clearWithoutSavingButton = $('clearWithoutSavingButton');
 const saveAndClearButton = $('saveAndClearButton');
 
 
-export async function downloadCurrentPageSnapshot() {
+export async function downloadCurrentPageSnapshot(triggerType = 'MANUAL') {
   const filename = `snapshot-trang-${state.pageIndex + 1}-${new Date().toISOString().slice(0, 10)}.png`;
   const dataUrl = fabricCanvas.toDataURL({ format: 'png', multiplier: 2 });
   const link = document.createElement('a');
@@ -29,6 +30,18 @@ export async function downloadCurrentPageSnapshot() {
   document.body.append(link);
   link.click();
   link.remove();
+
+  try {
+    const syncResult = await captureAndSaveSnapshot({
+      triggerType,
+      pageNumber: state.pageIndex + 1,
+    });
+    if (syncResult.mode === 'offline_indexeddb') {
+      setStatus(`Đã lưu tạm snapshot vào IndexedDB (${syncResult.pendingCount} ảnh chờ đồng bộ)`);
+    }
+  } catch (syncError) {
+    console.warn('Không thể đồng bộ snapshot lên máy chủ:', syncError);
+  }
   return filename;
 }
 
@@ -92,7 +105,7 @@ export function setupBoardDialogs() {
     deletePageDialogError.hidden = true;
     setDeleteDialogBusy(true);
     try {
-      const filename = await downloadCurrentPageSnapshot();
+      const filename = await downloadCurrentPageSnapshot('BEFORE_DELETE_PAGE');
       deletePageDialog.close();
       // Browser chỉ xác nhận đã yêu cầu tải về, không xác nhận tệp đã nằm trên ổ đĩa.
       if (window.confirm(`Đã yêu cầu tải ${filename}.\n\n` +
@@ -136,7 +149,7 @@ export function setupBoardDialogs() {
     clearDialogError.hidden = true;
     setClearDialogBusy(true);
     try {
-      const filename = await downloadCurrentPageSnapshot();
+      const filename = await downloadCurrentPageSnapshot('BEFORE_CLEAR');
       clearDialog.close();
       // Tải xuống được yêu cầu chưa có nghĩa tệp đã lưu thành công trên thiết bị.
       if (window.confirm(`Đã yêu cầu tải tệp ${filename}.\n\nChọn OK để xóa nét vẽ CHỈ TRÊN TRANG ${state.pageIndex + 1} sau khi kiểm tra ảnh tải về. Chọn Hủy để giữ nguyên trang hiện tại.`)) {
@@ -153,16 +166,11 @@ export function setupBoardDialogs() {
     }
   });
 
-  $('captureButton').addEventListener('click', () => {
+  $('captureButton').addEventListener('click', async () => {
     if (state.pageBusy || state.stroke) return;
     closePanels();
-    const link = document.createElement('a');
-    link.download = `bang-ve-trang-${state.pageIndex + 1}.png`;
-    link.href = fabricCanvas.toDataURL({ format: 'png', multiplier: 2 });
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setStatus('Đã xuất hình PNG');
+    await downloadCurrentPageSnapshot('MANUAL');
+    setStatus('Đã xuất hình PNG và lưu snapshot');
   });
 
 

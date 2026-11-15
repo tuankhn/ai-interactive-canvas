@@ -5,6 +5,7 @@ from app.core.config import settings
 in_memory_sessions: Dict[str, Dict[str, Any]] = {}
 in_memory_pages: Dict[str, Dict[int, Dict[str, Any]]] = {}
 in_memory_snapshots: list = []
+synced_offline_ids: Dict[str, Dict[str, Any]] = {}
 
 
 def check_db_status() -> Dict[str, str]:

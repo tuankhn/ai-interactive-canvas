@@ -32,6 +32,7 @@
         </div>
       </div>
       <div class="session-actions">
+        <span class="offline-sync-badge" id="offlineSyncBadge" title="Số ảnh snapshot lưu tạm trong IndexedDB chờ đồng bộ" hidden></span>
         <span class="ai-status-indicator" id="aiStatusIndicator" title="Trạng thái kết nối AI">AI: Sẵn sàng</span>
         <span class="timer" id="sessionTimer">Đang diễn ra 00:00</span>
         <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
@@ -235,6 +236,18 @@
       <button id="submitIllustrateBtn" class="dialog-primary" type="button">Tạo và chèn lên bảng</button>
     </div>
   </dialog>
+
+  <div id="offlineToastRegion" class="offline-toast-region" role="region" aria-label="Thông báo kết nối mạng">
+    <div id="offlineCornerToast" class="offline-toast" popover="manual" data-variant="offline">
+      <div class="offline-toast-content">
+        <strong id="offlineToastTitle" class="offline-toast-title">Mất mạng — Tạm dừng AI</strong>
+        <p id="offlineToastBody" class="offline-toast-body">Các thao tác vẽ, xóa, chuyển trang vẫn hoạt động; snapshot được lưu tạm vào IndexedDB.</p>
+      </div>
+      <button id="offlineToastCloseBtn" class="offline-toast-close" type="button" popovertarget="offlineCornerToast" popovertargetaction="hide" aria-label="Đóng thông báo">✕</button>
+    </div>
+  </div>
+  <p class="sr-only">Thông báo trạng thái kết nối mạng</p>
+  <div id="offlineAriaLive" class="sr-only" aria-live="assertive"></div>
 
   <script type="module" src="./src/extensions/handwriting-entry.js"></script>
 
