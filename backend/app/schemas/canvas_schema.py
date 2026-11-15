@@ -75,3 +75,31 @@ class SnapshotSaveRequest(BaseModel):
     trigger_type: str = "BEFORE_CLEAR"
     image_base64: str
     recognized_latex: Optional[str] = None
+
+
+class OfflineSnapshotItem(SnapshotSaveRequest):
+    client_sync_id: str = Field(..., min_length=1, description="ID duy nhất phía client (IndexedDB) để chống đồng bộ trùng")
+    captured_at: Optional[str] = Field(default=None, description="Thời điểm chụp lúc mất mạng (ISO-8601)")
+
+
+class OfflineSyncBatchRequest(BaseModel):
+    items: List[OfflineSnapshotItem] = Field(default_factory=list, description="Danh sách snapshot lưu tạm trong IndexedDB")
+    pages: List[PageSaveRequest] = Field(default_factory=list, description="Trạng thái các trang bảng cần đồng bộ kèm")
+
+
+class OfflineSyncItemResult(BaseModel):
+    client_sync_id: str
+    status: str  # synced | duplicate | failed
+    snapshot_id: Optional[str] = None
+    image_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class OfflineSyncBatchResponse(BaseModel):
+    status: str
+    total_received: int
+    synced_count: int
+    duplicate_count: int
+    failed_count: int
+    pages_synced: int
+    results: List[OfflineSyncItemResult]

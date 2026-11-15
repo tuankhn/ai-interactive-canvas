@@ -41,6 +41,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from app.api.offline_sync_router import router as offline_sync_router
+    app.include_router(offline_sync_router)
+except ImportError:
+    pass
+
 active_connections: Dict[str, List[WebSocket]] = {}
 
 
