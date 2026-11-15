@@ -444,6 +444,12 @@ async def teacher_login_password(payload: TeacherPasswordLoginRequest):
             detail="Thông tin đăng nhập hoặc mật khẩu không chính xác.",
         )
 
+    if not matched.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản giáo viên đã bị Quản trị viên tạm khóa.",
+        )
+
     return _issue_session_tokens(
         matched,
         remember_me=payload.remember_me,

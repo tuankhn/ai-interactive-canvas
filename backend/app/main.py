@@ -1,11 +1,12 @@
+import json
 import os
 from typing import Dict, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.core.config import settings
-from app.core.database import check_db_status
+from app.core.database import check_db_status, record_ai_usage_event
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -46,6 +47,53 @@ try:
     app.include_router(offline_sync_router)
 except ImportError:
     pass
+
+try:
+    from app.api.admin_router import router as admin_router
+    app.include_router(admin_router)
+except ImportError:
+    pass
+
+
+_AI_TRACKED_PATHS = {
+    "/api/v1/recognize": "OCR_LATEX",
+    "/api/v1/canvas/recognize": "OCR_LATEX",
+    "/api/v1/illustrate": "VOCAB_IMAGE",
+    "/api/v1/canvas/illustrate": "VOCAB_IMAGE",
+}
+
+
+@app.middleware("http")
+async def track_ai_quota_middleware(request: Request, call_next):
+    """Tự động ghi nhận số lượt gọi API Gemini / Mathpix cho trang Admin mà không sửa file module AI."""
+    response = await call_next(request)
+    task_type = _AI_TRACKED_PATHS.get(request.url.path)
+    if request.method == "POST" and task_type and response.status_code < 400:
+        try:
+            chunks = [chunk async for chunk in response.body_iterator]
+            raw_body = b"".join(chunks)
+            data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+            provider_raw = str(data.get("provider") or "gemini")
+            record_ai_usage_event(
+                provider="MATHPIX" if "mathpix" in provider_raw.lower() else "GEMINI",
+                provider_detail=provider_raw,
+                task_type=task_type,
+                subject=str(data.get("subject") or "TOAN"),
+                latency_ms=int(data.get("latency_ms") or 0),
+                is_mock=("mock" in provider_raw.lower()),
+                estimated_tokens=300 if task_type == "OCR_LATEX" else 450,
+                session_id=data.get("session_id"),
+                room_id=data.get("room_id"),
+            )
+            return Response(
+                content=raw_body,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+        except Exception:
+            return response
+    return response
 
 active_connections: Dict[str, List[WebSocket]] = {}
 

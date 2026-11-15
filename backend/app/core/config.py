@@ -49,5 +49,12 @@ class Settings:
     MATHPIX_APP_ID: str = os.getenv("MATHPIX_APP_ID", "")
     MATHPIX_APP_KEY: str = os.getenv("MATHPIX_APP_KEY", "")
 
+    # Cấu hình tài khoản Admin mặc định (môi trường local/demo) & hạn ngạch AI/MinIO (TF28528)
+    ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "admin@aicanvas.edu.vn")
+    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "Admin@2026")
+    GEMINI_MONTHLY_QUOTA: int = int(os.getenv("GEMINI_MONTHLY_QUOTA", "10000"))
+    MATHPIX_MONTHLY_QUOTA: int = int(os.getenv("MATHPIX_MONTHLY_QUOTA", "5000"))
+    MINIO_STORAGE_QUOTA_MB: float = float(os.getenv("MINIO_STORAGE_QUOTA_MB", "5120"))
+
 
 settings = Settings()
