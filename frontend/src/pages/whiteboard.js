@@ -6,6 +6,7 @@ import { finishStroke, setupDrawingCanvas } from '../components/drawingCanvas.js
 import { setupBoardDialogs } from '../components/boardDialogs.js';
 import { setupAIRecognition } from '../components/aiRecognition.js';
 import { setupOfflineSync } from '../utils/offline_sync.js';
+import { setupTeacherAuth } from '../utils/auth_client.js';
 
 export async function initWhiteboard() {
   setupToolbar();
@@ -15,6 +16,7 @@ export async function initWhiteboard() {
   setupBoardDialogs();
   setupAIRecognition();
   setupOfflineSync();
+  setupTeacherAuth();
 
   // Phần đếm giờ và kết thúc phiên: chỉ chạy khi ứng dụng đã khởi tạo.
   const startedAt = Date.now();
