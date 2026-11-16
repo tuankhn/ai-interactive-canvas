@@ -44,6 +44,11 @@ const getAiElements = () => ({
   illustrateInput: $('illustrateInput'),
   cancelIllustrateBtn: $('cancelIllustrateBtn'),
   submitIllustrateBtn: $('submitIllustrateBtn'),
+  // Task TF28512: Các phần tử hiển thị đồ thị 2D tương tác
+  graphBox: $('aiGraphBox'),
+  graphTitle: $('aiGraphTitle'),
+  graphDesc: $('aiGraphDesc'),
+  openGraphBtn: $('openGraphBtn'),
 });
 
 
@@ -228,6 +233,22 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
         }
       } else {
         aiElements.illustrationBox.hidden = true;
+      }
+    }
+
+    // Task TF28512: Hiển thị tùy chọn dựng đồ thị 2D tương tác Plotly nếu là hàm số
+    if (aiElements.graphBox) {
+      if (data.visualization && data.visualization.type === '2D_GRAPH') {
+        aiElements.graphBox.hidden = false;
+        if (aiElements.graphTitle) {
+          aiElements.graphTitle.textContent = data.visualization.title || 'Đồ thị hàm số 2D';
+        }
+        if (aiElements.graphDesc) {
+          const fnName = data.visualization.parameters?.function || data.latex || data.recognized_text || '';
+          aiElements.graphDesc.textContent = `Hàm số ${fnName} sẵn sàng dựng đồ thị tương tác 2D (< 3 giây).`;
+        }
+      } else {
+        aiElements.graphBox.hidden = true;
       }
     }
 
@@ -556,6 +577,23 @@ export function setupAIRecognition() {
           setStatus('Lỗi tạo hình minh họa AI');
         }
       }
+    });
+  // Task TF28512: Kích hoạt dựng đồ thị 2D Plotly từ công thức AI (< 3 giây)
+  if (aiElements.openGraphBtn) {
+    aiElements.openGraphBtn.addEventListener('click', () => {
+      if (aiElements.overlay) aiElements.overlay.hidden = true;
+      const formula = currentAiResult?.latex || currentAiResult?.recognized_text || 'y=x²-4x+3';
+      const plotlyBtn = $('plotlyGraphTool');
+      const equationInput = $('pgEquation');
+      if (equationInput) {
+        equationInput.value = formula;
+      }
+      if (plotlyBtn) {
+        plotlyBtn.click();
+        const drawBtn = $('pgDraw');
+        if (drawBtn) drawBtn.click();
+      }
+      setStatus(`Đã mở đồ thị 2D tương tác Plotly: ${formula}`);
     });
   }
 

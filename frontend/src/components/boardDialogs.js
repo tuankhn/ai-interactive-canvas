@@ -53,12 +53,22 @@ export function clearCurrentPage() {
     return;
   }
 
+  // Task TF28512: Tự động lưu ảnh Snapshot bảo vệ dữ liệu trước khi xóa bảng
+  try {
+    captureAndSaveSnapshot({
+      triggerType: 'BEFORE_CLEAR',
+      pageNumber: state.pageIndex + 1,
+    }).catch((err) => console.warn('Lưu snapshot nền trước khi xóa:', err));
+  } catch (err) {
+    console.warn('Lỗi kích hoạt lưu snapshot trước khi xóa:', err);
+  }
+
   const before = snapshot();
   fabricCanvas.remove(...objects);
   fabricCanvas.requestRenderAll();
   updateHint();
   remember(before); // Ghi vào lịch sử hoàn tác và chỉ cập nhật trang hiện tại trong localStorage.
-  setStatus(`Đã xóa nét vẽ ở trang ${state.pageIndex + 1}; các trang khác được giữ nguyên`);
+  setStatus(`Đã lưu ảnh snapshot và xóa nét vẽ ở trang ${state.pageIndex + 1}; các trang khác được giữ nguyên`);
 }
 
 function setDeleteDialogBusy(busy) {
@@ -96,6 +106,14 @@ export function setupBoardDialogs() {
   cancelDeletePageButton.addEventListener('click', () => deletePageDialog.close());
   deletePageWithoutSavingButton.addEventListener('click', async () => {
     if (deleteDialogBusy || state.pageBusy || state.ended) return;
+    try {
+      await captureAndSaveSnapshot({
+        triggerType: 'BEFORE_DELETE_PAGE',
+        pageNumber: state.pageIndex + 1,
+      });
+    } catch (e) {
+      console.warn('Lưu snapshot nền trước khi xóa trang:', e);
+    }
     deletePageDialog.close(); // Chính popup đã là bước xác nhận.
     await deleteCurrentPage();
   });
