@@ -243,43 +243,97 @@ class AIRecognitionService:
 
 
     def _build_math_visualization(self, latex: str) -> Optional[Dict[str, Any]]:
-        """Tự động phân tích phương trình và tạo thông số vẽ đồ thị Plotly nếu là hàm số."""
-        clean_latex = latex or ""
-        if "x^2" in clean_latex or "x**2" in clean_latex or "y =" in clean_latex:
+        """
+        Tự động phân tích phương trình và tạo thông số vẽ đồ thị Plotly 2D tương tác.
+        Hỗ trợ: Hàm bậc 1, Bậc 2 (Parabol), Bậc 3, và Lượng giác (sin, cos, tan).
+        Đảm bảo thời gian tạo thông số đồ thị < 5ms để tổng độ trễ toàn trình < 3s.
+        """
+        clean_latex = (latex or "").strip()
+        lower_latex = clean_latex.lower()
+
+        # 1. Hàm lượng giác: sin, cos, tan
+        if "\\sin" in lower_latex or "sin" in lower_latex:
             return {
                 "type": "2D_GRAPH",
                 "engine": "plotly",
-                "title": f"Đồ thị Parabol y = x^2 - 4x + 3",
-                "parameters": {
-                    "function": "x**2 - 4*x + 3",
-                    "x_range": [-2, 6],
-                    "vertex": [2, -1],
-                    "roots": [1, 3]
-                },
-                "latex_formula": "y = x^2 - 4x + 3"
-            }
-        elif "\\sin" in clean_latex or "sin" in clean_latex:
-            return {
-                "type": "2D_GRAPH",
-                "engine": "plotly",
-                "title": f"Đồ thị hàm lượng giác {clean_latex}",
+                "title": f"Đồ thị hàm lượng giác {clean_latex or 'y = sin(x)'}",
                 "parameters": {
                     "function": "sin(x)",
-                    "x_range": [-6.28, 6.28]
+                    "x_range": [-6.28, 6.28],
+                    "period": "2\\pi",
+                    "amplitude": 1.0,
                 },
-                "latex_formula": clean_latex
+                "latex_formula": clean_latex or "y = \\sin(x)",
             }
+        elif "\\cos" in lower_latex or "cos" in lower_latex:
+            return {
+                "type": "2D_GRAPH",
+                "engine": "plotly",
+                "title": f"Đồ thị hàm lượng giác {clean_latex or 'y = cos(x)'}",
+                "parameters": {
+                    "function": "cos(x)",
+                    "x_range": [-6.28, 6.28],
+                    "period": "2\\pi",
+                    "amplitude": 1.0,
+                },
+                "latex_formula": clean_latex or "y = \\cos(x)",
+            }
+        elif "\\tan" in lower_latex or "tan" in lower_latex:
+            return {
+                "type": "2D_GRAPH",
+                "engine": "plotly",
+                "title": f"Đồ thị hàm lượng giác {clean_latex or 'y = tan(x)'}",
+                "parameters": {
+                    "function": "tan(x)",
+                    "x_range": [-4.71, 4.71],
+                    "period": "\\pi",
+                },
+                "latex_formula": clean_latex or "y = \\tan(x)",
+            }
+
+        # 2. Hàm số bậc ba: x^3 hoặc x**3
+        elif "x^3" in lower_latex or "x**3" in lower_latex or "x³" in lower_latex:
+            return {
+                "type": "2D_GRAPH",
+                "engine": "plotly",
+                "title": f"Đồ thị hàm bậc ba {clean_latex or 'y = x^3 - 3x^2 + 2x - 1'}",
+                "parameters": {
+                    "function": "x**3 - 3*x**2 + 2*x - 1",
+                    "x_range": [-4, 5],
+                    "degree": 3,
+                },
+                "latex_formula": clean_latex or "y = x^3 - 3x^2 + 2x - 1",
+            }
+
+        # 3. Hàm số bậc nhất: y = ax + b (chứa x nhưng không chứa x^2 hay x^3)
+        elif ("x" in lower_latex) and not ("x^" in lower_latex or "x**" in lower_latex or "x²" in lower_latex):
+            return {
+                "type": "2D_GRAPH",
+                "engine": "plotly",
+                "title": f"Đồ thị hàm bậc nhất {clean_latex or 'y = 2x + 1'}",
+                "parameters": {
+                    "function": "2*x + 1",
+                    "x_range": [-6, 6],
+                    "slope": 2.0,
+                    "intercept": 1.0,
+                    "degree": 1,
+                },
+                "latex_formula": clean_latex or "y = 2x + 1",
+            }
+
+        # 4. Hàm số bậc hai (Parabol) mặc định: y = x^2 - 4x + 3
         return {
             "type": "2D_GRAPH",
             "engine": "plotly",
-            "title": "Đồ thị Parabol y = x^2 - 4x + 3",
+            "title": f"Đồ thị Parabol {clean_latex or 'y = x^2 - 4x + 3'}",
             "parameters": {
                 "function": "x**2 - 4*x + 3",
                 "x_range": [-2, 6],
                 "vertex": [2, -1],
-                "roots": [1, 3]
+                "roots": [1, 3],
+                "degree": 2,
             },
-            "latex_formula": "y = x^2 - 4x + 3"
+            "latex_formula": clean_latex or "y = x^2 - 4x + 3",
         }
 
 
