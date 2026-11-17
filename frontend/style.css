@@ -597,6 +597,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   font-size: 12px;
 }
 
+<<<<<<< Updated upstream
 /* ==============================================================================
    TASK TF2850F: PHONG CÁCH HÌNH MINH HỌA NÉT VẼ PHẤN TRẮNG (CHALKBOARD SKETCH)
    ============================================================================== */
@@ -989,3 +990,5 @@ dialog::backdrop {
 .ai-btn-graph:hover {
   background: #1d4ed8;
 }
+=======
+>>>>>>> Stashed changes
