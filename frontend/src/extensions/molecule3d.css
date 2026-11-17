@@ -1,0 +1,66 @@
+/* Tiện ích phân tử 3D bổ sung. Không chỉnh sửa CSS của bảng vẽ. */
+.mol3d-panel {
+  position: fixed;
+  top: 74px;
+  right: 18px;
+  z-index: 45;
+  width: min(410px, calc(100vw - 24px));
+  max-height: calc(100dvh - 88px);
+  overflow: auto;
+  border: 2px solid #303a4b;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+  color: #303a4b;
+  box-shadow: 0 12px 32px #1e293b30;
+  font: 13px Arial, sans-serif;
+}
+.mol3d-panel[hidden] { display: none !important; }
+.mol3d-heading, .mol3d-form, .mol3d-examples {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mol3d-heading { justify-content: space-between; margin-bottom: 10px; font-size: 15px; }
+.mol3d-heading button { font-size: 26px; padding: 0; line-height: 1; }
+.mol3d-panel button {
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  background: white;
+  color: #303a4b;
+  cursor: pointer;
+  min-width: 48px;
+  min-height: 48px;
+}
+.mol3d-form { flex-wrap: wrap; }
+.mol3d-form label { font-weight: bold; }
+.mol3d-form input {
+  flex: 1;
+  min-width: 100px;
+  height: 48px;
+  padding: 8px;
+  border: 1px solid #94a3b8;
+  border-radius: 8px;
+  font: inherit;
+}
+.mol3d-form button { background: #222f71; color: #fff; font-weight: bold; padding: 0 10px; }
+.mol3d-examples { margin: 10px 0; }
+.mol3d-examples button { padding: 0 12px; font-weight: bold; }
+.mol3d-examples button:hover { background: #e8eefb; }
+.mol3d-viewer {
+  position: relative;
+  width: 100%;
+  height: 270px;
+  border: 1px solid #dbe2ed;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+.mol3d-information { margin: 10px 0 0; font-weight: bold; line-height: 1.5; }
+.mol3d-status { margin: 8px 0 0; color: #a16207; }
+.mol3d-status:empty { display: none; }
+.mol3d-help { margin: 8px 0 0; color: #64748b; font-size: 12px; }
+@media (max-width: 600px) {
+  .mol3d-panel { top: 58px; right: 8px; max-height: calc(100dvh - 65px); }
+  .mol3d-viewer { height: 220px; }
+}
