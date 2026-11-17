@@ -1,0 +1,1818 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#222f71">
+  <title>Trang Quản Trị Hệ Thống · AI Interactive Canvas</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, "Segoe UI", Arial, Helvetica, sans-serif;
+      --bg: #f4f6fb;
+      --surface: #ffffff;
+      --surface-alt: #f8fafc;
+      --ink: #1e293b;
+      --muted: #526075;
+      --border: #cbd5e1;
+      --border-strong: #64748b;
+      --primary: #222f71;
+      --primary-hover: #192459;
+      --accent: #0284c7;
+      --success: #15803d;
+      --success-bg: #dcfce7;
+      --warning: #b45309;
+      --warning-bg: #fef3c7;
+      --danger: #b91c1c;
+      --danger-bg: #fee2e2;
+      --focus: #2563eb;
+      --radius: 12px;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    [hidden] { display: none !important; }
+
+    .visually-hidden {
+      position: absolute;
+      clip-path: inset(50%);
+      overflow: hidden;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      border: 0;
+      white-space: nowrap;
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    a:focus-visible,
+    [tabindex="0"]:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    /* Top bar */
+    .topbar {
+      background: var(--primary);
+      color: #ffffff;
+      padding: 0.85rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.16);
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .brand-sub {
+      margin: 0;
+      font-size: 0.82rem;
+      color: #cbd5e1;
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+    }
+
+    .topbar-link,
+    .topbar-btn {
+      min-height: 44px;
+      padding: 0.5rem 0.9rem;
+      border-radius: 9px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+
+    .topbar-link:hover,
+    .topbar-btn:hover {
+      background: rgba(255, 255, 255, 0.22);
+    }
+
+    .admin-pill {
+      padding: 0.4rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    /* Main container */
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+    }
+
+    /* Login Card */
+    .login-shell {
+      max-width: 460px;
+      margin: 2.5rem auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: var(--shadow);
+    }
+
+    .login-shell h2 {
+      margin: 0 0 0.4rem;
+      font-size: 1.35rem;
+      color: var(--primary);
+    }
+
+    .login-shell p.lead {
+      margin: 0 0 1.4rem;
+      color: var(--muted);
+      font-size: 0.93rem;
+    }
+
+    /* Live status toast / banner */
+    .status-banner {
+      padding: 0.85rem 1rem;
+      border-radius: 10px;
+      margin-bottom: 1.25rem;
+      font-size: 0.92rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+    }
+
+    .status-banner.is-success {
+      background: var(--success-bg);
+      color: var(--success);
+      border-color: #86efac;
+    }
+
+    .status-banner.is-error {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border-color: #fca5a5;
+    }
+
+    .status-banner.is-info {
+      background: #e0f2fe;
+      color: #0369a1;
+      border-color: #7dd3fc;
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.15rem;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .kpi-label {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+    }
+
+    .kpi-value {
+      font-size: 1.65rem;
+      font-weight: 800;
+      color: var(--primary);
+      line-height: 1.2;
+    }
+
+    .kpi-sub {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    /* Tabs */
+    .tabs-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 0.65rem;
+    }
+
+    .tab-btn {
+      min-height: 44px;
+      padding: 0.55rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+
+    .tab-btn:hover {
+      background: #eef2ff;
+    }
+
+    .tab-btn[aria-selected="true"] {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #ffffff;
+    }
+
+    /* Split Panel Layout */
+    .panel-grid {
+      display: grid;
+      grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+      gap: 1.25rem;
+      align-items: start;
+    }
+
+    @media (max-width: 960px) {
+      .panel-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+    }
+
+    .card-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      margin: 0;
+      font-size: 1.08rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    /* Forms (following modern-web-guidance forms) */
+    fieldset {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.9rem 1rem 0.25rem;
+      margin: 0 0 1rem;
+    }
+
+    legend {
+      padding: 0 0.45rem;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.28rem;
+      margin-block-end: 1rem;
+    }
+
+    .form-field label {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .req-star {
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    .form-field input,
+    .form-field select {
+      width: 100%;
+      min-height: 46px;
+      padding: 0.6rem 0.75rem;
+      font-size: max(1rem, 1em);
+      border: 1.5px solid var(--border-strong);
+      border-radius: 8px;
+      background: #ffffff;
+      color: var(--ink);
+    }
+
+    .form-field input:user-invalid,
+    .form-field select:user-invalid,
+    .form-field input[aria-invalid="true"],
+    .form-field select[aria-invalid="true"] {
+      border-color: var(--danger);
+      background: #fff5f5;
+    }
+
+    .field-hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .field-error {
+      font-size: 0.82rem;
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    .password-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .btn-primary,
+    .btn-secondary,
+    .btn-danger-sm,
+    .btn-outline-sm {
+      min-height: 46px;
+      padding: 0.6rem 1.05rem;
+      border-radius: 9px;
+      font-weight: 600;
+      font-size: 0.92rem;
+      border: 1px solid transparent;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #ffffff;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: #eef2ff;
+      color: var(--primary);
+      border-color: #c7d2fe;
+    }
+
+    .btn-secondary:hover {
+      background: #e0e7ff;
+    }
+
+    .btn-outline-sm,
+    .btn-danger-sm {
+      min-height: 36px;
+      padding: 0.32rem 0.65rem;
+      font-size: 0.82rem;
+      border-radius: 7px;
+    }
+
+    .btn-outline-sm {
+      background: #ffffff;
+      color: var(--ink);
+      border-color: var(--border-strong);
+    }
+
+    .btn-danger-sm {
+      background: #fef2f2;
+      color: var(--danger);
+      border-color: #fca5a5;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      align-items: center;
+    }
+
+    /* Search filter strip */
+    .filter-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .filter-strip label {
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .filter-strip select {
+      min-height: 40px;
+      padding: 0.35rem 0.65rem;
+      border: 1.5px solid var(--border-strong);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    /* Badges & Meters */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge-ok { background: var(--success-bg); color: var(--success); }
+    .badge-warn { background: var(--warning-bg); color: var(--warning); }
+    .badge-danger { background: var(--danger-bg); color: var(--danger); }
+    .badge-info { background: #e0f2fe; color: #0369a1; }
+
+    .quota-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .meter-track {
+      width: 100%;
+      height: 11px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 0.55rem 0;
+    }
+
+    .meter-fill {
+      height: 100%;
+      background: var(--primary);
+      border-radius: 999px;
+      transition: width 0.25s ease;
+    }
+
+    .meter-fill.is-warn { background: #d97706; }
+    .meter-fill.is-danger { background: var(--danger); }
+
+    .stat-meta-list {
+      margin: 0.65rem 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.4rem 0.75rem;
+      font-size: 0.86rem;
+    }
+
+    .stat-meta-list li strong {
+      color: var(--ink);
+    }
+
+    /* Responsive Table (following modern-web-guidance responsive-table) */
+    .table-wrapper {
+      overflow: auto;
+      max-inline-size: 100%;
+      max-block-size: min(470px, 68vh);
+      container-type: inline-size;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #ffffff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 0.9rem;
+    }
+
+    caption {
+      text-align: left;
+      padding: 0.75rem 0.9rem;
+      font-weight: 700;
+      font-size: 0.92rem;
+      color: var(--ink);
+      background: var(--surface-alt);
+      border-bottom: 1px solid var(--border);
+    }
+
+    thead {
+      position: sticky;
+      inset-block-start: 0;
+      z-index: 2;
+      background: #eef2f9;
+    }
+
+    th, td {
+      padding: 0.68rem 0.85rem;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    thead th {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+      border-bottom: 2px solid var(--border);
+    }
+
+    tbody th {
+      position: sticky;
+      inset-inline-start: 0;
+      z-index: 1;
+      background: #ffffff;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    tbody tr:hover td,
+    tbody tr:hover th {
+      background: #f8fafc;
+    }
+
+    .cell-wrap {
+      white-space: normal;
+      min-width: 160px;
+    }
+
+    @container (width < 600px) {
+      .responsive-stack table,
+      .responsive-stack thead,
+      .responsive-stack tbody,
+      .responsive-stack tr,
+      .responsive-stack th,
+      .responsive-stack td {
+        display: block;
+      }
+
+      .responsive-stack thead {
+        display: none;
+      }
+
+      .responsive-stack tr {
+        margin-block-end: 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .responsive-stack tbody th {
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 2;
+        background: #eef2f9;
+      }
+
+      .responsive-stack td {
+        white-space: normal;
+      }
+
+      .responsive-stack td::before {
+        content: attr(data-label) ": ";
+        font-weight: 700;
+        color: var(--muted);
+      }
+    }
+
+    .empty-cell {
+      text-align: center;
+      color: var(--muted);
+      padding: 1.5rem !important;
+      white-space: normal;
+    }
+
+    .temp-pass-box {
+      margin-top: 0.85rem;
+      padding: 0.85rem;
+      border-radius: 9px;
+      background: #fefce8;
+      border: 1px solid #fde047;
+      font-size: 0.88rem;
+    }
+
+    .temp-pass-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 800;
+      font-size: 1rem;
+      color: var(--primary);
+      background: #ffffff;
+      padding: 0.15rem 0.45rem;
+      border-radius: 5px;
+      border: 1px solid #cbd5e1;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1 class="brand-title">Bảng Điều Khiển Quản Trị · AI Interactive Canvas</h1>
+      <p class="brand-sub">Quản lý danh mục Trường, Lớp học, Cấp tài khoản Giáo viên &amp; Theo dõi hạn ngạch Gemini / Mathpix / MinIO</p>
+    </div>
+    <div class="topbar-actions">
+      <a class="topbar-link" href="/">← Về Bảng Vẽ Smartboard</a>
+      <span class="admin-pill" id="adminIdentityPill" hidden></span>
+      <button class="topbar-btn" id="refreshAllBtn" type="button" hidden>Làm mới số liệu</button>
+      <button class="topbar-btn" id="adminLogoutBtn" type="button" hidden>Đăng xuất</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="globalStatusBanner" class="status-banner" role="status" aria-live="polite" hidden></div>
+
+    <!-- Màn hình đăng nhập Admin -->
+    <section id="adminLoginSection" class="login-shell" aria-labelledby="adminLoginHeading">
+      <h2 id="adminLoginHeading">Đăng nhập Quản trị viên (ADMIN)</h2>
+      <p class="lead">Vui lòng đăng nhập bằng tài khoản Quản trị viên để cấu hình trường, lớp, cấp tài khoản giáo viên và giám sát hạn ngạch AI.</p>
+
+      <form id="adminLoginForm" method="POST" action="/api/v1/admin/login" aria-labelledby="adminLoginHeading" novalidate>
+        <div class="form-field">
+          <label for="adminEmailInput">Email Quản trị viên <span class="req-star" aria-hidden="true">*</span></label>
+          <input
+            id="adminEmailInput"
+            name="email"
+            type="email"
+            required
+            autocomplete="username"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            enterkeyhint="next"
+            aria-describedby="adminEmailError"
+            placeholder="admin@aicanvas.edu.vn"
+          >
+          <span id="adminEmailError" class="field-error" hidden></span>
+        </div>
+
+        <div class="form-field">
+          <label for="adminPasswordInput">Mật khẩu <span class="req-star" aria-hidden="true">*</span></label>
+          <div class="password-row">
+            <input
+              id="adminPasswordInput"
+              name="password"
+              type="password"
+              required
+              minlength="4"
+              autocomplete="current-password"
+              enterkeyhint="done"
+              aria-describedby="adminPasswordError"
+            >
+            <button id="toggleAdminPwBtn" class="btn-secondary" type="button" aria-pressed="false">Hiện</button>
+          </div>
+          <span id="adminPasswordError" class="field-error" hidden></span>
+        </div>
+
+        <div class="btn-row">
+          <button id="adminLoginSubmitBtn" class="btn-primary" type="submit">Đăng nhập Admin Portal</button>
+          <button id="fillDemoAdminBtn" class="btn-secondary" type="button">Điền tài khoản demo local</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Nội dung chính sau khi đăng nhập -->
+    <section id="adminDashboardSection" hidden aria-label="Không gian quản trị hệ thống">
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <span class="kpi-label">Trường học &amp; Lớp học</span>
+          <span class="kpi-value" id="kpiSchoolsClasses">0 / 0</span>
+          <span class="kpi-sub">Số trường và lớp đang quản lý</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Giáo viên &amp; Học sinh/PH</span>
+          <span class="kpi-value" id="kpiUsers">0 / 0</span>
+          <span class="kpi-sub" id="kpiUsersSub">0 GV đang hoạt động</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Tổng lượt gọi AI API</span>
+          <span class="kpi-value" id="kpiAiCalls">0</span>
+          <span class="kpi-sub" id="kpiAiAlertSub">Trạng thái: Bình thường</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Dung lượng ảnh MinIO</span>
+          <span class="kpi-value" id="kpiMinioStorage">0 MB</span>
+          <span class="kpi-sub" id="kpiMinioSub">0 ảnh snapshot</span>
+        </article>
+      </div>
+
+      <nav class="tabs-bar" role="tablist" aria-label="Các phân hệ quản trị">
+        <button class="tab-btn" id="tabBtn-ai" type="button" role="tab" aria-selected="true" aria-controls="panel-ai" data-tab="ai">
+          1. Hạn ngạch AI &amp; MinIO
+        </button>
+        <button class="tab-btn" id="tabBtn-schools" type="button" role="tab" aria-selected="false" aria-controls="panel-schools" data-tab="schools">
+          2. Quản lý Trường học
+        </button>
+        <button class="tab-btn" id="tabBtn-classes" type="button" role="tab" aria-selected="false" aria-controls="panel-classes" data-tab="classes">
+          3. Quản lý Lớp học
+        </button>
+        <button class="tab-btn" id="tabBtn-teachers" type="button" role="tab" aria-selected="false" aria-controls="panel-teachers" data-tab="teachers">
+          4. Cấp tài khoản Giáo viên
+        </button>
+      </nav>
+
+      <!-- TAB 1: HẠN NGẠCH AI & MINIO -->
+      <section id="panel-ai" role="tabpanel" aria-labelledby="tabBtn-ai">
+        <div class="quota-cards">
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title">Gemini 2.5 Flash API</h2>
+              <span class="badge badge-info" id="geminiPercentBadge">0%</span>
+            </div>
+            <div class="meter-track" aria-hidden="true">
+              <div id="geminiMeterBar" class="meter-fill" style="width: 0%"></div>
+            </div>
+            <ul class="stat-meta-list">
+              <li>Đã gọi: <strong id="geminiCallsText">0 / 10.000</strong></li>
+              <li>Còn lại: <strong id="geminiRemainingText">10.000</strong></li>
+              <li>Live / Mock: <strong id="geminiLiveMockText">0 / 0</strong></li>
+              <li>Độ trễ TB: <strong id="geminiLatencyText">0 ms</strong></li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title">Mathpix OCR API (LaTeX)</h2>
+              <span class="badge badge-info" id="mathpixPercentBadge">0%</span>
+            </div>
+            <div class="meter-track" aria-hidden="true">
+              <div id="mathpixMeterBar" class="meter-fill" style="width: 0%"></div>
+            </div>
+            <ul class="stat-meta-list">
+              <li>Đã gọi: <strong id="mathpixCallsText">0 / 5.000</strong></li>
+              <li>Còn lại: <strong id="mathpixRemainingText">5.000</strong></li>
+              <li>Live / Mock: <strong id="mathpixLiveMockText">0 / 0</strong></li>
+              <li>Độ trễ TB: <strong id="mathpixLatencyText">0 ms</strong></li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title">MinIO Object Storage</h2>
+              <span class="badge badge-ok" id="minioStatusBadge">Bucket: board-snapshots</span>
+            </div>
+            <div class="meter-track" aria-hidden="true">
+              <div id="minioMeterBar" class="meter-fill" style="width: 0%"></div>
+            </div>
+            <ul class="stat-meta-list">
+              <li>Đã dùng: <strong id="minioUsedText">0 MB / 5120 MB</strong></li>
+              <li>Còn trống: <strong id="minioRemainText">5120 MB</strong></li>
+              <li>Tổng ảnh: <strong id="minioCountText">0 snapshots</strong></li>
+              <li>Nguồn đo: <strong id="minioSourceText">snapshot_ledger</strong></li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="panel-grid">
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="quotaFormHeading">Cấu hình ngưỡng hạn ngạch</h2>
+            </div>
+            <form id="quotaUpdateForm" method="POST" action="/api/v1/admin/ai-quota" aria-labelledby="quotaFormHeading" novalidate>
+              <div class="form-field">
+                <label for="geminiLimitInput">Hạn mức lượt gọi Gemini / tháng <span class="req-star" aria-hidden="true">*</span></label>
+                <input id="geminiLimitInput" name="gemini_limit" type="number" min="1" max="10000000" required>
+              </div>
+              <div class="form-field">
+                <label for="mathpixLimitInput">Hạn mức lượt gọi Mathpix / tháng <span class="req-star" aria-hidden="true">*</span></label>
+                <input id="mathpixLimitInput" name="mathpix_limit" type="number" min="1" max="10000000" required>
+              </div>
+              <div class="form-field">
+                <label for="minioLimitInput">Hạn mức dung lượng ảnh MinIO (MB) <span class="req-star" aria-hidden="true">*</span></label>
+                <input id="minioLimitInput" name="minio_storage_limit_mb" type="number" min="1" step="0.5" max="10000000" required>
+              </div>
+              <button class="btn-primary" type="submit">Lưu ngưỡng hạn ngạch</button>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="aiLogTableHeading">Nhật ký lượt gọi Gemini / Mathpix gần đây</h2>
+            </div>
+            <div tabindex="0" role="region" aria-labelledby="aiLogTableHeading" class="table-wrapper responsive-stack">
+              <table>
+                <caption class="visually-hidden">20 lượt gọi API nhận diện AI gần nhất</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Nhà cung cấp</th>
+                    <th scope="col">Tác vụ</th>
+                    <th scope="col">Môn</th>
+                    <th scope="col">Độ trễ</th>
+                    <th scope="col">Chế độ</th>
+                    <th scope="col">Thời điểm</th>
+                  </tr>
+                </thead>
+                <tbody id="aiLogsTbody">
+                  <tr><td colspan="6" class="empty-cell">Chưa có lượt gọi AI nào được ghi nhận.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <article class="card" style="margin-top: 1.25rem;">
+          <div class="card-header">
+            <h2 class="card-title" id="minioClassTableHeading">Thống kê dung lượng ảnh Snapshot trên MinIO theo lớp</h2>
+          </div>
+          <div tabindex="0" role="region" aria-labelledby="minioClassTableHeading" class="table-wrapper responsive-stack">
+            <table>
+              <caption class="visually-hidden">Dung lượng ảnh bảng theo từng lớp</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Lớp học</th>
+                  <th scope="col">Số lượng ảnh</th>
+                  <th scope="col">Dung lượng (KB)</th>
+                  <th scope="col">Dung lượng (MB)</th>
+                </tr>
+              </thead>
+              <tbody id="minioClassTbody">
+                <tr><td colspan="4" class="empty-cell">Chưa có ảnh Snapshot nào trên MinIO.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <!-- TAB 2: QUẢN LÝ TRƯỜNG HỌC -->
+      <section id="panel-schools" role="tabpanel" aria-labelledby="tabBtn-schools" hidden>
+        <div class="panel-grid">
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="createSchoolHeading">Thêm trường học mới</h2>
+            </div>
+            <form id="createSchoolForm" method="POST" action="/api/v1/admin/schools" aria-labelledby="createSchoolHeading" novalidate>
+              <div class="form-field">
+                <label for="schoolCodeInput">Mã trường <span class="req-star" aria-hidden="true">*</span></label>
+                <input
+                  id="schoolCodeInput"
+                  name="code"
+                  type="text"
+                  required
+                  minlength="2"
+                  maxlength="50"
+                  autocorrect="off"
+                  autocapitalize="characters"
+                  spellcheck="false"
+                  placeholder="VD: THPT-LHP"
+                >
+                <span class="field-hint">Mã định danh duy nhất (tự động chuẩn hóa chữ hoa).</span>
+              </div>
+
+              <div class="form-field">
+                <label for="schoolNameInput">Tên trường <span class="req-star" aria-hidden="true">*</span></label>
+                <input id="schoolNameInput" name="name" type="text" required minlength="3" maxlength="255" placeholder="THPT Lê Hồng Phong">
+              </div>
+
+              <div class="form-field">
+                <label for="schoolLevelSelect">Cấp học <span class="req-star" aria-hidden="true">*</span></label>
+                <select id="schoolLevelSelect" name="level" required>
+                  <option value="TIEU_HOC">Tiểu học</option>
+                  <option value="THCS">THCS (Trung học cơ sở)</option>
+                  <option value="THPT" selected>THPT (Trung học phổ thông)</option>
+                  <option value="LIEN_CAP">Liên cấp</option>
+                </select>
+              </div>
+
+              <div class="form-field">
+                <label for="schoolAddressInput">Địa chỉ</label>
+                <input id="schoolAddressInput" name="address" type="text" maxlength="500" placeholder="Quận 5, TP. Hồ Chí Minh">
+              </div>
+
+              <button class="btn-primary" type="submit">Tạo trường học</button>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="schoolsTableHeading">Danh mục Trường học</h2>
+            </div>
+            <div tabindex="0" role="region" aria-labelledby="schoolsTableHeading" class="table-wrapper responsive-stack">
+              <table>
+                <caption class="visually-hidden">Danh sách trường học đang quản lý</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Mã trường</th>
+                    <th scope="col">Tên trường</th>
+                    <th scope="col">Cấp học</th>
+                    <th scope="col">Số lớp / GV</th>
+                    <th scope="col">Trạng thái</th>
+                    <th scope="col">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="schoolsTbody">
+                  <tr><td colspan="6" class="empty-cell">Chưa có trường học nào.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- TAB 3: QUẢN LÝ LỚP HỌC -->
+      <section id="panel-classes" role="tabpanel" aria-labelledby="tabBtn-classes" hidden>
+        <div class="panel-grid">
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="createClassHeading">Thêm lớp học mới</h2>
+            </div>
+            <form id="createClassForm" method="POST" action="/api/v1/admin/classes" aria-labelledby="createClassHeading" novalidate>
+              <div class="form-field">
+                <label for="classSchoolSelect">Thuộc trường <span class="req-star" aria-hidden="true">*</span></label>
+                <select id="classSchoolSelect" name="school_id" required>
+                  <option value="">-- Chọn trường học --</option>
+                </select>
+              </div>
+
+              <div class="form-field">
+                <label for="classNameInput">Tên lớp <span class="req-star" aria-hidden="true">*</span></label>
+                <input id="classNameInput" name="name" type="text" required minlength="1" maxlength="50" autocorrect="off" placeholder="VD: 10A1">
+              </div>
+
+              <div class="form-field">
+                <label for="classGradeInput">Khối lớp (1–12) <span class="req-star" aria-hidden="true">*</span></label>
+                <input id="classGradeInput" name="grade" type="number" min="1" max="12" value="10" required>
+              </div>
+
+              <div class="form-field">
+                <label for="classYearInput">Năm học <span class="req-star" aria-hidden="true">*</span></label>
+                <input id="classYearInput" name="academic_year" type="text" required value="2026-2027" maxlength="20">
+              </div>
+
+              <div class="form-field">
+                <label for="classRoomInput">Mã phòng Smartboard (tuỳ chọn)</label>
+                <input id="classRoomInput" name="room_id" type="text" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="Tự sinh nếu để trống (vd: room-10a1)">
+              </div>
+
+              <div class="form-field">
+                <label for="classTeacherSelect">Giáo viên chủ nhiệm (tuỳ chọn)</label>
+                <select id="classTeacherSelect" name="homeroom_teacher_id">
+                  <option value="">-- Chưa phân công --</option>
+                </select>
+              </div>
+
+              <button class="btn-primary" type="submit">Tạo lớp học</button>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="classesTableHeading">Danh sách Lớp học</h2>
+              <search class="filter-strip">
+                <label for="classFilterSchool">Lọc theo trường:</label>
+                <select id="classFilterSchool" name="school_filter">
+                  <option value="">Tất cả trường</option>
+                </select>
+              </search>
+            </div>
+            <div tabindex="0" role="region" aria-labelledby="classesTableHeading" class="table-wrapper responsive-stack">
+              <table>
+                <caption class="visually-hidden">Danh sách lớp học và giáo viên phụ trách</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Tên lớp</th>
+                    <th scope="col">Trường</th>
+                    <th scope="col">Khối / Năm học</th>
+                    <th scope="col">Mã phòng</th>
+                    <th scope="col">GV chủ nhiệm</th>
+                    <th scope="col">Ảnh bảng</th>
+                    <th scope="col">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="classesTbody">
+                  <tr><td colspan="7" class="empty-cell">Chưa có lớp học nào.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- TAB 4: CẤP TÀI KHOẢN GIÁO VIÊN -->
+      <section id="panel-teachers" role="tabpanel" aria-labelledby="tabBtn-teachers" hidden>
+        <div class="panel-grid">
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="createTeacherHeading">Cấp tài khoản Giáo viên</h2>
+            </div>
+            <form id="createTeacherForm" method="POST" action="/api/v1/admin/teachers" aria-labelledby="createTeacherHeading" novalidate>
+              <fieldset>
+                <legend>Thông tin định danh &amp; Liên hệ</legend>
+                <div class="form-field">
+                  <label for="teacherFullNameInput">Họ và tên Giáo viên <span class="req-star" aria-hidden="true">*</span></label>
+                  <input id="teacherFullNameInput" name="full_name" type="text" required minlength="2" autocomplete="name" placeholder="Cô Nguyễn Thị Minh">
+                </div>
+                <div class="form-field">
+                  <label for="teacherEmailInput">Email công vụ <span class="req-star" aria-hidden="true">*</span></label>
+                  <input
+                    id="teacherEmailInput"
+                    name="email"
+                    type="email"
+                    required
+                    autocomplete="email"
+                    autocorrect="off"
+                    autocapitalize="none"
+                    spellcheck="false"
+                    placeholder="minh.nguyen@aicanvas.edu.vn"
+                  >
+                </div>
+                <div class="form-field">
+                  <label for="teacherPhoneInput">Số điện thoại <span class="req-star" aria-hidden="true">*</span></label>
+                  <input
+                    id="teacherPhoneInput"
+                    name="phone_number"
+                    type="tel"
+                    inputmode="tel"
+                    required
+                    autocomplete="tel"
+                    placeholder="0912345678"
+                  >
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Phân công &amp; Bảo mật</legend>
+                <div class="form-field">
+                  <label for="teacherSchoolSelect">Trường công tác</label>
+                  <select id="teacherSchoolSelect" name="school_id">
+                    <option value="">-- Chọn trường công tác --</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label for="teacherClassesInput">Các lớp phụ trách (cách nhau dấu phẩy)</label>
+                  <input id="teacherClassesInput" name="assigned_classes" type="text" autocorrect="off" placeholder="VD: 10A1, 10A2">
+                </div>
+                <div class="form-field">
+                  <label for="teacherPasswordInput">Mật khẩu khởi tạo (tuỳ chọn)</label>
+                  <div class="password-row">
+                    <input
+                      id="teacherPasswordInput"
+                      name="password"
+                      type="password"
+                      minlength="6"
+                      autocomplete="new-password"
+                      placeholder="Bỏ trống để tự sinh mật khẩu tạm"
+                    >
+                    <button id="toggleTeacherPwBtn" class="btn-secondary" type="button" aria-pressed="false">Hiện</button>
+                  </div>
+                </div>
+              </fieldset>
+
+              <button class="btn-primary" type="submit">Cấp tài khoản Giáo viên</button>
+
+              <div id="tempPasswordNotice" class="temp-pass-box" hidden>
+                Đã tạo tài khoản cho <strong id="tempPassEmail"></strong>. Mật khẩu tạm thời (chỉ hiển thị 1 lần):
+                <span id="tempPassValue" class="temp-pass-code"></span>
+              </div>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="teachersTableHeading">Danh sách tài khoản Giáo viên</h2>
+            </div>
+            <div tabindex="0" role="region" aria-labelledby="teachersTableHeading" class="table-wrapper responsive-stack">
+              <table>
+                <caption class="visually-hidden">Danh sách tài khoản giáo viên do Admin cấp</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Họ và tên</th>
+                    <th scope="col">Email / SĐT</th>
+                    <th scope="col">Trường</th>
+                    <th scope="col">Lớp phụ trách</th>
+                    <th scope="col">Băm MK</th>
+                    <th scope="col">Trạng thái</th>
+                    <th scope="col">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="teachersTbody">
+                  <tr><td colspan="7" class="empty-cell">Chưa có giáo viên nào được cấp tài khoản.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const ADMIN_STORAGE_KEY = 'ai-canvas:admin-session:v1';
+      const LEVEL_LABELS = {
+        TIEU_HOC: 'Tiểu học',
+        THCS: 'THCS',
+        THPT: 'THPT',
+        LIEN_CAP: 'Liên cấp',
+      };
+
+      const state = {
+        session: readSession(),
+        schools: [],
+        classes: [],
+        teachers: [],
+        stats: null,
+        activeTab: 'ai',
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function readSession() {
+        try {
+          const raw = localStorage.getItem(ADMIN_STORAGE_KEY);
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function saveSession(tokenData) {
+        const sess = {
+          access_token: tokenData.access_token,
+          full_name: tokenData.full_name,
+          email: tokenData.email,
+          role: tokenData.role,
+          expires_at: Date.now() + (tokenData.expires_in || 86400) * 1000,
+        };
+        localStorage.setItem(ADMIN_STORAGE_KEY, JSON.stringify(sess));
+        state.session = sess;
+      }
+
+      function clearSession() {
+        localStorage.removeItem(ADMIN_STORAGE_KEY);
+        state.session = null;
+      }
+
+      function showBanner(message, type = 'info') {
+        const banner = $('globalStatusBanner');
+        banner.textContent = message;
+        banner.className = `status-banner is-${type}`;
+        banner.hidden = false;
+      }
+
+      function hideBanner() {
+        $('globalStatusBanner').hidden = true;
+      }
+
+      function clearChildren(node) {
+        while (node.firstChild) {
+          node.removeChild(node.firstChild);
+        }
+      }
+
+      function makeCell(tag, text, label = '') {
+        const cell = document.createElement(tag);
+        if (label) cell.setAttribute('data-label', label);
+        cell.textContent = text ?? '—';
+        return cell;
+      }
+
+      function makeEmptyRow(colSpan, text) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = colSpan;
+        td.className = 'empty-cell';
+        td.textContent = text;
+        tr.appendChild(td);
+        return tr;
+      }
+
+      async function apiFetch(path, options = {}) {
+        const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+        if (state.session && state.session.access_token) {
+          headers.Authorization = `Bearer ${state.session.access_token}`;
+        }
+        const res = await fetch(path, { ...options, headers });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) {
+            if (path !== '/api/v1/admin/login') {
+              clearSession();
+              renderAuthShell();
+            }
+          }
+          throw new Error(payload.detail || `Lỗi HTTP ${res.status}`);
+        }
+        return payload;
+      }
+
+      function setupPasswordToggle(buttonId, inputId) {
+        const btn = $(buttonId);
+        const input = $(inputId);
+        if (!btn || !input) return;
+        btn.addEventListener('click', () => {
+          const reveal = input.type === 'password';
+          input.type = reveal ? 'text' : 'password';
+          btn.setAttribute('aria-pressed', String(reveal));
+          btn.textContent = reveal ? 'Ẩn' : 'Hiện';
+        });
+      }
+
+      function attachValidationFeedback(form) {
+        form.querySelectorAll('input, select').forEach((control) => {
+          let touched = false;
+          control.addEventListener('input', () => {
+            control.setCustomValidity('');
+            control.removeAttribute('aria-invalid');
+          });
+          control.addEventListener('change', () => {
+            touched = true;
+            control.removeAttribute('aria-invalid');
+          });
+          control.addEventListener('blur', () => {
+            if (control.value.trim().length > 0) touched = true;
+            if (touched && !control.checkValidity()) {
+              control.setAttribute('aria-invalid', 'true');
+            }
+          });
+        });
+      }
+
+      function validateFormBeforeSubmit(form) {
+        let firstInvalid = null;
+        form.querySelectorAll('input, select').forEach((control) => {
+          if (!control.checkValidity()) {
+            control.setAttribute('aria-invalid', 'true');
+            if (!firstInvalid) firstInvalid = control;
+          } else {
+            control.removeAttribute('aria-invalid');
+          }
+        });
+        if (firstInvalid) {
+          firstInvalid.focus();
+          firstInvalid.reportValidity();
+          return false;
+        }
+        return true;
+      }
+
+      function activateTab(tabKey) {
+        state.activeTab = tabKey;
+        const keys = ['ai', 'schools', 'classes', 'teachers'];
+        keys.forEach((key) => {
+          const btn = $(`tabBtn-${key}`);
+          const panel = $(`panel-${key}`);
+          const active = key === tabKey;
+          btn.setAttribute('aria-selected', String(active));
+          btn.tabIndex = active ? 0 : -1;
+          panel.hidden = !active;
+        });
+      }
+
+      function renderAuthShell() {
+        const loggedIn = Boolean(
+          state.session && state.session.access_token && state.session.expires_at > Date.now()
+        );
+        $('adminLoginSection').hidden = loggedIn;
+        $('adminDashboardSection').hidden = !loggedIn;
+        $('adminIdentityPill').hidden = !loggedIn;
+        $('refreshAllBtn').hidden = !loggedIn;
+        $('adminLogoutBtn').hidden = !loggedIn;
+        if (loggedIn) {
+          $('adminIdentityPill').textContent = `Admin: ${state.session.email}`;
+          loadDashboardData();
+        }
+      }
+
+      async function loadDashboardData() {
+        try {
+          const filterSchoolId = $('classFilterSchool').value;
+          const [schoolsRes, teachersRes, classesRes, statsRes] = await Promise.all([
+            apiFetch('/api/v1/admin/schools'),
+            apiFetch('/api/v1/admin/teachers'),
+            apiFetch(`/api/v1/admin/classes${filterSchoolId ? `?school_id=${encodeURIComponent(filterSchoolId)}` : ''}`),
+            apiFetch('/api/v1/admin/stats'),
+          ]);
+          state.schools = schoolsRes.items || [];
+          state.teachers = teachersRes.items || [];
+          state.classes = classesRes.items || [];
+          state.stats = statsRes;
+
+          renderSchoolDropdowns();
+          renderTeacherDropdown();
+          renderSchoolsTable();
+          renderClassesTable();
+          renderTeachersTable();
+          renderStats();
+        } catch (err) {
+          showBanner(`Không thể tải dữ liệu quản trị: ${err.message}`, 'error');
+        }
+      }
+
+      function renderSchoolDropdowns() {
+        const selects = [
+          { el: $('classSchoolSelect'), emptyLabel: '-- Chọn trường học --' },
+          { el: $('teacherSchoolSelect'), emptyLabel: '-- Chưa gắn trường --' },
+          { el: $('classFilterSchool'), emptyLabel: 'Tất cả trường' },
+        ];
+        selects.forEach(({ el, emptyLabel }) => {
+          const prev = el.value;
+          clearChildren(el);
+          const defOpt = document.createElement('option');
+          defOpt.value = '';
+          defOpt.textContent = emptyLabel;
+          el.appendChild(defOpt);
+          state.schools.forEach((sch) => {
+            const opt = document.createElement('option');
+            opt.value = sch.id;
+            opt.textContent = `${sch.code} · ${sch.name}`;
+            el.appendChild(opt);
+          });
+          if ([...el.options].some((o) => o.value === prev)) {
+            el.value = prev;
+          }
+        });
+      }
+
+      function renderTeacherDropdown() {
+        const select = $('classTeacherSelect');
+        const prev = select.value;
+        clearChildren(select);
+        const defOpt = document.createElement('option');
+        defOpt.value = '';
+        defOpt.textContent = '-- Chưa phân công --';
+        select.appendChild(defOpt);
+        state.teachers.forEach((t) => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = `${t.full_name} (${t.email})`;
+          select.appendChild(opt);
+        });
+        if ([...select.options].some((o) => o.value === prev)) {
+          select.value = prev;
+        }
+      }
+
+      function applyMeterStyle(barEl, badgeEl, percent) {
+        const clamped = Math.min(100, Math.max(0, Number(percent) || 0));
+        barEl.style.width = `${clamped}%`;
+        barEl.classList.remove('is-warn', 'is-danger');
+        badgeEl.className = 'badge';
+        badgeEl.textContent = `${percent}%`;
+        if (percent >= 95) {
+          barEl.classList.add('is-danger');
+          badgeEl.classList.add('badge-danger');
+        } else if (percent >= 80) {
+          barEl.classList.add('is-warn');
+          badgeEl.classList.add('badge-warn');
+        } else {
+          badgeEl.classList.add('badge-info');
+        }
+      }
+
+      function renderStats() {
+        const data = state.stats;
+        if (!data) return;
+        const { summary, quotas, ai_usage: aiUsage, minio_storage: minio } = data;
+        const gem = aiUsage.gemini;
+        const mpx = aiUsage.mathpix;
+
+        $('kpiSchoolsClasses').textContent = `${summary.total_schools} / ${summary.total_classes}`;
+        $('kpiUsers').textContent = `${summary.total_teachers} / ${summary.total_students_parents}`;
+        $('kpiUsersSub').textContent = `${summary.active_teachers} GV đang hoạt động`;
+        $('kpiAiCalls').textContent = summary.total_ai_calls.toLocaleString('vi-VN');
+        $('kpiAiAlertSub').textContent = `Trạng thái hạn ngạch: ${summary.alert_level}`;
+        $('kpiMinioStorage').textContent = `${minio.total_mb} MB`;
+        $('kpiMinioSub').textContent = `${minio.total_snapshots} ảnh snapshot`;
+
+        applyMeterStyle($('geminiMeterBar'), $('geminiPercentBadge'), gem.usage_percent);
+        $('geminiCallsText').textContent = `${gem.total_calls.toLocaleString('vi-VN')} / ${gem.quota_limit.toLocaleString('vi-VN')}`;
+        $('geminiRemainingText').textContent = gem.remaining_calls.toLocaleString('vi-VN');
+        $('geminiLiveMockText').textContent = `${gem.live_calls} / ${gem.mock_calls}`;
+        $('geminiLatencyText').textContent = `${gem.avg_latency_ms} ms`;
+
+        applyMeterStyle($('mathpixMeterBar'), $('mathpixPercentBadge'), mpx.usage_percent);
+        $('mathpixCallsText').textContent = `${mpx.total_calls.toLocaleString('vi-VN')} / ${mpx.quota_limit.toLocaleString('vi-VN')}`;
+        $('mathpixRemainingText').textContent = mpx.remaining_calls.toLocaleString('vi-VN');
+        $('mathpixLiveMockText').textContent = `${mpx.live_calls} / ${mpx.mock_calls}`;
+        $('mathpixLatencyText').textContent = `${mpx.avg_latency_ms} ms`;
+
+        applyMeterStyle($('minioMeterBar'), $('minioStatusBadge'), minio.usage_percent);
+        $('minioStatusBadge').textContent = `${minio.bucket} (${minio.usage_percent}%)`;
+        $('minioUsedText').textContent = `${minio.total_mb} MB / ${minio.quota_limit_mb} MB`;
+        $('minioRemainText').textContent = `${minio.remaining_mb} MB`;
+        $('minioCountText').textContent = `${minio.total_snapshots} snapshots`;
+        $('minioSourceText').textContent = minio.minio_live_connected ? 'MinIO Live' : 'Snapshot Ledger';
+
+        $('geminiLimitInput').value = quotas.gemini_limit;
+        $('mathpixLimitInput').value = quotas.mathpix_limit;
+        $('minioLimitInput').value = quotas.minio_storage_limit_mb;
+
+        const logsBody = $('aiLogsTbody');
+        clearChildren(logsBody);
+        const logs = aiUsage.recent_logs || [];
+        if (logs.length === 0) {
+          logsBody.appendChild(makeEmptyRow(6, 'Chưa có lượt gọi AI nào được ghi nhận.'));
+        } else {
+          logs.forEach((log) => {
+            const tr = document.createElement('tr');
+            tr.appendChild(makeCell('th', log.provider_detail || log.provider, 'Nhà cung cấp'));
+            tr.appendChild(makeCell('td', log.task_type, 'Tác vụ'));
+            tr.appendChild(makeCell('td', log.subject, 'Môn'));
+            tr.appendChild(makeCell('td', `${log.latency_ms} ms`, 'Độ trễ'));
+            tr.appendChild(makeCell('td', log.is_mock ? 'Mock Fallback' : 'Live API', 'Chế độ'));
+            tr.appendChild(makeCell('td', new Date(log.created_at).toLocaleString('vi-VN'), 'Thời điểm'));
+            logsBody.appendChild(tr);
+          });
+        }
+
+        const minioBody = $('minioClassTbody');
+        clearChildren(minioBody);
+        const classEntries = Object.entries(minio.by_class || {});
+        if (classEntries.length === 0) {
+          minioBody.appendChild(makeEmptyRow(4, 'Chưa có ảnh Snapshot nào được lưu trên MinIO.'));
+        } else {
+          classEntries.forEach(([clsName, info]) => {
+            const tr = document.createElement('tr');
+            tr.appendChild(makeCell('th', clsName, 'Lớp học'));
+            tr.appendChild(makeCell('td', String(info.snapshots), 'Số lượng ảnh'));
+            tr.appendChild(makeCell('td', `${(info.bytes / 1024).toFixed(2)} KB`, 'Dung lượng (KB)'));
+            tr.appendChild(makeCell('td', `${(info.bytes / (1024 * 1024)).toFixed(4)} MB`, 'Dung lượng (MB)'));
+            minioBody.appendChild(tr);
+          });
+        }
+      }
+
+      function renderSchoolsTable() {
+        const tbody = $('schoolsTbody');
+        clearChildren(tbody);
+        if (state.schools.length === 0) {
+          tbody.appendChild(makeEmptyRow(6, 'Chưa có trường học nào. Hãy thêm trường ở biểu mẫu bên trái.'));
+          return;
+        }
+        state.schools.forEach((sch) => {
+          const tr = document.createElement('tr');
+          tr.appendChild(makeCell('th', sch.code, 'Mã trường'));
+          const nameTd = makeCell('td', sch.name, 'Tên trường');
+          nameTd.className = 'cell-wrap';
+          tr.appendChild(nameTd);
+          tr.appendChild(makeCell('td', LEVEL_LABELS[sch.level] || sch.level, 'Cấp học'));
+          tr.appendChild(makeCell('td', `${sch.class_count} lớp / ${sch.teacher_count} GV`, 'Số lớp / GV'));
+
+          const statusTd = document.createElement('td');
+          statusTd.setAttribute('data-label', 'Trạng thái');
+          const badge = document.createElement('span');
+          badge.className = `badge ${sch.is_active ? 'badge-ok' : 'badge-warn'}`;
+          badge.textContent = sch.is_active ? 'Hoạt động' : 'Tạm ngưng';
+          statusTd.appendChild(badge);
+          tr.appendChild(statusTd);
+
+          const actionTd = document.createElement('td');
+          actionTd.setAttribute('data-label', 'Thao tác');
+          const btnWrap = document.createElement('div');
+          btnWrap.className = 'btn-row';
+
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.className = 'btn-outline-sm';
+          toggleBtn.textContent = sch.is_active ? 'Ngưng' : 'Kích hoạt';
+          toggleBtn.addEventListener('click', async () => {
+            try {
+              await apiFetch(`/api/v1/admin/schools/${sch.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ is_active: !sch.is_active }),
+              });
+              showBanner(`Đã cập nhật trạng thái trường ${sch.name}.`, 'success');
+              loadDashboardData();
+            } catch (err) {
+              showBanner(err.message, 'error');
+            }
+          });
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn-danger-sm';
+          delBtn.textContent = 'Xóa';
+          delBtn.addEventListener('click', async () => {
+            try {
+              await apiFetch(`/api/v1/admin/schools/${sch.id}`, { method: 'DELETE' });
+              showBanner(`Đã xóa trường ${sch.name}.`, 'success');
+              loadDashboardData();
+            } catch (err) {
+              showBanner(err.message, 'error');
+            }
+          });
+
+          btnWrap.append(toggleBtn, delBtn);
+          actionTd.appendChild(btnWrap);
+          tr.appendChild(actionTd);
+          tbody.appendChild(tr);
+        });
+      }
+
+      function renderClassesTable() {
+        const tbody = $('classesTbody');
+        clearChildren(tbody);
+        if (state.classes.length === 0) {
+          tbody.appendChild(makeEmptyRow(7, 'Chưa có lớp học nào.'));
+          return;
+        }
+        state.classes.forEach((cls) => {
+          const tr = document.createElement('tr');
+          tr.appendChild(makeCell('th', cls.name, 'Tên lớp'));
+          tr.appendChild(makeCell('td', cls.school_name || cls.school_code || '—', 'Trường'));
+          tr.appendChild(makeCell('td', `Khối ${cls.grade} (${cls.academic_year})`, 'Khối / Năm học'));
+          tr.appendChild(makeCell('td', cls.room_id, 'Mã phòng'));
+          tr.appendChild(makeCell('td', cls.homeroom_teacher_name || 'Chưa phân công', 'GV chủ nhiệm'));
+          tr.appendChild(makeCell('td', `${cls.snapshot_count} ảnh`, 'Ảnh bảng'));
+
+          const actionTd = document.createElement('td');
+          actionTd.setAttribute('data-label', 'Thao tác');
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn-danger-sm';
+          delBtn.textContent = 'Xóa lớp';
+          delBtn.addEventListener('click', async () => {
+            try {
+              await apiFetch(`/api/v1/admin/classes/${cls.id}`, { method: 'DELETE' });
+              showBanner(`Đã xóa lớp ${cls.name}.`, 'success');
+              loadDashboardData();
+            } catch (err) {
+              showBanner(err.message, 'error');
+            }
+          });
+          actionTd.appendChild(delBtn);
+          tr.appendChild(actionTd);
+          tbody.appendChild(tr);
+        });
+      }
+
+      function renderTeachersTable() {
+        const tbody = $('teachersTbody');
+        clearChildren(tbody);
+        if (state.teachers.length === 0) {
+          tbody.appendChild(makeEmptyRow(7, 'Chưa có giáo viên nào được cấp tài khoản.'));
+          return;
+        }
+        state.teachers.forEach((t) => {
+          const tr = document.createElement('tr');
+          tr.appendChild(makeCell('th', t.full_name, 'Họ và tên'));
+          tr.appendChild(makeCell('td', `${t.email || '—'} · ${t.phone_number || '—'}`, 'Email / SĐT'));
+          tr.appendChild(makeCell('td', t.school_name || 'Chưa gắn trường', 'Trường'));
+          tr.appendChild(makeCell('td', (t.allowed_classes || []).join(', ') || 'Chưa phân lớp', 'Lớp phụ trách'));
+          tr.appendChild(makeCell('td', t.password_hash_scheme, 'Băm MK'));
+
+          const statusTd = document.createElement('td');
+          statusTd.setAttribute('data-label', 'Trạng thái');
+          const badge = document.createElement('span');
+          badge.className = `badge ${t.is_active ? 'badge-ok' : 'badge-danger'}`;
+          badge.textContent = t.is_active ? 'Hoạt động' : 'Đã khóa';
+          statusTd.appendChild(badge);
+          tr.appendChild(statusTd);
+
+          const actionTd = document.createElement('td');
+          actionTd.setAttribute('data-label', 'Thao tác');
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.className = t.is_active ? 'btn-danger-sm' : 'btn-outline-sm';
+          toggleBtn.textContent = t.is_active ? 'Khóa TK' : 'Mở khóa';
+          toggleBtn.addEventListener('click', async () => {
+            try {
+              await apiFetch(`/api/v1/admin/teachers/${t.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ is_active: !t.is_active }),
+              });
+              showBanner(`Đã ${t.is_active ? 'khóa' : 'mở khóa'} tài khoản giáo viên ${t.full_name}.`, 'success');
+              loadDashboardData();
+            } catch (err) {
+              showBanner(err.message, 'error');
+            }
+          });
+          actionTd.appendChild(toggleBtn);
+          tr.appendChild(actionTd);
+          tbody.appendChild(tr);
+        });
+      }
+
+      function bindEvents() {
+        setupPasswordToggle('toggleAdminPwBtn', 'adminPasswordInput');
+        setupPasswordToggle('toggleTeacherPwBtn', 'teacherPasswordInput');
+
+        document.querySelectorAll('form').forEach(attachValidationFeedback);
+
+        $('fillDemoAdminBtn').addEventListener('click', () => {
+          $('adminEmailInput').value = 'admin@aicanvas.edu.vn';
+          $('adminPasswordInput').value = 'Admin@2026';
+          $('adminEmailInput').removeAttribute('aria-invalid');
+          $('adminPasswordInput').removeAttribute('aria-invalid');
+        });
+
+        $('adminLoginForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          hideBanner();
+          if (!validateFormBeforeSubmit(e.currentTarget)) return;
+          const submitBtn = $('adminLoginSubmitBtn');
+          submitBtn.disabled = true;
+          try {
+            const tokenData = await apiFetch('/api/v1/admin/login', {
+              method: 'POST',
+              body: JSON.stringify({
+                email: $('adminEmailInput').value.trim(),
+                password: $('adminPasswordInput').value,
+              }),
+            });
+            saveSession(tokenData);
+            showBanner('Đăng nhập Quản trị viên thành công.', 'success');
+            renderAuthShell();
+          } catch (err) {
+            showBanner(err.message, 'error');
+          } finally {
+            submitBtn.disabled = false;
+          }
+        });
+
+        $('adminLogoutBtn').addEventListener('click', () => {
+          clearSession();
+          showBanner('Đã đăng xuất khỏi trang Quản trị.', 'info');
+          renderAuthShell();
+        });
+
+        $('refreshAllBtn').addEventListener('click', () => {
+          loadDashboardData();
+          showBanner('Đã làm mới số liệu thống kê.', 'info');
+        });
+
+        // Keyboard-accessible Tabs
+        const tabs = ['ai', 'schools', 'classes', 'teachers'];
+        tabs.forEach((key, idx) => {
+          const btn = $(`tabBtn-${key}`);
+          btn.addEventListener('click', () => activateTab(key));
+          btn.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight') {
+              const nextKey = tabs[(idx + 1) % tabs.length];
+              activateTab(nextKey);
+              $(`tabBtn-${nextKey}`).focus();
+            } else if (e.key === 'ArrowLeft') {
+              const prevKey = tabs[(idx - 1 + tabs.length) % tabs.length];
+              activateTab(prevKey);
+              $(`tabBtn-${prevKey}`).focus();
+            }
+          });
+        });
+
+        $('classFilterSchool').addEventListener('change', loadDashboardData);
+
+        $('quotaUpdateForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          if (!validateFormBeforeSubmit(e.currentTarget)) return;
+          try {
+            await apiFetch('/api/v1/admin/ai-quota', {
+              method: 'PUT',
+              body: JSON.stringify({
+                gemini_limit: Number($('geminiLimitInput').value),
+                mathpix_limit: Number($('mathpixLimitInput').value),
+                minio_storage_limit_mb: Number($('minioLimitInput').value),
+              }),
+            });
+            showBanner('Đã cập nhật ngưỡng hạn ngạch AI & MinIO.', 'success');
+            loadDashboardData();
+          } catch (err) {
+            showBanner(err.message, 'error');
+          }
+        });
+
+        $('createSchoolForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const form = e.currentTarget;
+          if (!validateFormBeforeSubmit(form)) return;
+          try {
+            const res = await apiFetch('/api/v1/admin/schools', {
+              method: 'POST',
+              body: JSON.stringify({
+                code: $('schoolCodeInput').value.trim(),
+                name: $('schoolNameInput').value.trim(),
+                level: $('schoolLevelSelect').value,
+                address: $('schoolAddressInput').value.trim() || null,
+              }),
+            });
+            form.reset();
+            showBanner(`Đã tạo trường ${res.school.name} (${res.school.code}).`, 'success');
+            loadDashboardData();
+          } catch (err) {
+            showBanner(err.message, 'error');
+          }
+        });
+
+        $('createClassForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const form = e.currentTarget;
+          if (!validateFormBeforeSubmit(form)) return;
+          try {
+            const res = await apiFetch('/api/v1/admin/classes', {
+              method: 'POST',
+              body: JSON.stringify({
+                school_id: $('classSchoolSelect').value,
+                name: $('classNameInput').value.trim(),
+                grade: Number($('classGradeInput').value),
+                academic_year: $('classYearInput').value.trim(),
+                room_id: $('classRoomInput').value.trim() || null,
+                homeroom_teacher_id: $('classTeacherSelect').value || null,
+              }),
+            });
+            form.reset();
+            $('classGradeInput').value = '10';
+            $('classYearInput').value = '2026-2027';
+            showBanner(`Đã tạo lớp ${res.classroom.name} (phòng ${res.classroom.room_id}).`, 'success');
+            loadDashboardData();
+          } catch (err) {
+            showBanner(err.message, 'error');
+          }
+        });
+
+        $('createTeacherForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const form = e.currentTarget;
+          if (!validateFormBeforeSubmit(form)) return;
+          const classesRaw = $('teacherClassesInput').value;
+          const assignedClasses = classesRaw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const pw = $('teacherPasswordInput').value;
+          try {
+            const res = await apiFetch('/api/v1/admin/teachers', {
+              method: 'POST',
+              body: JSON.stringify({
+                full_name: $('teacherFullNameInput').value.trim(),
+                email: $('teacherEmailInput').value.trim(),
+                phone_number: $('teacherPhoneInput').value.trim(),
+                password: pw || null,
+                school_id: $('teacherSchoolSelect').value || null,
+                assigned_classes: assignedClasses,
+              }),
+            });
+            form.reset();
+            if (res.temporary_password) {
+              $('tempPassEmail').textContent = res.teacher.email;
+              $('tempPassValue').textContent = res.temporary_password;
+              $('tempPasswordNotice').hidden = false;
+            } else {
+              $('tempPasswordNotice').hidden = true;
+            }
+            showBanner(`Đã cấp tài khoản cho giáo viên ${res.teacher.full_name}.`, 'success');
+            loadDashboardData();
+          } catch (err) {
+            showBanner(err.message, 'error');
+          }
+        });
+      }
+
+      bindEvents();
+      renderAuthShell();
+    })();
+  </script>
+</body>
+</html>
