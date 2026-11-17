@@ -54,6 +54,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from app.api.exam_router import router as exam_router
+    app.include_router(exam_router)
+except ImportError:
+    pass
+
 
 _AI_TRACKED_PATHS = {
     "/api/v1/recognize": "OCR_LATEX",

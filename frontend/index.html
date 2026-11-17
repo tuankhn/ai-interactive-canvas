@@ -58,6 +58,7 @@
         <!-- Nút kích hoạt nhận diện AI thủ công & Bật/Tắt tự động Debounce 800ms -->
         <button class="tool-button tool-ai" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini 2.5 Flash / Mathpix) bóc tách công thức">Nhận diện AI</button>
         <button class="tool-button tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét vẽ phấn trắng từ vựng và khái niệm (Task TF2850F)">Minh họa AI</button>
+        <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
         <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
 
         
@@ -366,6 +367,81 @@
         <button id="refreshTeacherSessionBtn" class="dialog-cancel" type="button">Làm mới phiên</button>
         <button id="logoutTeacherBtn" class="dialog-danger" type="button">Đăng xuất</button>
       </div>
+    </div>
+  </dialog>
+
+  <!-- Dialog Tải đề thi DOCX/PDF & Tự động ẩn đáp án (Task TF28517) -->
+  <dialog id="examModal" class="board-dialog exam-dialog" aria-labelledby="examModalTitle">
+    <div class="dialog-header">
+      <h2 id="examModalTitle">Tải đề thi &amp; Dàn lên mặt bảng (DOCX / PDF)</h2>
+      <button id="closeExamModalXBtn" class="dialog-close-btn" type="button" aria-label="Đóng hộp thoại">✕</button>
+    </div>
+
+    <div class="exam-mode-bar">
+      <span class="exam-mode-label">Chế độ hiển thị:</span>
+      <div class="exam-mode-options" role="radiogroup" aria-label="Chế độ bảo mật đề thi">
+        <label class="exam-radio-label">
+          <input type="radio" name="examMode" value="STUDENT" checked />
+          <span class="mode-tag mode-student">Học sinh (Tự động ẩn đáp án đúng)</span>
+        </label>
+        <label class="exam-radio-label">
+          <input type="radio" name="examMode" value="TEACHER" />
+          <span class="mode-tag mode-teacher">Giáo viên (Hiện đáp án &amp; Lời giải)</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="exam-tabs" role="tablist">
+      <button id="examTabFile" class="exam-tab-btn is-active" type="button" role="tab" aria-selected="true">Tải file (.docx, .pdf)</button>
+      <button id="examTabText" class="exam-tab-btn" type="button" role="tab" aria-selected="false">Viết / Dán đề trực tiếp</button>
+    </div>
+
+    <!-- Tab 1: Upload File -->
+    <div id="examFilePanel" class="exam-tab-panel">
+      <div class="exam-dropzone" id="examDropzone">
+        <input type="file" id="examFileInput" accept=".docx,.pdf,.txt" class="exam-file-hidden" />
+        <div class="dropzone-content">
+          <span class="dropzone-icon">📄</span>
+          <p>Kéo thả tệp <strong>.docx, .pdf, .txt</strong> vào đây hoặc click để chọn file</p>
+          <span id="selectedFileName" class="selected-file-name">Chưa chọn tệp nào</span>
+        </div>
+      </div>
+      <div class="exam-action-row">
+        <button id="uploadExamFileBtn" class="dialog-primary" type="button">Phân tích &amp; Bóc tách câu hỏi</button>
+      </div>
+    </div>
+
+    <!-- Tab 2: Direct Text -->
+    <div id="examTextPanel" class="exam-tab-panel" hidden>
+      <div class="exam-direct-controls">
+        <label for="examDirectTextInput">Nhập nội dung đề thi (hỗ trợ câu trắc nghiệm A, B, C, D hoặc tự luận):</label>
+        <div class="sample-shortcuts">
+          <span>Chèn đề mẫu nhanh:</span>
+          <button type="button" class="sample-btn" data-subject="TOAN">Toán</button>
+          <button type="button" class="sample-btn" data-subject="VAT_LY">Vật lý</button>
+          <button type="button" class="sample-btn" data-subject="TIENG_ANH">Tiếng Anh</button>
+        </div>
+      </div>
+      <textarea id="examDirectTextInput" rows="8" placeholder="Câu 1: Giá trị của...&#10;A. 1&#10;*B. 2&#10;C. 3&#10;D. 4&#10;Đáp án: B&#10;Lời giải: ..."></textarea>
+      <div class="exam-action-row">
+        <button id="parseDirectTextBtn" class="dialog-primary" type="button">Phân tích đề bài</button>
+      </div>
+    </div>
+
+    <!-- Preview Area -->
+    <div id="examPreviewSection" class="exam-preview-section" hidden>
+      <div class="preview-header">
+        <h3 id="previewTitle">Kết quả bóc tách câu hỏi (<span id="questionCount">0</span> câu)</h3>
+        <span id="previewSecurityBadge" class="preview-badge badge-student">🛡️ Đã ẩn an toàn đáp án đúng</span>
+      </div>
+      <div id="examQuestionsList" class="exam-questions-list"></div>
+    </div>
+
+    <p id="examModalStatus" class="exam-status-msg" role="status" aria-live="polite" hidden></p>
+
+    <div class="dialog-actions">
+      <button id="closeExamModalBtn" class="dialog-cancel" type="button">Đóng</button>
+      <button id="layoutToBoardBtn" class="dialog-primary" type="button" disabled>Dàn lên mặt bảng vẽ</button>
     </div>
   </dialog>
 
