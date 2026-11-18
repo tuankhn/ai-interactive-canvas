@@ -1,0 +1,50 @@
+/* Phạm vi style độc lập, không can thiệp CSS các công cụ hiện có. */
+.ai-correction-popup[hidden] { display: none !important; }
+.ai-correction-popup {
+  position: fixed;
+  z-index: 20000;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 20px));
+  max-height: min(480px, calc(100dvh - 20px));
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #fff;
+  color: #1e293b;
+  padding: 16px;
+  box-shadow: 0 10px 35px rgba(15, 23, 42, .21);
+  font: 14px/1.45 Arial, Helvetica, sans-serif;
+}
+.ai-correction-popup * { box-sizing: border-box; }
+.ai-correction-head { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
+.ai-correction-head strong { display: block; font-size: 16px; color: #172554; }
+.ai-correction-confidence { display: inline-block; margin-top: 5px; padding: 3px 8px; border-radius: 20px; background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 700; }
+.ai-correction-popup button { cursor: pointer; font-family: inherit; }
+.ai-correction-close { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: #475569; font-size: 27px; line-height: 1; margin: -10px -10px 0 0; }
+.ai-correction-help { margin: 11px 0; color: #475569; }
+.ai-correction-detected { padding: 8px 10px; background: #f1f5f9; border-radius: 7px; overflow-wrap: anywhere; }
+.ai-correction-detected strong { color: #172554; }
+.ai-correction-label { margin-top: 14px; margin-bottom: 8px; font-weight: 700; }
+.ai-correction-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-correction-option { min-width: 48px; min-height: 48px; border: 1px solid #94a3b8; border-radius: 8px; background: #fff; color: #1e293b; padding: 7px 12px; font-size: 16px; }
+.ai-correction-option:hover, .ai-correction-option:focus-visible { background: #e0e7ff; border-color: #4338ca; }
+.ai-correction-form { margin-top: 16px; }
+.ai-correction-form label { display: block; margin-bottom: 6px; font-weight: 700; }
+.ai-correction-form-row { display: flex; gap: 6px; }
+.ai-correction-form-row input { min-width: 0; width: 100%; min-height: 48px; border: 1px solid #94a3b8; border-radius: 8px; font-size: 15px; padding: 8px; }
+.ai-correction-form-row button { flex: 0 0 auto; min-height: 48px; border: 0; border-radius: 8px; background: #25276a; color: #fff; font-weight: 700; padding: 0 12px; }
+.ai-correction-popup :is(button, input):focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+
+.ai-correction-marker[hidden] { display: none !important; }
+.ai-correction-marker {
+  position: fixed;
+  z-index: 19999;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  border: 3px solid #f59e0b;
+  border-radius: 50%;
+  background: rgba(253, 230, 138, .28);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, .18);
+  pointer-events: none;
+}
