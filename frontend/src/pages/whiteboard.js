@@ -7,6 +7,7 @@ import { setupBoardDialogs } from '../components/boardDialogs.js';
 import { setupAIRecognition } from '../components/aiRecognition.js';
 import { setupOfflineSync } from '../utils/offline_sync.js';
 import { setupTeacherAuth } from '../utils/auth_client.js';
+import { setupExamManager } from '../components/examManager.js';
 
 export async function initWhiteboard() {
   setupToolbar();
@@ -17,6 +18,7 @@ export async function initWhiteboard() {
   setupAIRecognition();
   setupOfflineSync();
   setupTeacherAuth();
+  setupExamManager();
 
   // Phần đếm giờ và kết thúc phiên: chỉ chạy khi ứng dụng đã khởi tạo.
   const startedAt = Date.now();

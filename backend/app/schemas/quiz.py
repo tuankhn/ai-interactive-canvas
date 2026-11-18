@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict
 
 
@@ -62,3 +62,52 @@ class GradeEssayStepResponse(BaseModel):
     feedback: str
     has_math_error: bool = False
     guidance: Optional[str] = None
+
+
+# -------------------------------------------------------------
+# Schemas cho Task TF28517: Tải đề DOCX/PDF & Ẩn đáp án học sinh
+# -------------------------------------------------------------
+
+class AnswerOptionItem(BaseModel):
+    label: str
+    content: str
+    is_correct: bool = False
+    wrong_explanation: Optional[str] = None
+
+
+class QuestionItem(BaseModel):
+    id: str
+    number: int
+    content: str
+    question_type: str = "MCQ"  # MCQ hoặc ESSAY
+    correct_option: Optional[str] = None
+    explanation: Optional[str] = None
+    options: List[AnswerOptionItem] = []
+
+
+class ExamParseTextRequest(BaseModel):
+    raw_text: str
+    title: Optional[str] = "Đề bài trực tiếp"
+    mode: Optional[str] = "STUDENT"  # "STUDENT" hoặc "TEACHER"
+    subject: Optional[str] = "TOAN"
+
+
+class ExamUploadResponse(BaseModel):
+    title: str
+    mode: str
+    total_questions: int
+    questions: List[QuestionItem]
+    source_type: str  # TEXT, DOCX, PDF
+    hidden_answers: bool = True
+
+
+class ExamCanvasLayoutRequest(BaseModel):
+    questions: List[Dict[str, Any]]
+    mode: Optional[str] = "STUDENT"
+    questions_per_page: Optional[int] = 2
+
+
+class ExamCanvasLayoutResponse(BaseModel):
+    mode: str
+    total_pages: int
+    pages: List[Dict[str, Any]]

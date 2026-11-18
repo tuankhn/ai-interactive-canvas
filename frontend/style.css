@@ -989,3 +989,262 @@ dialog::backdrop {
 .ai-btn-graph:hover {
   background: #1d4ed8;
 }
+
+/* ==============================================================================
+   TASK TF28517: TẢI ĐỀ DOCX/PDF & TỰ ĐỘNG ẨN ĐÁP ÁN (NGUYỄN NGỌC GIA BẢO 2)
+   ============================================================================== */
+.tool-exam {
+  background: linear-gradient(135deg, #0284c7 0%, #0d9488 100%);
+  color: #ffffff;
+  font-weight: 700;
+  border: 1px solid #0f766e;
+}
+.tool-exam:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #0f766e 100%);
+}
+
+.exam-dialog {
+  max-width: 720px;
+  width: 94vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.25);
+}
+
+.exam-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+.exam-mode-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+  white-space: nowrap;
+}
+.exam-mode-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.exam-radio-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.mode-tag {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.mode-student {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+.mode-teacher {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.exam-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 14px;
+}
+.exam-tab-btn {
+  background: none;
+  border: none;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.15s ease;
+}
+.exam-tab-btn.is-active {
+  color: #0284c7;
+  border-bottom-color: #0284c7;
+}
+
+.exam-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exam-dropzone {
+  border: 2px dashed #94a3b8;
+  border-radius: 8px;
+  padding: 24px 16px;
+  text-align: center;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.exam-dropzone:hover, .exam-dropzone.is-dragover {
+  border-color: #0284c7;
+  background: #f0f9ff;
+}
+.exam-file-hidden {
+  display: none;
+}
+.dropzone-icon {
+  font-size: 32px;
+  display: block;
+  margin-bottom: 6px;
+}
+.selected-file-name {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #0369a1;
+  font-weight: 600;
+}
+
+.exam-direct-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sample-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+.sample-btn {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+}
+.sample-btn:hover {
+  background: #e2e8f0;
+}
+
+#examDirectTextInput {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 10px;
+  font-family: monospace, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.exam-preview-section {
+  margin-top: 14px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.preview-header h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+  color: #1e293b;
+}
+.preview-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+.badge-student {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.badge-teacher {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.exam-questions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.exam-q-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 13px;
+}
+.exam-q-header {
+  margin-bottom: 6px;
+  color: #0f172a;
+}
+.exam-q-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 12px;
+}
+.exam-q-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #334155;
+}
+.opt-badge {
+  font-weight: 700;
+  min-width: 18px;
+}
+.opt-correct {
+  color: #15803d;
+  font-weight: 700;
+}
+.opt-correct-tag {
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.exam-q-explanation {
+  margin-top: 6px;
+  padding: 6px;
+  background: #f0f9ff;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #0369a1;
+}
+
+.exam-status-msg {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 8px 0;
+}
