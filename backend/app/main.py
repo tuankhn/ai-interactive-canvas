@@ -55,8 +55,9 @@ except ImportError:
     pass
 
 try:
-    from app.api.exam_router import router as exam_router
+    from app.api.exam_router import router as exam_router, alias_router as exam_alias_router
     app.include_router(exam_router)
+    app.include_router(exam_alias_router)
 except ImportError:
     pass
 

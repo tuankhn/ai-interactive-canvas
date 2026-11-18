@@ -59,6 +59,7 @@
         <button class="tool-button tool-ai" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini 2.5 Flash / Mathpix) bóc tách công thức">Nhận diện AI</button>
         <button class="tool-button tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét vẽ phấn trắng từ vựng và khái niệm (Task TF2850F)">Minh họa AI</button>
         <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
+        <button class="tool-button tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích các phương án gây nhiễu (Task TF28519)">Chấm trắc nghiệm</button>
         <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
 
         
@@ -442,6 +443,65 @@
     <div class="dialog-actions">
       <button id="closeExamModalBtn" class="dialog-cancel" type="button">Đóng</button>
       <button id="layoutToBoardBtn" class="dialog-primary" type="button" disabled>Dàn lên mặt bảng vẽ</button>
+    </div>
+  </dialog>
+
+  <!-- Dialog Phản hồi chấm trắc nghiệm & Giải thích phương án gây nhiễu (Task TF28519) -->
+  <dialog id="gradeFeedbackDialog" class="board-dialog grade-feedback-dialog" aria-labelledby="gradeFeedbackTitle">
+    <div class="dialog-header">
+      <h2 id="gradeFeedbackTitle">Kết quả chấm bài trắc nghiệm</h2>
+      <button id="closeGradeFeedbackXBtn" class="dialog-close-btn" type="button" aria-label="Đóng hộp thoại">✕</button>
+    </div>
+
+    <div class="feedback-badge-row">
+      <div id="feedbackResultBadge" class="feedback-result-badge badge-correct">
+        <span id="feedbackIcon" class="feedback-icon">✓</span>
+        <span id="feedbackText" class="feedback-text">Chính xác! (+1.0 điểm)</span>
+      </div>
+      <span id="feedbackSubjectTag" class="feedback-subject-tag">Toán học</span>
+    </div>
+
+    <div class="feedback-answer-summary">
+      <div class="summary-item">
+        <span class="summary-label">Bạn đã chọn:</span>
+        <strong id="feedbackSelectedLabel" class="summary-value choice-student">A</strong>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Đáp án đúng:</span>
+        <strong id="feedbackCorrectLabel" class="summary-value choice-correct">A</strong>
+      </div>
+    </div>
+
+    <!-- Khối phân tích phương án gây nhiễu (Chỉ rõ lý do sai của phương án đã chọn) -->
+    <div id="feedbackDistractorBox" class="feedback-box distractor-box" hidden>
+      <div class="box-header">
+        <span class="box-icon">⚠️</span>
+        <strong>Chỉ rõ lý do sai của phương án đã chọn (Phương án gây nhiễu):</strong>
+      </div>
+      <p id="feedbackDistractorText" class="box-content"></p>
+    </div>
+
+    <!-- Khối hướng dẫn cách tìm ra đáp án đúng -->
+    <div id="feedbackGuidanceBox" class="feedback-box guidance-box" hidden>
+      <div class="box-header">
+        <span class="box-icon">💡</span>
+        <strong>Hướng dẫn cách tìm ra đáp án đúng:</strong>
+      </div>
+      <p id="feedbackGuidanceText" class="box-content"></p>
+    </div>
+
+    <!-- Khối giải thích tại sao đáp án đúng là đúng -->
+    <div id="feedbackExplanationBox" class="feedback-box explanation-box">
+      <div class="box-header">
+        <span class="box-icon">📖</span>
+        <strong>Lời giải thích chi tiết:</strong>
+      </div>
+      <p id="feedbackExplanationText" class="box-content"></p>
+    </div>
+
+    <div class="dialog-actions">
+      <button id="retryGradeBtn" class="dialog-cancel" type="button">Thử lại câu khác</button>
+      <button id="closeGradeFeedbackBtn" class="dialog-primary" type="button">Đã hiểu</button>
     </div>
   </dialog>
 
