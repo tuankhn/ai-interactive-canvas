@@ -1,10 +1,13 @@
+import base64
 from datetime import datetime, timezone
-from typing import Optional
+from io import BytesIO
+from typing import Dict, Optional
 import uuid
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Response
+from PIL import Image, ImageDraw
 from app.schemas.canvas_schema import PageSaveRequest, SnapshotSaveRequest
-from app.core.database import in_memory_pages, in_memory_snapshots
-from app.core.storage import upload_snapshot_to_minio
+from app.core.database import in_memory_pages, in_memory_snapshot_blobs, in_memory_snapshots
+from app.core.storage import convert_canvas_to_highres, upload_snapshot_to_minio
 from app.api.auth_router import assert_user_can_access_class, get_current_user_from_header
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["Board Pages & Snapshots (MinIO + PostgreSQL)"])
@@ -86,6 +89,7 @@ async def save_snapshot(payload: SnapshotSaveRequest):
         "tags": tags,
         "trigger_type": payload.trigger_type,
         "image_url": storage_info["image_url"],
+        "preview_url": f"/api/v1/sessions/snapshots/{snap_id}/image?format={storage_info['image_format']}",
         "image_format": storage_info["image_format"],
         "size_bytes": storage_info["size_bytes"],
         "ocr_text_metadata": payload.recognized_latex or "",
@@ -93,17 +97,77 @@ async def save_snapshot(payload: SnapshotSaveRequest):
         "created_at": storage_info["created_at"],
         "retention_until": storage_info["retention_until"],
     }
+    if storage_info.get("data_uri") and "," in storage_info["data_uri"]:
+        in_memory_snapshot_blobs[snap_id] = base64.b64decode(storage_info["data_uri"].split(",", 1)[1])
+    else:
+        in_memory_snapshot_blobs[snap_id] = convert_canvas_to_highres(payload.image_base64, "webp")
     in_memory_snapshots.insert(0, record)
     return {
         "status": "saved",
         "snapshot_id": snap_id,
         "tags": tags,
         "image_url": record["image_url"],
+        "preview_url": record["preview_url"],
         "image_format": record["image_format"],
         "created_at": record["created_at"],
         "retention_until": record["retention_until"],
         "total_snapshots": len(in_memory_snapshots),
     }
+
+
+def _render_fallback_snapshot_bytes(record: dict) -> bytes:
+    """Sinh ảnh bảng học độ nét cao dự phòng khi snapshot chưa có blob nhị phân trên local."""
+    img = Image.new("RGB", (960, 540), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    tags = record.get("tags") or {}
+    draw.rectangle([(16, 16), (944, 524)], outline=(34, 47, 113), width=4)
+    draw.text((40, 40), f"Lop: {tags.get('class_name', '10A1')} | Mon: {tags.get('subject', 'TOAN')}", fill=(34, 47, 113))
+    draw.text((40, 80), f"Giao vien: {tags.get('teacher_name', 'Giao vien')} | Ngay: {tags.get('date', '')}", fill=(71, 85, 105))
+    latex = (record.get("recognized_latex") or record.get("ocr_text_metadata") or "Noi dung bang hoc")[:120]
+    draw.text((40, 150), latex, fill=(15, 23, 42))
+    out = BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+@router.get("/snapshots/{snapshot_id}/image", summary="TF2851F: Xem & Tải ảnh bảng độ nét cao (PNG/WebP)")
+async def get_snapshot_image(
+    snapshot_id: str,
+    format: str = Query(default="webp", description="Định dạng ảnh trả về: webp hoặc png"),
+    download: bool = Query(default=False, description="Bật true để tải file về máy"),
+    token: Optional[str] = Query(default=None, description="JWT dự phòng khi tải bằng thẻ <img> hoặc <a download>"),
+    authorization: Optional[str] = Header(default=None),
+):
+    snap = next((item for item in in_memory_snapshots if item.get("id") == snapshot_id), None)
+    if not snap:
+        raise HTTPException(status_code=404, detail="Không tìm thấy ảnh bài học.")
+
+    auth_header = authorization or (f"Bearer {token}" if token else None)
+    user = get_current_user_from_header(auth_header, required=False)
+    assert_user_can_access_class(user, requested_class_name=snap.get("tags", {}).get("class_name"))
+
+    raw_bytes = in_memory_snapshot_blobs.get(snapshot_id) or _render_fallback_snapshot_bytes(snap)
+    ext = "png" if format.lower() == "png" else "webp"
+    pil_fmt = "PNG" if ext == "png" else "WEBP"
+
+    img = Image.open(BytesIO(raw_bytes))
+    out = BytesIO()
+    if pil_fmt == "PNG":
+        img.save(out, format="PNG", optimize=True)
+    else:
+        img.save(out, format="WEBP", quality=92, method=4)
+
+    tags = snap.get("tags") or {}
+    filename = f"bai-hoc-{tags.get('class_name', 'lop')}-{tags.get('subject', 'mon')}-{tags.get('date', 'today')}.{ext}"
+    disposition = "attachment" if download else "inline"
+    return Response(
+        content=out.getvalue(),
+        media_type=f"image/{ext}",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
 
 
 @router.get("/snapshots")
@@ -112,6 +176,8 @@ async def list_snapshots(
     subject: Optional[str] = Query(default=None, description="Lọc theo môn học (vd: TOAN)"),
     date: Optional[str] = Query(default=None, description="Lọc theo ngày YYYY-MM-DD"),
     q: Optional[str] = Query(default=None, description="Tìm kiếm theo nội dung văn bản OCR / LaTeX"),
+    limit: int = Query(default=24, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     authorization: Optional[str] = Header(default=None),
 ):
     """Truy vấn và tìm kiếm danh sách Snapshot theo lớp, môn học, ngày học và nội dung OCR."""
@@ -124,6 +190,13 @@ async def list_snapshots(
         results = [r for r in results if r["tags"]["class_name"].replace(" ", "").upper() in allowed]
     if class_name:
         results = [r for r in results if r["tags"]["class_name"].lower() == class_name.lower()]
+
+    calendar_counts: Dict[str, int] = {}
+    for item in results:
+        d = item.get("tags", {}).get("date")
+        if d:
+            calendar_counts[d] = calendar_counts.get(d, 0) + 1
+
     if subject:
         results = [r for r in results if r["tags"]["subject"].lower() == subject.lower()]
     if date:
@@ -135,7 +208,14 @@ async def list_snapshots(
             if q_low in (r.get("ocr_text_metadata") or "").lower()
             or q_low in (r.get("recognized_latex") or "").lower()
         ]
-    return {"count": len(results), "items": results}
+    total_count = len(results)
+    paged = results[offset:offset + limit]
+    return {
+        "count": len(paged),
+        "total_count": total_count,
+        "calendar_counts": calendar_counts,
+        "items": paged,
+    }
 
 
 # Router tương thích cho tiền tố số ít /api/v1/session

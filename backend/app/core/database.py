@@ -7,6 +7,7 @@ from app.core.config import settings
 in_memory_sessions: Dict[str, Dict[str, Any]] = {}
 in_memory_pages: Dict[str, Dict[int, Dict[str, Any]]] = {}
 in_memory_snapshots: list = []
+in_memory_snapshot_blobs: Dict[str, bytes] = {}
 synced_offline_ids: Dict[str, Dict[str, Any]] = {}
 
 # Bộ nhớ đệm xác thực & phiên thiết bị phòng học 14 ngày (TF28514, TF28515)

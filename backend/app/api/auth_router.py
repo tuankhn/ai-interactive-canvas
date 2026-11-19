@@ -634,17 +634,21 @@ async def forgot_password_reset(payload: ResetPasswordOTPRequest):
     }
 
 
-@router.get("/student/lessons", summary="TF28515: Xem bài học (Snapshot) giới hạn theo đúng lớp của Học sinh/Phụ huynh")
+@router.get("/student/lessons", summary="TF28515 / TF2851F: Xem bài học (Snapshot) giới hạn theo đúng lớp của Học sinh/Phụ huynh")
 async def list_student_class_lessons(
     class_name: Optional[str] = Query(default=None, description="Tên lớp cần xem (mặc định lớp của học sinh)"),
     subject: Optional[str] = Query(default=None),
+    date: Optional[str] = Query(default=None, description="Lọc theo ngày YYYY-MM-DD"),
+    q: Optional[str] = Query(default=None, description="Tìm kiếm theo công thức OCR/LaTeX hoặc tên giáo viên"),
+    limit: int = Query(default=24, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     authorization: Optional[str] = Header(default=None),
 ):
     user = get_current_user_from_header(authorization, required=True)
     assert_user_can_access_class(user, requested_class_name=class_name)
 
     allowed = set(user["allowed_classes"])
-    results = []
+    class_scoped = []
     for snap in in_memory_snapshots:
         snap_class = _normalize_class_name(snap.get("tags", {}).get("class_name", ""))
         if user["role"] in ("TEACHER", "ADMIN"):
@@ -652,16 +656,45 @@ async def list_student_class_lessons(
                 continue
         elif snap_class not in allowed:
             continue
+        class_scoped.append(snap)
 
-        if subject and snap.get("tags", {}).get("subject", "").lower() != subject.lower():
+    calendar_counts: Dict[str, int] = {}
+    for item in class_scoped:
+        d = item.get("tags", {}).get("date")
+        if d:
+            calendar_counts[d] = calendar_counts.get(d, 0) + 1
+
+    results = []
+    q_low = (q or "").strip().lower()
+    for snap in class_scoped:
+        tags = snap.get("tags", {})
+        if subject and tags.get("subject", "").lower() != subject.lower():
             continue
-        results.append(snap)
+        if date and tags.get("date") != date:
+            continue
+        if q_low:
+            haystack = " ".join([
+                snap.get("ocr_text_metadata") or "",
+                snap.get("recognized_latex") or "",
+                tags.get("teacher_name") or "",
+                tags.get("subject") or "",
+            ]).lower()
+            if q_low not in haystack:
+                continue
+        enriched = dict(snap)
+        if not enriched.get("preview_url") and enriched.get("id"):
+            enriched["preview_url"] = f"/api/v1/sessions/snapshots/{enriched['id']}/image?format=webp"
+        results.append(enriched)
 
+    total_count = len(results)
+    paged = results[offset:offset + limit]
     return {
         "role": user["role"],
         "allowed_classes": user["allowed_classes"],
-        "count": len(results),
-        "items": results,
+        "count": len(paged),
+        "total_count": total_count,
+        "calendar_counts": calendar_counts,
+        "items": paged,
     }
 
 
