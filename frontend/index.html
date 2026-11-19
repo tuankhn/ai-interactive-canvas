@@ -59,6 +59,7 @@
         <button class="tool-button tool-ai" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini 2.5 Flash / Mathpix) bóc tách công thức">Nhận diện AI</button>
         <button class="tool-button tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét vẽ phấn trắng từ vựng và khái niệm (Task TF2850F)">Minh họa AI</button>
         <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
+        <button class="tool-button tool-quiz" id="quizBoardToggleBtn" type="button" title="Hiển thị đề trắc nghiệm lên bảng và bắt nét khoanh đáp án A, B, C, D (Task TF28518)">Trắc nghiệm</button>
         <button class="tool-button tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích các phương án gây nhiễu (Task TF28519)">Chấm trắc nghiệm</button>
         <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
 
@@ -503,6 +504,31 @@
       <button id="retryGradeBtn" class="dialog-cancel" type="button">Thử lại câu khác</button>
       <button id="closeGradeFeedbackBtn" class="dialog-primary" type="button">Đã hiểu</button>
     </div>
+  </dialog>
+
+  <!-- Bảng điều khiển Trắc nghiệm trực tiếp trên Canvas & Bắt nét khoanh A/B/C/D (Task TF28518) -->
+  <dialog id="quizBoardPanel" class="quiz-board-panel" popover="manual" aria-labelledby="quizBoardHeading">
+    <div class="quiz-panel-head">
+      <h2 id="quizBoardHeading">Trắc nghiệm &amp; Khoanh đáp án</h2>
+      <button id="closeQuizBoardBtn" class="dialog-close-btn" type="button" aria-label="Đóng bảng điều khiển trắc nghiệm">✕</button>
+    </div>
+    <p class="quiz-panel-guide">Dùng Bút vẽ khoanh tròn trực tiếp quanh chữ cái <strong>A, B, C, D</strong> trên bảng để chấm bài.</p>
+    <div class="quiz-panel-controls">
+      <label for="quizBoardSubjectSelect" class="sr-only">Chọn môn đề mẫu</label>
+      <select id="quizBoardSubjectSelect" name="quiz_subject">
+        <option value="TOAN">Đề mẫu Toán</option>
+        <option value="VAT_LY">Đề mẫu Vật lý</option>
+        <option value="TIENG_ANH">Đề mẫu Tiếng Anh</option>
+      </select>
+      <button id="quizLoadSampleBtn" class="quiz-btn-primary" type="button">Hiện đề lên bảng</button>
+    </div>
+    <div class="quiz-nav-row">
+      <button id="quizPrevQuestionBtn" class="quiz-btn-secondary" type="button">← Câu trước</button>
+      <span id="quizQuestionCounter" class="quiz-counter">Chưa có câu hỏi</span>
+      <button id="quizNextQuestionBtn" class="quiz-btn-secondary" type="button">Câu sau →</button>
+      <button id="quizClearCardBtn" class="quiz-btn-danger" type="button">Gỡ khỏi bảng</button>
+    </div>
+    <p id="quizBoardStatus" class="quiz-board-status" role="status" aria-live="polite" data-variant="info">Sẵn sàng bắt nét khoanh đáp án A, B, C, D.</p>
   </dialog>
 
   <div id="offlineToastRegion" class="offline-toast-region" role="region" aria-label="Thông báo kết nối mạng">

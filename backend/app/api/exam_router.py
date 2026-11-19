@@ -1,13 +1,21 @@
+from datetime import datetime, timezone
+import math
 import os
-from typing import Optional
+from typing import List, Optional, Tuple
+import uuid
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from app.core.database import in_memory_circle_submissions
 from app.schemas.quiz import (
+    CircleAnswerSubmitRequest,
+    CircleAnswerSubmitResponse,
     ExamCanvasLayoutRequest,
     ExamCanvasLayoutResponse,
     ExamParseTextRequest,
     ExamUploadResponse,
     GradeMCQRequest,
     GradeMCQResponse,
+    QuizOptionRegion,
+    StrokeBoundingBox,
 )
 from app.services.exam_service import exam_service
 from app.services.grading_service import grading_service
@@ -182,5 +190,152 @@ async def analyze_all_distractors(
     }
 
 
+def _match_stroke_to_option(
+    stroke: StrokeBoundingBox,
+    option_regions: List[QuizOptionRegion],
+    fallback_label: Optional[str] = None,
+) -> Tuple[Optional[str], float]:
+    """Đối chiếu vùng tọa độ nét khoanh tròn với danh sách tọa độ các phương án A/B/C/D."""
+    if not option_regions:
+        cleaned = (fallback_label or "").strip().upper()
+        return (cleaned or None), (1.0 if cleaned else 0.0)
+
+    sx1, sy1 = stroke.x, stroke.y
+    sx2, sy2 = stroke.x + max(1.0, stroke.width), stroke.y + max(1.0, stroke.height)
+    scx, scy = (sx1 + sx2) / 2.0, (sy1 + sy2) / 2.0
+    stroke_area = max(1.0, (sx2 - sx1) * (sy2 - sy1))
+
+    best_label: Optional[str] = None
+    best_score: float = -1.0
+    nearest_label: Optional[str] = None
+    nearest_dist: float = float("inf")
+
+    for region in option_regions:
+        rx1, ry1 = region.x, region.y
+        rx2, ry2 = region.x + max(1.0, region.width), region.y + max(1.0, region.height)
+        region_area = max(1.0, (rx2 - rx1) * (ry2 - ry1))
+
+        ix1, iy1 = max(sx1, rx1), max(sy1, ry1)
+        ix2, iy2 = min(sx2, rx2), min(sy2, ry2)
+        inter_w = max(0.0, ix2 - ix1)
+        inter_h = max(0.0, iy2 - iy1)
+        inter_area = inter_w * inter_h
+
+        containment = inter_area / stroke_area
+        union_area = max(1.0, stroke_area + region_area - inter_area)
+        iou = inter_area / union_area
+
+        # Trọng số ưu tiên tâm nét khoanh nằm trong dải tọa độ dọc của phương án
+        y_center_inside = 1.0 if (ry1 - 8.0 <= scy <= ry2 + 8.0) else 0.0
+        x_overlap = 1.0 if (sx2 >= rx1 - 16.0 and sx1 <= rx2 + 16.0) else 0.0
+        score = (0.65 * containment) + (0.20 * iou) + (0.15 * y_center_inside * x_overlap)
+
+        if score > best_score:
+            best_score = score
+            best_label = region.label.strip().upper()
+
+        rcy = (ry1 + ry2) / 2.0
+        badge_cx = rx1 + min(30.0, (rx2 - rx1) / 2.0)
+        dist = math.hypot(scx - badge_cx, scy - rcy)
+        if dist < nearest_dist:
+            nearest_dist = dist
+            nearest_label = region.label.strip().upper()
+
+    if best_score > 0.05 and best_label:
+        return best_label, round(min(1.0, best_score), 3)
+
+    if nearest_label and nearest_dist <= 45.0:
+        return nearest_label, round(max(0.15, 1.0 - nearest_dist / 60.0), 3)
+
+    if fallback_label:
+        return fallback_label.strip().upper(), 0.5
+
+    return None, 0.0
+
+
+@router.post(
+    "/circle-answer",
+    response_model=CircleAnswerSubmitResponse,
+    summary="TF28518: Nhận vùng tọa độ nét khoanh tròn đáp án A/B/C/D từ bảng và chấm bài",
+    description="Tiếp nhận tọa độ nét khoanh của học sinh, đối chiếu với vị trí các phương án trên Canvas, lưu log vùng khoanh và trả kết quả chấm bài.",
+)
+async def submit_circled_answer(payload: CircleAnswerSubmitRequest):
+    matched_label, overlap_score = _match_stroke_to_option(
+        stroke=payload.stroke_bbox,
+        option_regions=payload.option_regions,
+        fallback_label=payload.selected_label,
+    )
+    if not matched_label:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vùng tọa độ nét khoanh chưa khớp với phương án A, B, C hoặc D nào.",
+        )
+
+    grade_result = grading_service.evaluate_mcq_choice(
+        question_id=payload.question_id,
+        selected_label=matched_label,
+        correct_label=payload.correct_label or "A",
+        correct_explanation=payload.explanation or "Phương án chính xác theo định luật và số liệu bài toán.",
+        distractor_map=payload.distractor_map,
+        question_content=payload.question_content,
+        subject=payload.subject or "TOAN",
+        session_id=payload.session_id,
+        student_id=payload.student_id,
+    )
+
+    submission_id = f"circle_{uuid.uuid4().hex[:12]}"
+    in_memory_circle_submissions.insert(
+        0,
+        {
+            "submission_id": submission_id,
+            "question_id": payload.question_id,
+            "session_id": payload.session_id,
+            "room_id": payload.room_id,
+            "student_id": payload.student_id,
+            "matched_label": matched_label,
+            "overlap_score": overlap_score,
+            "selection_method": payload.selection_method,
+            "stroke_points_count": payload.stroke_points_count,
+            "circularity_score": payload.circularity_score,
+            "stroke_bbox": payload.stroke_bbox.model_dump(),
+            "is_correct": grade_result.is_correct,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    return CircleAnswerSubmitResponse(
+        submission_id=submission_id,
+        matched_label=matched_label,
+        overlap_score=overlap_score,
+        selection_method=payload.selection_method,
+        stroke_bbox=payload.stroke_bbox,
+        grade_result=grade_result,
+    )
+
+
+@router.get(
+    "/circle-submissions",
+    summary="TF28518: Danh sách các lượt khoanh đáp án trắc nghiệm đã gửi về Backend",
+)
+async def list_circle_submissions(
+    session_id: Optional[str] = Query(default=None),
+    question_id: Optional[str] = Query(default=None),
+):
+    items = [
+        item
+        for item in in_memory_circle_submissions
+        if (not session_id or item.get("session_id") == session_id)
+        and (not question_id or item.get("question_id") == question_id)
+    ]
+    return {"count": len(items), "items": items}
+
+
 alias_router.add_api_route("/grade-mcq", grade_mcq_choice, methods=["POST"], response_model=GradeMCQResponse)
 alias_router.add_api_route("/distractor-analysis", analyze_all_distractors, methods=["POST"])
+alias_router.add_api_route(
+    "/circle-answer",
+    submit_circled_answer,
+    methods=["POST"],
+    response_model=CircleAnswerSubmitResponse,
+)
+alias_router.add_api_route("/circle-submissions", list_circle_submissions, methods=["GET"])

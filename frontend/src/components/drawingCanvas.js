@@ -147,6 +147,7 @@ export function finishStroke(commit) {
   const points = finished.points;
   const first = points[0];
   const last = points.at(-1);
+  let createdObject = null;
   if (state.tool === 'pen' || state.tool === 'highlighter') {
     const pathData = createPath(points, finished.width);
     if (pathData) {
@@ -158,6 +159,7 @@ export function finishStroke(commit) {
       object._hitPoints = points.slice();
       object._hitWidth = finished.width;
       fabricCanvas.add(object);
+      createdObject = object;
     }
   } else if (state.tool === 'areaEraser' && points.length > 1) {
     const rect = {
@@ -178,7 +180,10 @@ export function finishStroke(commit) {
     const distance = Math.hypot(last.x - first.x, last.y - first.y);
     if (distance > 2) {
       const shape = makeShape(first, last, state.tool, finished.color, finished.width);
-      if (shape) fabricCanvas.add(shape);
+      if (shape) {
+        fabricCanvas.add(shape);
+        createdObject = shape;
+      }
     }
   }
   fabricCanvas.requestRenderAll();
@@ -187,6 +192,16 @@ export function finishStroke(commit) {
     ui.input.textContent = `Đã hoàn thành: ${toolNames[state.tool]}`;
     setStatus('Đã cập nhật bảng');
     scheduleAIDebounce();
+    if (createdObject) {
+      window.dispatchEvent(new CustomEvent('app:stroke-finished', {
+        detail: {
+          tool: state.tool,
+          points: points.slice(),
+          object: createdObject,
+          bounds: createdObject.getBoundingRect(),
+        },
+      }));
+    }
   } else {
     setStatus('Không có thay đổi');
   }
