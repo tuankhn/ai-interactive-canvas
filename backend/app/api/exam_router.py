@@ -14,6 +14,10 @@ from app.schemas.quiz import (
     ExamUploadResponse,
     GradeMCQRequest,
     GradeMCQResponse,
+    GradeEssayStepRequest,
+    GradeEssayStepResponse,
+    GradeEssaySolutionRequest,
+    GradeEssaySolutionResponse,
     QuizOptionRegion,
     StrokeBoundingBox,
 )
@@ -346,6 +350,60 @@ async def list_circle_submissions(
     return {"count": len(items), "items": items}
 
 
+# =========================================================================
+# TASK TF2851A: CHẤM BÀI GIẢI TỰ LUẬN THEO TỪNG DÒNG VIẾT TAY
+# =========================================================================
+
+@router.post(
+    "/grade-essay-step",
+    response_model=GradeEssayStepResponse,
+    summary="TF2851A: Chấm một bước/dòng giải tự luận viết tay realtime",
+    description="Kiểm tra dòng viết tay học sinh vừa viết: Đúng đánh dấu tích xanh; Sai gạch chân đỏ ngay dòng tính sai hoặc nhầm công thức và hiện gợi ý sửa mà không lộ đáp án cuối.",
+)
+async def grade_essay_single_step(payload: GradeEssayStepRequest):
+    if not payload.written_text or not payload.written_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nội dung bước giải tự luận không được để trống.",
+        )
+
+    res = grading_service.evaluate_essay_step(
+        question_id=payload.question_id,
+        step_number=payload.step_number,
+        written_text=payload.written_text,
+        previous_steps=payload.previous_steps,
+        question_content=payload.question_content,
+        subject=payload.subject or "TOAN",
+        target_answer=payload.target_answer,
+        line_bounding_box=payload.line_bounding_box,
+    )
+    return res
+
+
+@router.post(
+    "/grade-essay-solution",
+    response_model=GradeEssaySolutionResponse,
+    summary="TF2851A: Chấm toàn bộ bài giải tự luận gồm nhiều dòng viết tay",
+    description="Duyệt từng bước giải, đánh dấu tích xanh các bước biến đổi đúng, gạch chân đỏ các dòng sai và tổng hợp phản hồi không lộ đáp án.",
+)
+async def grade_essay_full_solution(payload: GradeEssaySolutionRequest):
+    if not payload.steps and not payload.raw_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vui lòng cung cấp danh sách các bước hoặc văn bản lời giải để chấm.",
+        )
+
+    res = grading_service.evaluate_essay_solution(
+        question_id=payload.question_id,
+        steps=payload.steps,
+        raw_text=payload.raw_text,
+        question_content=payload.question_content,
+        subject=payload.subject or "TOAN",
+        target_answer=payload.target_answer,
+    )
+    return res
+
+
 alias_router.add_api_route("/grade-mcq", grade_mcq_choice, methods=["POST"], response_model=GradeMCQResponse)
 alias_router.add_api_route("/distractor-analysis", analyze_all_distractors, methods=["POST"])
 alias_router.add_api_route(
@@ -355,3 +413,5 @@ alias_router.add_api_route(
     response_model=CircleAnswerSubmitResponse,
 )
 alias_router.add_api_route("/circle-submissions", list_circle_submissions, methods=["GET"])
+alias_router.add_api_route("/grade-essay-step", grade_essay_single_step, methods=["POST"], response_model=GradeEssayStepResponse)
+alias_router.add_api_route("/grade-essay-solution", grade_essay_full_solution, methods=["POST"], response_model=GradeEssaySolutionResponse)
