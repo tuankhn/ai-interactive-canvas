@@ -61,6 +61,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from app.api.score_router import router as score_router
+    app.include_router(score_router)
+except ImportError:
+    pass
+
 
 _AI_TRACKED_PATHS = {
     "/api/v1/recognize": "OCR_LATEX",

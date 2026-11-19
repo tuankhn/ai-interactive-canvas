@@ -21,6 +21,8 @@ in_memory_schools: Dict[str, Dict[str, Any]] = {}
 in_memory_classes: Dict[str, Dict[str, Any]] = {}
 in_memory_ai_usage_logs: list = []
 in_memory_circle_submissions: list = []
+in_memory_score_logs: list = []
+in_memory_class_rosters: Dict[str, Any] = {}
 in_memory_ai_quotas: Dict[str, Any] = {
     "gemini_limit": settings.GEMINI_MONTHLY_QUOTA,
     "mathpix_limit": settings.MATHPIX_MONTHLY_QUOTA,

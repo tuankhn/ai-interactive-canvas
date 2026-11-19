@@ -48,7 +48,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .workspace {
   flex: 1 1 0; min-width: 0; min-height: 0;
-  display: grid; grid-template-columns: 80px minmax(0, 1fr) 220px;
+  display: grid; grid-template-columns: 80px minmax(0, 1fr) 252px;
   overflow: hidden;
 }
 .toolbar {
@@ -1531,4 +1531,193 @@ dialog::backdrop {
   background: #fee2e2;
   color: #b91c1c;
   border-color: #fca5a5;
+}
+
+/* ==============================================================================
+   TASK TF2851C: THANH DANH SÁCH HỌC SINH & CỘNG ĐIỂM THƯỞNG KÈM SNAPSHOT
+   ============================================================================== */
+.students-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.score-step-group {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.score-step-btn {
+  min-height: 36px;
+  padding: 4px 0;
+  border: 1.5px solid #64748b;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.score-step-btn.is-active {
+  background: #222f71;
+  border-color: #222f71;
+  color: #ffffff;
+}
+.student-search-box input,
+.student-reason-wrap input,
+.add-student-form input {
+  width: 100%;
+  min-height: 36px;
+  padding: 5px 9px;
+  border: 1.5px solid #94a3b8;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 12.5px;
+  margin-bottom: 7px;
+}
+.student-snap-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 7px;
+  cursor: pointer;
+}
+.student-snap-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #222f71;
+}
+.student-item-btn {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.student-item-btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #222f71;
+}
+.student-item-btn.is-just-awarded {
+  background: #dcfce7;
+  border-color: #16a34a;
+}
+.student-meta-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.student-name {
+  font-weight: 700;
+  font-size: 12.5px;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.student-subline {
+  font-size: 11px;
+  color: #475569;
+  font-weight: 600;
+}
+.student-plus-pill {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #222f71;
+  color: #ffffff;
+  font-size: 12px;
+}
+.score-sidebar-status {
+  margin: 8px 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+.score-sidebar-status[data-variant="success"] {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #86efac;
+}
+.score-sidebar-status[data-variant="error"] {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+.add-student-details {
+  margin: 8px 0;
+  font-size: 12px;
+}
+.add-student-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #222f71;
+  padding: 4px 0;
+}
+.add-student-form {
+  margin-top: 6px;
+}
+.add-student-submit {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: #222f71;
+  color: #ffffff;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.score-history-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #cbd5e1;
+}
+.score-history-section h3 {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  color: #1e293b;
+}
+.score-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.score-history-item {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11.5px;
+}
+.score-history-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.score-history-delta {
+  font-weight: 800;
+  color: #15803d;
+  background: #dcfce7;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.score-history-meta {
+  color: #647084;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.score-history-empty {
+  color: #647084;
+  font-size: 11.5px;
 }
