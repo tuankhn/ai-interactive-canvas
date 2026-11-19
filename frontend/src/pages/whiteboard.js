@@ -9,6 +9,7 @@ import { setupOfflineSync } from '../utils/offline_sync.js';
 import { setupTeacherAuth } from '../utils/auth_client.js';
 import { setupExamManager } from '../components/examManager.js';
 import { setupQuizBoard } from '../components/quiz_board.js';
+import { setupStudentScoreSidebar } from '../components/student_score_sidebar.js';
 
 export async function initWhiteboard() {
   setupToolbar();
@@ -21,6 +22,7 @@ export async function initWhiteboard() {
   setupTeacherAuth();
   setupExamManager();
   setupQuizBoard();
+  setupStudentScoreSidebar();
 
   // Phần đếm giờ và kết thúc phiên: chỉ chạy khi ứng dụng đã khởi tạo.
   const startedAt = Date.now();

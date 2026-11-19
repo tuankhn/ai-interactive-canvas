@@ -194,14 +194,54 @@
         </div>
       </main>
 
-      <aside class="students" aria-label="Học sinh">
-        <h2>Học sinh</h2>
-        <div id="studentList">
-          <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
-          <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
-          <div class="student-item"><span>[Tên học sinh]</span><b>+1</b></div>
+      <aside class="students" aria-label="Danh sách học sinh và cộng điểm thưởng">
+        <div class="students-head">
+          <h2>Học sinh · <span id="sidebarClassName">10A1</span></h2>
         </div>
-        <p class="student-note">Danh sách minh họa lớp học trực tiếp.</p>
+
+        <div class="score-step-group" role="group" aria-label="Chọn mức điểm thưởng mỗi lần chạm">
+          <button type="button" class="score-step-btn is-active" data-step="1" aria-pressed="true">+1</button>
+          <button type="button" class="score-step-btn" data-step="2" aria-pressed="false">+2</button>
+          <button type="button" class="score-step-btn" data-step="3" aria-pressed="false">+3</button>
+          <button type="button" class="score-step-btn" data-step="5" aria-pressed="false">+5</button>
+        </div>
+
+        <search class="student-search-box">
+          <label for="studentSearchInput" class="sr-only">Tìm học sinh theo tên hoặc mã</label>
+          <input id="studentSearchInput" name="student_q" type="search" placeholder="Tìm tên hoặc mã HS..." autocomplete="off">
+        </search>
+
+        <label class="student-snap-check" for="attachSnapshotOnScore">
+          <input id="attachSnapshotOnScore" type="checkbox" checked>
+          <span>Đính kèm ảnh bảng vào DB</span>
+        </label>
+
+        <div class="student-reason-wrap">
+          <label for="bonusScoreReasonInput" class="sr-only">Lý do cộng điểm</label>
+          <input id="bonusScoreReasonInput" type="text" maxlength="120" value="Làm bài tốt trên bảng" placeholder="Lý do cộng điểm...">
+        </div>
+
+        <div id="studentList" aria-live="polite">
+          <p class="student-note">Đang tải danh sách lớp...</p>
+        </div>
+
+        <p id="studentScoreStatus" class="score-sidebar-status" role="status" aria-live="polite">Chạm vào tên học sinh để cộng điểm.</p>
+
+        <details class="add-student-details">
+          <summary>+ Thêm học sinh vào lớp</summary>
+          <form id="addStudentRosterForm" class="add-student-form">
+            <label for="newStudentNameInput" class="sr-only">Họ tên học sinh</label>
+            <input id="newStudentNameInput" name="full_name" type="text" required minlength="2" placeholder="Họ tên học sinh">
+            <label for="newStudentCodeInput" class="sr-only">Mã học sinh</label>
+            <input id="newStudentCodeInput" name="student_code" type="text" placeholder="Mã HS (tuỳ chọn)">
+            <button type="submit" class="add-student-submit">Thêm vào lớp</button>
+          </form>
+        </details>
+
+        <section class="score-history-section" aria-label="Lịch sử cộng điểm gần đây">
+          <h3>Lịch sử điểm gần đây</h3>
+          <ul id="scoreHistoryList" class="score-history-list"></ul>
+        </section>
       </aside>
     </div>
 
