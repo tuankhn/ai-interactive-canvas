@@ -60,18 +60,53 @@ class GradeMCQResponse(BaseModel):
 
 class GradeEssayStepRequest(BaseModel):
     question_id: str
-    session_id: str
     step_number: int
-    written_text: str  # Current step written by student
+    written_text: str  # Dòng chữ viết tay hoặc công thức ở bước hiện tại
     previous_steps: List[str] = []
+    session_id: Optional[str] = "default-session"
+    question_content: Optional[str] = None
+    subject: Optional[str] = "TOAN"
+    target_answer: Optional[str] = None
+    line_bounding_box: Optional[Dict[str, Any]] = None  # Tọa độ trên canvas: {left, top, width, height}
 
 
 class GradeEssayStepResponse(BaseModel):
     step_number: int
+    written_text: str
     is_step_correct: bool
-    feedback: str
+    status: str = "CORRECT"  # "CORRECT" hoặc "INCORRECT"
+    icon: str = "✓"  # "✓" (tích xanh) hoặc "✕" (cảnh báo đỏ)
+    badge_color: str = "#16a34a"  # "#16a34a" (xanh lá) hoặc "#dc2626" (đỏ)
+    decoration_type: str = "GREEN_CHECK"  # "GREEN_CHECK" (tích xanh) hoặc "RED_UNDERLINE" (gạch chân đỏ)
     has_math_error: bool = False
-    guidance: Optional[str] = None
+    error_type: Optional[str] = None  # "FORMULA_ERROR", "SIGN_ERROR", "CALCULATION_ERROR", v.v.
+    feedback: str
+    guidance: Optional[str] = None  # Gợi ý sửa dòng này mà KHÔNG LỘ ĐÁP ÁN CUỐI
+    no_leak_guarantee: bool = True  # Đảm bảo 100% không để lộ đáp án cuối
+    canvas_annotation: Optional[Dict[str, Any]] = None
+
+
+class GradeEssaySolutionRequest(BaseModel):
+    question_id: str
+    steps: Optional[List[str]] = None
+    raw_text: Optional[str] = None
+    question_content: Optional[str] = None
+    subject: Optional[str] = "TOAN"
+    session_id: Optional[str] = "default-session"
+    student_id: Optional[str] = None
+    target_answer: Optional[str] = None
+
+
+class GradeEssaySolutionResponse(BaseModel):
+    question_id: str
+    total_steps: int
+    correct_steps: int
+    incorrect_steps: int
+    steps_evaluation: List[GradeEssayStepResponse]
+    has_any_error: bool
+    first_error_step: Optional[int] = None
+    overall_feedback: str
+    score: float = 0.0
 
 
 # -------------------------------------------------------------

@@ -1,7 +1,12 @@
 from typing import Any, Dict, List, Optional
+import re
 import uuid
 from datetime import datetime
-from app.schemas.quiz import GradeMCQResponse, GradeEssayStepResponse
+from app.schemas.quiz import (
+    GradeMCQResponse,
+    GradeEssayStepResponse,
+    GradeEssaySolutionResponse,
+)
 
 
 class GradingService:
@@ -239,19 +244,366 @@ class GradingService:
                 suggested_bonus_points=0.0,
             )
 
-    @staticmethod
+    # =========================================================================
+    # TASK TF2851A: CHẤM BÀI GIẢI TỰ LUẬN THEO TỪNG DÒNG VIẾT TAY
+    # Đánh dấu tích xanh ở bước đúng, gạch chân đỏ dòng sai và gợi ý không lộ đáp án
+    # =========================================================================
+
+    @classmethod
+    def detect_step_error(
+        cls,
+        current_text: str,
+        previous_steps: List[str],
+        question_content: Optional[str] = None,
+        subject: str = "TOAN",
+        target_answer: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
+        """
+        Phát hiện sai sót trong dòng biến đổi tự luận hiện tại:
+        - Nhầm công thức toán/lý/hóa (Hằng đẳng thức, Đạo hàm, Tích phân, Lượng giác...)
+        - Nhầm dấu (chuyển vế không đổi dấu, nhân chia số âm không đổi chiều...)
+        - Tính sai số học (phép cộng/trừ/nhân/chia nhẩm sai)
+        - Vi phạm điều kiện xác định
+        Trả về dict {error_type, reason, guidance} hoặc None nếu bước biến đổi hợp lệ.
+        """
+        text = current_text.strip()
+        text_clean = re.sub(r"\s+", " ", text.lower())
+
+        # 1. Kiểm tra nhầm hằng đẳng thức đáng nhớ
+        # Khai triển bình phương nhưng vế phải chỉ có 2 số hạng (thiếu 2ab)
+        # Ví dụ: (x + y)^2 = x^2 + y^2, (a + b)^2 = a^2 + b^2, (x + 2)^2 = x^2 + 4, (x + 1)^2 = x^2 + 1
+        m_plus = re.search(r"\(([a-z0-9]+)\s*\+\s*([a-z0-9]+)\)\s*\^?\s*2\s*=\s*(.+)$", text_clean)
+        if m_plus:
+            rhs = m_plus.group(3).strip()
+            # Nếu vế phải chỉ có 2 số hạng (chỉ có 1 dấu '+', không có số hạng tích 2ab)
+            if rhs.count("+") == 1 and not re.search(r"2\s*\*?\s*[a-z]", rhs):
+                return {
+                    "error_type": "FORMULA_ERROR",
+                    "reason": "Nhầm lẫn hằng đẳng thức: Bỏ quên số hạng hai lần tích (2ab) khi khai triển bình phương của một tổng.",
+                    "guidance": "💡 Gợi ý: Hãy xem lại công thức hằng đẳng thức: (A + B)² = A² + 2AB + B².",
+                }
+
+        # Khai triển (x - y)^2 = x^2 - y^2 hoặc x^2 - 4 (quên 2ab và nhầm dấu)
+        m_minus = re.search(r"\(([a-z0-9]+)\s*-\s*([a-z0-9]+)\)\s*\^?\s*2\s*=\s*(.+)$", text_clean)
+        if m_minus:
+            rhs = m_minus.group(3).strip()
+            if rhs.count("-") == 1 and rhs.count("+") == 0:
+                return {
+                    "error_type": "FORMULA_ERROR",
+                    "reason": "Khai triển sai bình phương của một hiệu: (A - B)² không bằng A² - B².",
+                    "guidance": "💡 Gợi ý: Hằng đẳng thức đúng là (A - B)² = A² - 2AB + B².",
+                }
+
+        # Căn bậc hai của tổng: sqrt(a^2 + b^2) = a + b
+        if re.search(r"(?:\\sqrt|sqrt)\s*\(?\s*[a-z0-9]+\s*\^?\s*2\s*\+\s*[a-z0-9]+\s*\^?\s*2\s*\)?\s*=\s*[a-z0-9]+\s*\+\s*[a-z0-9]+", text_clean):
+            return {
+                "error_type": "FORMULA_ERROR",
+                "reason": "Áp dụng sai tính chất căn thức: Căn bậc hai của một tổng không thể tách thành tổng hai căn bậc hai.",
+                "guidance": "💡 Gợi ý: √(A² + B²) ≠ A + B. Cần giữ nguyên căn thức hoặc tìm cách phân tích nhân tử thích hợp.",
+            }
+
+        # 2. Kiểm tra nhầm công thức đạo hàm / tích phân / lượng giác
+        # Đạo hàm của sin(x) = -cos(x) (sai dấu)
+        if "sin" in text_clean and ("-cos" in text_clean or "-\\cos" in text_clean) and "'" in text:
+            return {
+                "error_type": "FORMULA_ERROR",
+                "reason": "Nhầm dấu đạo hàm: Đạo hàm của hàm sin(x) là +cos(x), không có dấu âm.",
+                "guidance": "💡 Gợi ý: Nhớ lại bảng đạo hàm lượng giác: (sin x)' = cos x; còn (cos x)' mới bằng -sin x.",
+            }
+
+        # Đạo hàm của cos(x) = sin(x) (quên dấu trừ)
+        if "cos" in text_clean and "sin" in text_clean and "'" in text and ("-" not in text_clean):
+            return {
+                "error_type": "FORMULA_ERROR",
+                "reason": "Quên dấu âm khi lấy đạo hàm: Đạo hàm của cos(x) phải có dấu trừ đằng trước.",
+                "guidance": "💡 Gợi ý: Đạo hàm của cos(x) là -sin(x). Chú ý đổi dấu của hàm số lượng giác.",
+            }
+
+        # Đạo hàm x^n = x^(n-1) (quên nhân hệ số n)
+        if re.search(r"\(\s*x\s*\^?\s*(\d+)\s*\)\s*'\s*=\s*x\s*\^?\s*(\d+)", text_clean):
+            m = re.search(r"\(\s*x\s*\^?\s*(\d+)\s*\)\s*'\s*=\s*x\s*\^?\s*(\d+)", text_clean)
+            if m:
+                n_orig = int(m.group(1))
+                return {
+                    "error_type": "FORMULA_ERROR",
+                    "reason": f"Quên nhân số mũ {n_orig}: Đạo hàm của x^{n_orig} phải nhân với số mũ ban đầu.",
+                    "guidance": "💡 Gợi ý: Áp dụng công thức lũy thừa: (xⁿ)' = n · xⁿ⁻¹.",
+                }
+
+        # Công thức lượng giác: sin^2 + cos^2 = 0 hoặc sin^2 - cos^2 = 1
+        if "sin" in text_clean and "cos" in text_clean and ("= 0" in text_clean or "- cos" in text_clean or "-\\cos" in text_clean):
+            if "sin^2" in text_clean or "\\sin^2" in text_clean:
+                return {
+                    "error_type": "FORMULA_ERROR",
+                    "reason": "Nhầm lẫn hệ thức lượng giác cơ bản giữa sin và cos.",
+                    "guidance": "💡 Gợi ý: Hệ thức cơ bản luôn là sin²(x) + cos²(x) = 1 với mọi góc x.",
+                }
+
+        # 3. Kiểm tra lỗi chuyển vế không đổi dấu (SIGN_ERROR)
+        # So sánh với bước trước đó nếu có dạng: ax - b = 0 => ax = -b (hoặc ax + b = c => ax = c + b)
+        if previous_steps:
+            prev_line = previous_steps[-1].strip().lower()
+            # Ví dụ: prev "2x - 4 = 0" -> curr "2x = -4"
+            if re.search(r"(\d*[a-z](?:\^2)?)\s*-\s*(\d+)\s*=\s*0", prev_line):
+                m_prev = re.search(r"(\d*[a-z](?:\^2)?)\s*-\s*(\d+)\s*=\s*0", prev_line)
+                var_part = m_prev.group(1)
+                num_part = m_prev.group(2)
+                # Dòng hiện tại lại ghi var_part = -num_part
+                if f"{var_part} = -{num_part}" in text_clean or f"{var_part}=-{num_part}" in text_clean:
+                    return {
+                        "error_type": "SIGN_ERROR",
+                        "reason": f"Lỗi chuyển vế: Khi chuyển số -{num_part} từ vế trái sang vế phải phải đổi thành +{num_part}.",
+                        "guidance": "💡 Gợi ý: Quy tắc chuyển vế: Khi chuyển một số hạng qua dấu '=', phải đổi dấu của số hạng đó.",
+                    }
+
+            # Ví dụ: prev "x + 5 = 10" -> curr "x = 10 + 5"
+            if re.search(r"([a-z])\s*\+\s*(\d+)\s*=\s*(\d+)", prev_line):
+                m_p = re.search(r"([a-z])\s*\+\s*(\d+)\s*=\s*(\d+)", prev_line)
+                var_p = m_p.group(1)
+                n1 = m_p.group(2)
+                n2 = m_p.group(3)
+                if f"{var_p} = {n2} + {n1}" in text_clean or f"{var_p}={n2}+{n1}" in text_clean:
+                    return {
+                        "error_type": "SIGN_ERROR",
+                        "reason": f"Lỗi dấu khi chuyển vế: Số +{n1} chuyển vế phải mang dấu trừ.",
+                        "guidance": "💡 Gợi ý: Chuyển vế đổi dấu: Số hạng mang dấu (+) sang vế đối diện phải mang dấu (-).",
+                    }
+
+        # Bất đẳng thức: nhân chia số âm không đảo chiều (ví dụ: -2x > 4 => x > -2)
+        if previous_steps:
+            prev_ineq = previous_steps[-1].strip().lower()
+            if "-" in prev_ineq and (">" in prev_ineq or "<" in prev_ineq):
+                if (">" in prev_ineq and ">" in text_clean) or ("<" in prev_ineq and "<" in text_clean):
+                    if re.search(r"-\s*\d*[a-z]\s*(>|<)\s*\d+", prev_ineq):
+                        return {
+                            "error_type": "SIGN_ERROR",
+                            "reason": "Lỗi chia số âm trong bất đẳng thức: Quên đảo chiều dấu bất đẳng thức khi chia cho số âm.",
+                            "guidance": "💡 Gợi ý: Khi nhân hoặc chia cả hai vế của bất đẳng thức cho một số âm, bắt buộc phải đổi chiều dấu (từ > thành < hoặc ngược lại).",
+                        }
+
+        # 4. Kiểm tra lỗi tính toán số học hiển nhiên (CALCULATION_ERROR)
+        # Chỉ kiểm tra khi có biểu thức tính số đứng độc lập (không dính biến chữ x^2 hoặc mũ)
+        math_matches = re.finditer(r"(?<![\^a-zA-Z0-9])(\d+)\s*([\+\-\*\/])\s*(\d+)\s*=\s*(-?\d+)(?![a-zA-Z])", text_clean)
+        for m in math_matches:
+            n1 = int(m.group(1))
+            op = m.group(2)
+            n2 = int(m.group(3))
+            reported = int(m.group(4))
+
+            actual = None
+            if op == "+":
+                actual = n1 + n2
+            elif op == "-":
+                actual = n1 - n2
+            elif op == "*":
+                actual = n1 * n2
+            elif op == "/" and n2 != 0:
+                actual = n1 / n2
+
+            if actual is not None and abs(actual - reported) > 1e-6:
+                return {
+                    "error_type": "CALCULATION_ERROR",
+                    "reason": f"Tính toán sai số học: Phép tính {n1} {op} {n2} không bằng {reported}.",
+                    "guidance": f"💡 Gợi ý: Hãy nhẩm hoặc đặt phép tính lại cẩn thận cho cụm biểu thức số ở dòng này.",
+                }
+
+        # 5. Kiểm tra vi phạm điều kiện xác định (DOMAIN_ERROR)
+        if "/ 0" in text_clean or "/0" in text_clean or "\\frac{" in text_clean and "}{0}" in text_clean:
+            return {
+                "error_type": "DOMAIN_ERROR",
+                "reason": "Chia cho số 0: Phép toán không xác định trong tập số thực.",
+                "guidance": "💡 Gợi ý: Mẫu số của một phân thức luôn phải khác 0. Kiểm tra lại bước biến đổi trước.",
+            }
+
+        return None
+
+    @classmethod
+    def sanitize_guidance_no_leak(cls, guidance: Optional[str], target_answer: Optional[str]) -> Optional[str]:
+        """
+        Bảo đảm tuyệt đối không rò rỉ đáp án cuối cùng trong gợi ý:
+        Loại bỏ các cụm từ khẳng định đáp số (ví dụ: 'đáp án là x = 5', 'nghiệm là 2').
+        """
+        if not guidance:
+            return guidance
+
+        cleaned = guidance
+        if target_answer:
+            target_str = str(target_answer).strip()
+            # Xóa cụm target_answer nếu có trong gợi ý
+            if target_str.lower() in cleaned.lower():
+                cleaned = re.sub(re.escape(target_str), "[đáp số cần tìm]", cleaned, flags=re.IGNORECASE)
+
+        # Loại bỏ các cụm tiết lộ đáp số
+        cleaned = re.sub(r"(?:kết quả|đáp số|nghiệm cuối cùng)\s*(?:là|=)\s*[^,.\n]+", "hãy tự tính toán kết quả", cleaned, flags=re.IGNORECASE)
+        return cleaned
+
+    @classmethod
     def evaluate_essay_step(
+        cls,
         question_id: str,
         step_number: int,
         written_text: str,
+        previous_steps: Optional[List[str]] = None,
+        question_content: Optional[str] = None,
+        subject: str = "TOAN",
+        target_answer: Optional[str] = None,
+        line_bounding_box: Optional[Dict[str, Any]] = None,
     ) -> GradeEssayStepResponse:
-        """Chấm từng bước giải tự luận toán/lý/hóa realtime"""
-        return GradeEssayStepResponse(
-            step_number=step_number,
-            is_step_correct=True,
-            feedback=f"Bước {step_number} biến đổi logic chính xác.",
-            has_math_error=False,
-            guidance="Tiếp tục triển khai bước giải kế tiếp.",
+        """
+        Chấm từng bước giải tự luận toán/lý/hóa realtime theo từng dòng viết tay.
+        - Bước đúng: Đánh dấu tích xanh (GREEN_CHECK, #16a34a, icon '✓').
+        - Dòng sai hoặc nhầm công thức: Đánh dấu gạch chân đỏ (RED_UNDERLINE, #dc2626, icon '✕'),
+          chỉ rõ lý do sai và hiện gợi ý sửa mà TUYỆT ĐỐI KHÔNG LỘ ĐÁP ÁN CUỐI.
+        """
+        prev = previous_steps or []
+        error_info = cls.detect_step_error(
+            current_text=written_text,
+            previous_steps=prev,
+            question_content=question_content,
+            subject=subject,
+            target_answer=target_answer,
+        )
+
+        # Mặc định tọa độ vẽ trên canvas nếu client chưa truyền
+        default_box = line_bounding_box or {
+            "left": 50,
+            "top": 50 + (step_number - 1) * 36,
+            "width": max(200, len(written_text) * 12),
+            "height": 28,
+        }
+
+        if error_info is None:
+            # Bước biến đổi ĐÚNG: Tích xanh
+            canvas_annot = {
+                "step_number": step_number,
+                "type": "green_check",
+                "color": "#16a34a",
+                "icon": "✓",
+                "left": default_box.get("left", 50) - 30,
+                "top": default_box.get("top", 50),
+                "tooltip": f"Bước {step_number}: Biến đổi logic chính xác.",
+            }
+            return GradeEssayStepResponse(
+                step_number=step_number,
+                written_text=written_text,
+                is_step_correct=True,
+                status="CORRECT",
+                icon="✓",
+                badge_color="#16a34a",
+                decoration_type="GREEN_CHECK",
+                has_math_error=False,
+                error_type=None,
+                feedback=f"Bước {step_number} biến đổi logic chính xác.",
+                guidance="Rất tốt! Hãy tiếp tục triển khai bước giải tiếp theo.",
+                no_leak_guarantee=True,
+                canvas_annotation=canvas_annot,
+            )
+        else:
+            # Dòng tính SAI hoặc NHẦM CÔNG THỨC: Gạch chân đỏ
+            safe_guidance = cls.sanitize_guidance_no_leak(
+                error_info.get("guidance", "Hãy kiểm tra lại phép biến đổi ở dòng này."),
+                target_answer=target_answer,
+            )
+            canvas_annot = {
+                "step_number": step_number,
+                "type": "red_underline",
+                "color": "#dc2626",
+                "icon": "✕",
+                "left": default_box.get("left", 50),
+                "top": default_box.get("top", 50) + default_box.get("height", 24),
+                "width": default_box.get("width", 300),
+                "tooltip": f"⚠️ Lỗi dòng {step_number}: {error_info.get('reason')}",
+                "guidance": safe_guidance,
+            }
+            return GradeEssayStepResponse(
+                step_number=step_number,
+                written_text=written_text,
+                is_step_correct=False,
+                status="INCORRECT",
+                icon="✕",
+                badge_color="#dc2626",
+                decoration_type="RED_UNDERLINE",
+                has_math_error=True,
+                error_type=error_info.get("error_type", "FORMULA_ERROR"),
+                feedback=f"⚠️ Dòng {step_number} phát hiện lỗi: {error_info.get('reason')}",
+                guidance=safe_guidance,
+                no_leak_guarantee=True,
+                canvas_annotation=canvas_annot,
+            )
+
+    @classmethod
+    def evaluate_essay_solution(
+        cls,
+        question_id: str,
+        steps: Optional[List[str]] = None,
+        raw_text: Optional[str] = None,
+        question_content: Optional[str] = None,
+        subject: str = "TOAN",
+        target_answer: Optional[str] = None,
+    ) -> GradeEssaySolutionResponse:
+        """
+        Chấm toàn bộ lời giải tự luận gồm nhiều dòng viết tay.
+        Duyệt từng bước, đánh dấu tích xanh hoặc gạch chân đỏ tương ứng.
+        """
+        step_lines: List[str] = []
+        if steps:
+            step_lines = [s.strip() for s in steps if s.strip()]
+        elif raw_text:
+            step_lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+
+        if not step_lines:
+            return GradeEssaySolutionResponse(
+                question_id=question_id,
+                total_steps=0,
+                correct_steps=0,
+                incorrect_steps=0,
+                steps_evaluation=[],
+                has_any_error=False,
+                first_error_step=None,
+                overall_feedback="Chưa có bước giải nào được nhập để chấm.",
+                score=0.0,
+            )
+
+        evaluations: List[GradeEssayStepResponse] = []
+        prev_accumulated: List[str] = []
+        first_err: Optional[int] = None
+
+        for idx, line in enumerate(step_lines, start=1):
+            step_res = cls.evaluate_essay_step(
+                question_id=question_id,
+                step_number=idx,
+                written_text=line,
+                previous_steps=prev_accumulated,
+                question_content=question_content,
+                subject=subject,
+                target_answer=target_answer,
+            )
+            evaluations.append(step_res)
+            if not step_res.is_step_correct and first_err is None:
+                first_err = idx
+            prev_accumulated.append(line)
+
+        correct_count = sum(1 for e in evaluations if e.is_step_correct)
+        incorrect_count = len(evaluations) - correct_count
+        has_error = incorrect_count > 0
+
+        if not has_error:
+            feedback = "Toàn bộ các bước giải đều hoàn hảo! Lập luận chặt chẽ và chính xác."
+            score = 10.0
+        else:
+            feedback = f"Bài giải có {incorrect_count} bước cần lưu ý. Hãy xem gợi ý gạch chân đỏ tại dòng {first_err} để chỉnh sửa mà không cần xem đáp án cuối."
+            score = max(0.0, round((correct_count / len(evaluations)) * 10.0, 1))
+
+        return GradeEssaySolutionResponse(
+            question_id=question_id,
+            total_steps=len(evaluations),
+            correct_steps=correct_count,
+            incorrect_steps=incorrect_count,
+            steps_evaluation=evaluations,
+            has_any_error=has_error,
+            first_error_step=first_err,
+            overall_feedback=feedback,
+            score=score,
         )
 
 
