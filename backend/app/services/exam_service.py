@@ -2,6 +2,7 @@ import io
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
+from app.core.database import in_memory_exam_answer_keys
 
 
 class ExamService:
@@ -176,6 +177,12 @@ class ExamService:
         filtered_questions = []
         for q in exam_data.get("questions", []):
             q_copy = dict(q)
+            q_id = q.get("id")
+            if q_id and (q.get("correct_option") or q.get("explanation")):
+                in_memory_exam_answer_keys[q_id] = {
+                    "correct_option": q.get("correct_option"),
+                    "explanation": q.get("explanation"),
+                }
             if is_student:
                 q_copy["correct_option"] = None
                 q_copy["explanation"] = None

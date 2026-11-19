@@ -4,7 +4,7 @@ import os
 from typing import List, Optional, Tuple
 import uuid
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
-from app.core.database import in_memory_circle_submissions
+from app.core.database import in_memory_circle_submissions, in_memory_exam_answer_keys
 from app.schemas.quiz import (
     CircleAnswerSubmitRequest,
     CircleAnswerSubmitResponse,
@@ -131,11 +131,19 @@ async def grade_mcq_choice(payload: GradeMCQRequest):
             detail="Vui lòng chọn hoặc khoanh tròn một phương án (A, B, C hoặc D).",
         )
 
+    stored_key = in_memory_exam_answer_keys.get(payload.question_id, {})
+    resolved_correct = payload.correct_label or stored_key.get("correct_option") or "A"
+    resolved_explanation = (
+        payload.explanation
+        or stored_key.get("explanation")
+        or "Phương án chính xác theo định luật và số liệu bài toán."
+    )
+
     result = grading_service.evaluate_mcq_choice(
         question_id=payload.question_id,
         selected_label=payload.selected_label,
-        correct_label=payload.correct_label or "A",
-        correct_explanation=payload.explanation or "Phương án chính xác theo định luật và số liệu bài toán.",
+        correct_label=resolved_correct,
+        correct_explanation=resolved_explanation,
         distractor_map=payload.distractor_map,
         question_content=payload.question_content,
         subject=payload.subject or "TOAN",
@@ -271,11 +279,19 @@ async def submit_circled_answer(payload: CircleAnswerSubmitRequest):
             detail="Vùng tọa độ nét khoanh chưa khớp với phương án A, B, C hoặc D nào.",
         )
 
+    stored_key = in_memory_exam_answer_keys.get(payload.question_id, {})
+    resolved_correct = payload.correct_label or stored_key.get("correct_option") or "A"
+    resolved_explanation = (
+        payload.explanation
+        or stored_key.get("explanation")
+        or "Phương án chính xác theo định luật và số liệu bài toán."
+    )
+
     grade_result = grading_service.evaluate_mcq_choice(
         question_id=payload.question_id,
         selected_label=matched_label,
-        correct_label=payload.correct_label or "A",
-        correct_explanation=payload.explanation or "Phương án chính xác theo định luật và số liệu bài toán.",
+        correct_label=resolved_correct,
+        correct_explanation=resolved_explanation,
         distractor_map=payload.distractor_map,
         question_content=payload.question_content,
         subject=payload.subject or "TOAN",

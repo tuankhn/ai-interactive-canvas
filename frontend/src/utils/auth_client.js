@@ -1,4 +1,8 @@
-import { $, setStatus } from './context.js';
+const $ = (id) => (typeof document !== 'undefined' ? document.getElementById(id) : null);
+function setStatus(message) {
+  const saveEl = $('saveState');
+  if (saveEl) saveEl.textContent = message;
+}
 
 const TEACHER_SESSION_KEY = 'ai-canvas:teacher-session:v1';
 const DEVICE_ID_KEY = 'ai-canvas:classroom-device-id:v1';
@@ -444,10 +448,18 @@ export function resetPasswordWithOtp({ phoneNumber, otpCode, newPassword }) {
   });
 }
 
-export function fetchStudentClassLessons({ className, subject } = {}) {
+export function clearPortalSession() {
+  localStorage.removeItem(PORTAL_SESSION_KEY);
+}
+
+export function fetchStudentClassLessons({ className, subject, date, q, limit = 12, offset = 0 } = {}) {
   const params = new URLSearchParams();
   if (className) params.set('class_name', className);
   if (subject) params.set('subject', subject);
+  if (date) params.set('date', date);
+  if (q) params.set('q', q);
+  if (limit != null) params.set('limit', String(limit));
+  if (offset) params.set('offset', String(offset));
   const qs = params.toString() ? `?${params.toString()}` : '';
   return authJsonFetch(`/api/v1/auth/student/lessons${qs}`, {
     method: 'GET',

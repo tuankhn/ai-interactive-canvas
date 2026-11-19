@@ -1,8 +1,14 @@
+import base64
 from datetime import datetime, timezone
 import uuid
 from fastapi import APIRouter
-from app.core.database import in_memory_pages, in_memory_snapshots, synced_offline_ids
-from app.core.storage import upload_snapshot_to_minio
+from app.core.database import (
+    in_memory_pages,
+    in_memory_snapshot_blobs,
+    in_memory_snapshots,
+    synced_offline_ids,
+)
+from app.core.storage import convert_canvas_to_highres, upload_snapshot_to_minio
 from app.schemas.canvas_schema import (
     OfflineSyncBatchRequest,
     OfflineSyncBatchResponse,
@@ -91,6 +97,7 @@ async def sync_offline_snapshots(payload: OfflineSyncBatchRequest):
                 "tags": tags,
                 "trigger_type": item.trigger_type,
                 "image_url": storage_info["image_url"],
+                "preview_url": f"/api/v1/sessions/snapshots/{snap_id}/image?format={storage_info['image_format']}",
                 "image_format": storage_info["image_format"],
                 "size_bytes": storage_info["size_bytes"],
                 "ocr_text_metadata": item.recognized_latex or "",
@@ -101,6 +108,10 @@ async def sync_offline_snapshots(payload: OfflineSyncBatchRequest):
                 "retention_until": storage_info["retention_until"],
                 "synced_from_offline": True,
             }
+            if storage_info.get("data_uri") and "," in storage_info["data_uri"]:
+                in_memory_snapshot_blobs[snap_id] = base64.b64decode(storage_info["data_uri"].split(",", 1)[1])
+            else:
+                in_memory_snapshot_blobs[snap_id] = convert_canvas_to_highres(item.image_base64, "webp")
             in_memory_snapshots.insert(0, record)
             synced_offline_ids[item.client_sync_id] = {
                 "snapshot_id": snap_id,

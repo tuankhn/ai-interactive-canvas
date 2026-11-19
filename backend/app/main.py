@@ -85,27 +85,41 @@ async def track_ai_quota_middleware(request: Request, call_next):
         try:
             chunks = [chunk async for chunk in response.body_iterator]
             raw_body = b"".join(chunks)
+        except Exception:
+            return response
+
+        try:
             data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
-            provider_raw = str(data.get("provider") or "gemini")
+            has_live_gemini = bool((settings.GEMINI_API_KEY or "").strip())
+            default_provider = (
+                ("chalkboard-gemini" if has_live_gemini else "chalkboard-mock")
+                if task_type == "VOCAB_IMAGE"
+                else "gemini"
+            )
+            provider_raw = str(data.get("provider") or default_provider)
+            is_mock = ("mock" in provider_raw.lower()) or (
+                task_type == "VOCAB_IMAGE" and not has_live_gemini
+            )
             record_ai_usage_event(
                 provider="MATHPIX" if "mathpix" in provider_raw.lower() else "GEMINI",
                 provider_detail=provider_raw,
                 task_type=task_type,
-                subject=str(data.get("subject") or "TOAN"),
+                subject=str(data.get("subject") or ("TIENG_ANH" if task_type == "VOCAB_IMAGE" else "TOAN")),
                 latency_ms=int(data.get("latency_ms") or 0),
-                is_mock=("mock" in provider_raw.lower()),
+                is_mock=is_mock,
                 estimated_tokens=300 if task_type == "OCR_LATEX" else 450,
                 session_id=data.get("session_id"),
                 room_id=data.get("room_id"),
             )
-            return Response(
-                content=raw_body,
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                media_type=response.media_type,
-            )
         except Exception:
-            return response
+            pass
+
+        return Response(
+            content=raw_body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )
     return response
 
 active_connections: Dict[str, List[WebSocket]] = {}

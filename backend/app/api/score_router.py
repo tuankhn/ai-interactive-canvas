@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime, timezone
 import re
 from typing import Any, Dict, List, Optional
@@ -8,10 +9,11 @@ from fastapi import APIRouter, HTTPException, Query, status
 from app.core.database import (
     in_memory_class_rosters,
     in_memory_score_logs,
+    in_memory_snapshot_blobs,
     in_memory_snapshots,
     in_memory_users,
 )
-from app.core.storage import upload_snapshot_to_minio
+from app.core.storage import convert_canvas_to_highres, upload_snapshot_to_minio
 from app.schemas.score import (
     BonusPointAwardRequest,
     BonusPointAwardResponse,
@@ -196,6 +198,10 @@ async def award_bonus_points(payload: BonusPointAwardRequest):
             snapshot_id = str(uuid.uuid4())
             snapshot_url = storage_info["image_url"]
             snapshot_saved = True
+            if storage_info.get("data_uri") and "," in storage_info["data_uri"]:
+                in_memory_snapshot_blobs[snapshot_id] = base64.b64decode(storage_info["data_uri"].split(",", 1)[1])
+            else:
+                in_memory_snapshot_blobs[snapshot_id] = convert_canvas_to_highres(payload.image_base64, "webp")
             in_memory_snapshots.insert(
                 0,
                 {
@@ -214,6 +220,7 @@ async def award_bonus_points(payload: BonusPointAwardRequest):
                     },
                     "trigger_type": "BONUS_SCORE",
                     "image_url": snapshot_url,
+                    "preview_url": f"/api/v1/sessions/snapshots/{snapshot_id}/image?format=webp",
                     "image_format": storage_info["image_format"],
                     "size_bytes": storage_info["size_bytes"],
                     "ocr_text_metadata": f"Cộng +{payload.points_added} điểm cho {matched_student['full_name']}: {payload.reason}",

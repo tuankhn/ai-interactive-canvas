@@ -584,6 +584,8 @@ export function setupQuizBoard() {
     const matched = matchCircleToQuizOption(gesture.bbox, optionTargets);
     if (!matched) return;
 
+    // Ngăn Debounce AI 800ms tự bật bảng nhận diện đè lên khi học sinh khoanh đáp án
+    window.dispatchEvent(new CustomEvent('app:cancel-ai-debounce'));
     void submitCircleGestureToBackend(matched, gesture, (detail.points || []).length);
   });
 
