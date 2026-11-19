@@ -10,6 +10,7 @@ import { setupTeacherAuth } from '../utils/auth_client.js';
 import { setupExamManager } from '../components/examManager.js';
 import { setupQuizBoard } from '../components/quiz_board.js';
 import { setupStudentScoreSidebar } from '../components/student_score_sidebar.js';
+import { setupQuestionVariantManager } from '../components/questionVariantManager.js';
 
 export async function initWhiteboard() {
   setupToolbar();
@@ -23,6 +24,7 @@ export async function initWhiteboard() {
   setupExamManager();
   setupQuizBoard();
   setupStudentScoreSidebar();
+  setupQuestionVariantManager();
 
   // Phần đếm giờ và kết thúc phiên: chỉ chạy khi ứng dụng đã khởi tạo.
   const startedAt = Date.now();

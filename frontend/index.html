@@ -61,6 +61,7 @@
         <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
         <button class="tool-button tool-quiz" id="quizBoardToggleBtn" type="button" title="Hiển thị đề trắc nghiệm lên bảng và bắt nét khoanh đáp án A, B, C, D (Task TF28518)">Trắc nghiệm</button>
         <button class="tool-button tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích các phương án gây nhiễu (Task TF28519)">Chấm trắc nghiệm</button>
+        <button class="tool-button tool-variant" id="aiVariantBtn" type="button" title="AI tạo bài tập tương tự (đổi số liệu) hoặc nâng cao độ khó cho học sinh khá giỏi (Task TF2851B)">Đổi đề AI</button>
         <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
 
         
@@ -569,6 +570,85 @@
       <button id="quizClearCardBtn" class="quiz-btn-danger" type="button">Gỡ khỏi bảng</button>
     </div>
     <p id="quizBoardStatus" class="quiz-board-status" role="status" aria-live="polite" data-variant="info">Sẵn sàng bắt nét khoanh đáp án A, B, C, D.</p>
+  </dialog>
+
+  <!-- Dialog AI Tạo câu hỏi tương tự & Nâng cao (Task TF2851B) -->
+  <dialog id="aiVariantDialog" class="board-dialog ai-variant-dialog" aria-labelledby="aiVariantDialogTitle">
+    <div class="dialog-header">
+      <div class="dialog-title-group">
+        <span class="dialog-title-icon">✨</span>
+        <h2 id="aiVariantDialogTitle">AI Tạo câu hỏi tương tự &amp; Nâng cao</h2>
+        <span class="dialog-badge-bonus">Bonus 4đ · TF2851B</span>
+      </div>
+      <button id="closeAiVariantXBtn" class="dialog-close-btn" type="button" aria-label="Đóng hộp thoại">✕</button>
+    </div>
+
+    <div class="variant-dialog-body">
+      <div class="variant-input-card">
+        <div class="variant-input-header">
+          <label for="variantOriginalInput">
+            <strong>Bài tập đang chiếu trên bảng:</strong>
+          </label>
+          <button id="variantExtractBoardBtn" class="variant-action-pill" type="button" title="Tự động quét đề bài đang có trên bảng vẽ">
+            📋 Lấy từ bảng vẽ
+          </button>
+        </div>
+        
+        <div class="variant-sample-row">
+          <span>Đề mẫu nhanh:</span>
+          <button type="button" class="variant-sample-pill" data-sample="quad">Phương trình bậc 2</button>
+          <button type="button" class="variant-sample-pill" data-sample="system">Hệ phương trình</button>
+          <button type="button" class="variant-sample-pill" data-sample="motion">Toán chuyển động</button>
+          <button type="button" class="variant-sample-pill" data-sample="geom">Hình học Pytago</button>
+          <button type="button" class="variant-sample-pill" data-sample="phys">Con lắc lò xo</button>
+        </div>
+
+        <textarea id="variantOriginalInput" rows="3" placeholder="Nhập đề bài hoặc bấm 'Lấy từ bảng vẽ' để AI nhận diện đề bài đang chiếu...">Giải phương trình bậc hai sau trên tập số thực: x^2 - 5x + 6 = 0</textarea>
+
+        <div class="variant-trigger-row">
+          <button id="btnGenSimilar" class="btn-gen-variant btn-gen-similar" type="button" title="AI đổi các con số để tạo bài mới có cùng dạng toán, nghiệm nguyên đẹp">
+            <span class="gen-icon">🔄</span>
+            <div class="gen-texts">
+              <strong>Đổi số liệu (Bài tương tự)</strong>
+              <small>Giữ nguyên dạng, nghiệm đẹp</small>
+            </div>
+          </button>
+          <button id="btnGenAdvanced" class="btn-gen-variant btn-gen-advanced" type="button" title="AI thêm điều kiện tham số m, Vi-et, cực trị nâng cao độ khó cho học sinh khá giỏi">
+            <span class="gen-icon">🚀</span>
+            <div class="gen-texts">
+              <strong>Thêm điều kiện (Bài nâng cao)</strong>
+              <small>Tham số m, Vi-et, cực trị khá giỏi</small>
+            </div>
+          </button>
+          <button id="btnGenBoth" class="btn-gen-variant btn-gen-both" type="button" title="Sinh cả hai bài tương tự và nâng cao cùng lúc">
+            <span class="gen-icon">🌟</span>
+            <div class="gen-texts">
+              <strong>Tạo cả hai biến thể</strong>
+              <small>Tương tự &amp; Nâng cao cùng lúc</small>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Trạng thái đang tải -->
+      <div id="variantLoadingIndicator" class="variant-loading" hidden>
+        <div class="ai-spinner" aria-hidden="true"></div>
+        <span>AI đang phân tích bài toán, đổi số liệu và thiết lập điều kiện nâng cao...</span>
+      </div>
+
+      <!-- Khu vực hiển thị kết quả -->
+      <div id="variantResultsContainer" class="variant-results-container" hidden>
+        <div class="variant-results-header">
+          <h3>Kết quả bài tập do AI tạo (<span id="variantCount">0</span> biến thể)</h3>
+          <span id="variantSourceBadge" class="variant-source-badge">⚡ Math Perturbation Engine</span>
+        </div>
+        <div id="variantCardsList" class="variant-cards-list"></div>
+      </div>
+    </div>
+
+    <div class="dialog-actions">
+      <button id="closeAiVariantBtn" class="dialog-cancel" type="button">Đóng</button>
+    </div>
   </dialog>
 
   <div id="offlineToastRegion" class="offline-toast-region" role="region" aria-label="Thông báo kết nối mạng">

@@ -12,6 +12,9 @@ from app.schemas.quiz import (
     ExamCanvasLayoutResponse,
     ExamParseTextRequest,
     ExamUploadResponse,
+    GeneratedVariantItem,
+    GenerateQuestionVariantRequest,
+    GenerateQuestionVariantResponse,
     GradeMCQRequest,
     GradeMCQResponse,
     QuizOptionRegion,
@@ -19,6 +22,7 @@ from app.schemas.quiz import (
 )
 from app.services.exam_service import exam_service
 from app.services.grading_service import grading_service
+from app.services.question_generator_service import question_variant_service
 
 router = APIRouter(prefix="/api/v1/exam", tags=["Exam / Quiz Management"])
 alias_router = APIRouter(prefix="/api/v1/quiz", tags=["Exam / Quiz Management Alias"])
@@ -346,6 +350,55 @@ async def list_circle_submissions(
     return {"count": len(items), "items": items}
 
 
+# -------------------------------------------------------------
+# Endpoints cho Task TF2851B: AI Tạo câu hỏi tương tự & Nâng cao
+# -------------------------------------------------------------
+
+@router.post(
+    "/generate-variant",
+    response_model=GenerateQuestionVariantResponse,
+    summary="TF2851B: AI tạo câu hỏi tương tự (đổi số liệu) và câu hỏi nâng cao (thêm điều kiện độ khó)",
+    description="Từ bài tập đang chiếu trên bảng, giáo viên bấm nút để AI đổi số liệu tạo bài tương tự hoặc thêm điều kiện nâng cao độ khó cho học sinh khá giỏi.",
+)
+async def generate_question_variant(payload: GenerateQuestionVariantRequest):
+    if not payload.original_question or not payload.original_question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nội dung đề bài gốc không được để trống.",
+        )
+    return await question_variant_service.generate_variants(payload)
+
+
+@router.post(
+    "/generate-similar-question",
+    response_model=GenerateQuestionVariantResponse,
+    summary="TF2851B: AI tạo bài tập tương tự bằng cách đổi số liệu hợp lý",
+)
+async def generate_similar_question(payload: GenerateQuestionVariantRequest):
+    payload.variant_type = "SIMILAR"
+    if not payload.original_question or not payload.original_question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nội dung đề bài gốc không được để trống.",
+        )
+    return await question_variant_service.generate_variants(payload)
+
+
+@router.post(
+    "/generate-advanced-question",
+    response_model=GenerateQuestionVariantResponse,
+    summary="TF2851B: AI tạo bài tập nâng cao bằng cách thêm điều kiện độ khó cho học sinh khá giỏi",
+)
+async def generate_advanced_question(payload: GenerateQuestionVariantRequest):
+    payload.variant_type = "ADVANCED"
+    if not payload.original_question or not payload.original_question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nội dung đề bài gốc không được để trống.",
+        )
+    return await question_variant_service.generate_variants(payload)
+
+
 alias_router.add_api_route("/grade-mcq", grade_mcq_choice, methods=["POST"], response_model=GradeMCQResponse)
 alias_router.add_api_route("/distractor-analysis", analyze_all_distractors, methods=["POST"])
 alias_router.add_api_route(
@@ -355,3 +408,6 @@ alias_router.add_api_route(
     response_model=CircleAnswerSubmitResponse,
 )
 alias_router.add_api_route("/circle-submissions", list_circle_submissions, methods=["GET"])
+alias_router.add_api_route("/generate-variant", generate_question_variant, methods=["POST"], response_model=GenerateQuestionVariantResponse)
+alias_router.add_api_route("/generate-similar-question", generate_similar_question, methods=["POST"], response_model=GenerateQuestionVariantResponse)
+alias_router.add_api_route("/generate-advanced-question", generate_advanced_question, methods=["POST"], response_model=GenerateQuestionVariantResponse)
