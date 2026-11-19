@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict
 
@@ -202,3 +203,51 @@ class CircleAnswerSubmitResponse(BaseModel):
     selection_method: str
     stroke_bbox: StrokeBoundingBox
     grade_result: GradeMCQResponse
+
+
+# -------------------------------------------------------------
+# Schemas cho Task TF2851B: AI Tạo câu hỏi tương tự & Nâng cao
+# -------------------------------------------------------------
+
+class QuestionVariantType(str, Enum):
+    SIMILAR = "SIMILAR"       # Bài tương tự - Đổi số liệu
+    ADVANCED = "ADVANCED"     # Bài nâng cao - Thêm điều kiện độ khó
+    BOTH = "BOTH"             # Sinh cả hai biến thể
+
+
+class GeneratedVariantItem(BaseModel):
+    id: str
+    variant_type: str  # "SIMILAR" hoặc "ADVANCED"
+    type_display: str  # "Bài tập tương tự (Đổi số liệu)" hoặc "Bài tập nâng cao (Thêm điều kiện độ khó)"
+    badge_color: str   # "#16a34a" (xanh lá) hoặc "#7c3aed" (tím)
+    icon: str          # "🔄" hoặc "🚀"
+    title: str
+    question_content: str
+    original_question: str
+    difficulty_level: str  # "Nhận biết", "Thông hiểu", "Vận dụng", "Vận dụng cao"
+    changed_parameters: Optional[str] = None  # Mô tả thông số/số liệu đã đổi
+    added_conditions: Optional[str] = None    # Mô tả điều kiện nâng cao đã thêm
+    advanced_hint: Optional[str] = None       # Gợi ý phương pháp cho học sinh khá giỏi
+    correct_answer: str                       # Đáp số / kết quả mới
+    solution_guide: str                       # Hướng dẫn giải chi tiết
+    canvas_card_text: str                     # Chuỗi text format để chèn lên bảng vẽ
+
+
+class GenerateQuestionVariantRequest(BaseModel):
+    original_question: str
+    variant_type: Optional[str] = "SIMILAR"  # "SIMILAR", "ADVANCED", "BOTH"
+    subject: Optional[str] = "TOAN"          # "TOAN", "VAT_LY", "HOA_HOC", ...
+    current_difficulty: Optional[str] = "THONG_HIEU"
+    topic: Optional[str] = None
+    seed: Optional[int] = None               # Seed số ngẫu nhiên nếu muốn đổi sang biến thể khác
+    include_solution: bool = True
+
+
+class GenerateQuestionVariantResponse(BaseModel):
+    original_question: str
+    subject: str
+    requested_type: str
+    total_variants: int
+    variants: List[GeneratedVariantItem]
+    generation_source: str                   # "MATH_PERTURBATION_ENGINE" hoặc "AI_GEMINI"
+    timestamp: str
