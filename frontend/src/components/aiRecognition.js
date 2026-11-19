@@ -616,4 +616,4 @@ export function setupAIRecognition() {
 
   initBoardWebSocket();
 }
-
+}
