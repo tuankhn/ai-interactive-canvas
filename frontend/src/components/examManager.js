@@ -396,6 +396,7 @@ export function setupExamManager() {
   // Render danh sách preview câu hỏi
   function renderExamPreview(data) {
     currentExamData = data;
+    window.dispatchEvent(new CustomEvent('app:exam-loaded', { detail: data }));
     examPreviewSection.hidden = false;
     layoutToBoardBtn.disabled = false;
     questionCount.textContent = data.total_questions;
@@ -551,6 +552,14 @@ export function setupExamManager() {
       if (questionObj) {
         gradeStudentChoice(questionObj, label);
       }
+    }
+  });
+
+  // Lắng nghe kết quả chấm từ cử chỉ khoanh tròn đáp án (Task TF28518)
+  window.addEventListener('app:show-grade-feedback', (event) => {
+    const { gradeResult, question } = event.detail || {};
+    if (gradeResult) {
+      displayGradeFeedback(gradeResult, question || { number: 1 });
     }
   });
 }

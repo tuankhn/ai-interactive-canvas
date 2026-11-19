@@ -121,3 +121,49 @@ class ExamCanvasLayoutResponse(BaseModel):
     mode: str
     total_pages: int
     pages: List[Dict[str, Any]]
+
+
+# -------------------------------------------------------------
+# Schemas cho Task TF28518: Nhận diện vùng tọa độ nét khoanh đáp án
+# -------------------------------------------------------------
+
+class StrokeBoundingBox(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class QuizOptionRegion(BaseModel):
+    label: str  # "A", "B", "C", "D"
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class CircleAnswerSubmitRequest(BaseModel):
+    question_id: str
+    session_id: Optional[str] = "default-session"
+    room_id: Optional[str] = "room-10a1"
+    student_id: Optional[str] = None
+    stroke_bbox: StrokeBoundingBox
+    option_regions: List[QuizOptionRegion] = []
+    selected_label: Optional[str] = None
+    stroke_points_count: int = 0
+    circularity_score: Optional[float] = None
+    selection_method: str = "CIRCLE_GESTURE"
+    question_content: Optional[str] = None
+    correct_label: Optional[str] = None
+    explanation: Optional[str] = None
+    distractor_map: Optional[Dict[str, str]] = None
+    subject: Optional[str] = "TOAN"
+
+
+class CircleAnswerSubmitResponse(BaseModel):
+    submission_id: str
+    matched_label: str
+    overlap_score: float
+    selection_method: str
+    stroke_bbox: StrokeBoundingBox
+    grade_result: GradeMCQResponse

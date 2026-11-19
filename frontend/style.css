@@ -1408,3 +1408,127 @@ dialog::backdrop {
   border: 1px solid #bae6fd;
   color: #075985;
 }
+
+/* ==============================================================================
+   TASK TF28518: GIAO DIỆN TRẮC NGHIỆM & BẮT NÉT KHOANH ĐÁP ÁN A/B/C/D
+   ============================================================================== */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+[popover]:is(:popover-open, .\:popover-open) {
+  display: block;
+}
+.tool-quiz {
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-color: #2563eb;
+  font-weight: 700;
+}
+.tool-quiz:hover {
+  background: #dbeafe;
+}
+.quiz-board-panel {
+  position: fixed;
+  inset: auto 18px 66px auto;
+  margin: 0;
+  width: min(410px, calc(100vw - 24px));
+  max-height: calc(100dvh - 120px);
+  overflow: auto;
+  padding: 14px 16px;
+  border: 2px solid #222f71;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #1e293b;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.22);
+  z-index: 40;
+}
+.quiz-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.quiz-panel-head h2 {
+  margin: 0;
+  font-size: 15px;
+  color: #172554;
+}
+.quiz-panel-guide {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: #475569;
+  line-height: 1.45;
+}
+.quiz-panel-controls,
+.quiz-nav-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.quiz-panel-controls select {
+  flex: 1 1 150px;
+  min-height: 38px;
+  padding: 4px 8px;
+  border: 1.5px solid #94a3b8;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 13px;
+}
+.quiz-btn-primary,
+.quiz-btn-secondary,
+.quiz-btn-danger {
+  min-height: 38px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.quiz-btn-primary {
+  background: #222f71;
+  color: #ffffff;
+}
+.quiz-btn-secondary {
+  background: #eef2ff;
+  color: #1e3a8a;
+  border-color: #c7d2fe;
+}
+.quiz-btn-danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+.quiz-counter {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1e293b;
+  padding: 0 4px;
+}
+.quiz-board-status {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+.quiz-board-status[data-variant="correct"] {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #86efac;
+}
+.quiz-board-status[data-variant="incorrect"],
+.quiz-board-status[data-variant="error"] {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
