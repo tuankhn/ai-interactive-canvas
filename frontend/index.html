@@ -61,6 +61,7 @@
         <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
         <button class="tool-button tool-quiz" id="quizBoardToggleBtn" type="button" title="Hiển thị đề trắc nghiệm lên bảng và bắt nét khoanh đáp án A, B, C, D (Task TF28518)">Trắc nghiệm</button>
         <button class="tool-button tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích các phương án gây nhiễu (Task TF28519)">Chấm trắc nghiệm</button>
+        <button class="tool-button tool-essay" id="gradeEssayBtn" type="button" title="AI chấm bài giải tự luận từng dòng viết tay, tích xanh bước đúng, gạch chân đỏ dòng sai và gợi ý không lộ đáp án (Task TF2851A)">Chấm tự luận AI</button>
         <button class="tool-button tool-variant" id="aiVariantBtn" type="button" title="AI tạo bài tập tương tự (đổi số liệu) hoặc nâng cao độ khó cho học sinh khá giỏi (Task TF2851B)">Đổi đề AI</button>
         <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
 
@@ -570,6 +571,80 @@
       <button id="quizClearCardBtn" class="quiz-btn-danger" type="button">Gỡ khỏi bảng</button>
     </div>
     <p id="quizBoardStatus" class="quiz-board-status" role="status" aria-live="polite" data-variant="info">Sẵn sàng bắt nét khoanh đáp án A, B, C, D.</p>
+  </dialog>
+
+  <!-- Dialog AI Chấm bài giải tự luận theo từng dòng viết tay (Task TF2851A) -->
+  <dialog id="essayGradingDialog" class="board-dialog essay-dialog" aria-labelledby="essayDialogTitle">
+    <div class="dialog-header">
+      <h2 id="essayDialogTitle">AI Chấm bài giải tự luận từng dòng viết tay</h2>
+      <button id="closeEssayDialogXBtn" class="dialog-close-btn" type="button" aria-label="Đóng hộp thoại">✕</button>
+    </div>
+
+    <div class="essay-guide-banner">
+      <span class="guide-icon">✨</span>
+      <p>AI đọc từng bước giải học sinh viết trên bảng: <strong>Đánh dấu tích xanh ✓</strong> ở bước biến đổi đúng, <strong>Gạch chân đỏ ✕</strong> ngay dòng tính sai hoặc nhầm công thức và <strong>Hiện gợi ý sửa mà không lộ đáp án cuối</strong>.</p>
+    </div>
+
+    <div class="essay-controls-bar">
+      <div class="essay-subject-col">
+        <label for="essaySubjectSelect">Môn học:</label>
+        <select id="essaySubjectSelect">
+          <option value="TOAN" selected>Toán học (Biến đổi &amp; Công thức)</option>
+          <option value="VAT_LY">Vật lý (Định luật &amp; Đơn vị)</option>
+          <option value="HOA_HOC">Hóa học (Phương trình &amp; Tỉ lệ)</option>
+        </select>
+      </div>
+
+      <div class="essay-samples-col">
+        <span>Bài giải mẫu thử nhanh:</span>
+        <div class="sample-btn-group">
+          <button type="button" class="essay-sample-btn" data-sample="SAMPLE_HANG_DANG_THUC">Sai hằng đẳng thức</button>
+          <button type="button" class="essay-sample-btn" data-sample="SAMPLE_CHUYEN_VE">Sai dấu chuyển vế</button>
+          <button type="button" class="essay-sample-btn" data-sample="SAMPLE_DAO_HAM">Sai đạo hàm</button>
+          <button type="button" class="essay-sample-btn" data-sample="SAMPLE_HOAN_HAO">Bài giải đúng 100%</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="essay-input-section">
+      <label for="essayInputLines">Các dòng bước giải của học sinh (mỗi dòng là một bước biến đổi):</label>
+      <textarea id="essayInputLines" rows="6" placeholder="Bước 1: 2x - 6 = 0&#10;Bước 2: 2x = -6&#10;Bước 3: x = -3"></textarea>
+      <div class="essay-action-buttons">
+        <button id="evaluateEssayStepsBtn" class="dialog-primary" type="button">Chấm từng dòng bằng AI</button>
+        <button id="annotateEssayToCanvasBtn" class="essay-annotate-btn" type="button" disabled>Đánh dấu lên mặt bảng vẽ</button>
+      </div>
+    </div>
+
+    <div id="essayResultSection" class="essay-result-section" hidden>
+      <div class="essay-summary-card">
+        <div class="summary-metric">
+          <span>Tổng số bước:</span>
+          <strong id="metricTotalSteps">0</strong>
+        </div>
+        <div class="summary-metric metric-correct">
+          <span>Bước đúng (Tích xanh):</span>
+          <strong id="metricCorrectSteps">0</strong>
+        </div>
+        <div class="summary-metric metric-wrong">
+          <span>Dòng sai (Gạch chân đỏ):</span>
+          <strong id="metricWrongSteps">0</strong>
+        </div>
+        <div class="summary-metric">
+          <span>Điểm bước giải:</span>
+          <strong id="metricScore">0.0 / 10</strong>
+        </div>
+      </div>
+      <p id="essayOverallFeedback" class="essay-overall-feedback"></p>
+
+      <h3 class="essay-steps-heading">Chi tiết đánh dấu từng bước biến đổi:</h3>
+      <div id="essayStepsList" class="essay-steps-list"></div>
+    </div>
+
+    <p id="essayDialogStatus" class="essay-dialog-status" role="status" aria-live="polite" hidden></p>
+
+    <div class="dialog-actions">
+      <button id="closeEssayDialogBtn" class="dialog-cancel" type="button">Đóng</button>
+    </div>
   </dialog>
 
   <!-- Dialog AI Tạo câu hỏi tương tự & Nâng cao (Task TF2851B) -->
