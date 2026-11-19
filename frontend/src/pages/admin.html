@@ -437,6 +437,17 @@
       border-color: #fca5a5;
     }
 
+    .inline-select-sm {
+      min-height: 36px;
+      padding: 0.3rem 0.55rem;
+      font-size: 1rem;
+      border: 1.5px solid var(--border-strong);
+      border-radius: 7px;
+      background: #ffffff;
+      color: var(--ink);
+      max-width: 195px;
+    }
+
     .btn-row {
       display: flex;
       flex-wrap: wrap;
@@ -1566,7 +1577,52 @@
           tr.appendChild(makeCell('td', cls.school_name || cls.school_code || '—', 'Trường'));
           tr.appendChild(makeCell('td', `Khối ${cls.grade} (${cls.academic_year})`, 'Khối / Năm học'));
           tr.appendChild(makeCell('td', cls.room_id, 'Mã phòng'));
-          tr.appendChild(makeCell('td', cls.homeroom_teacher_name || 'Chưa phân công', 'GV chủ nhiệm'));
+
+          const teacherTd = document.createElement('td');
+          teacherTd.setAttribute('data-label', 'GV chủ nhiệm');
+          const assignRow = document.createElement('div');
+          assignRow.className = 'btn-row';
+
+          const teacherSelect = document.createElement('select');
+          teacherSelect.className = 'inline-select-sm';
+          teacherSelect.setAttribute('aria-label', `Chọn giáo viên chủ nhiệm cho lớp ${cls.name}`);
+
+          const emptyOpt = document.createElement('option');
+          emptyOpt.value = '';
+          emptyOpt.textContent = '-- Chưa phân công --';
+          teacherSelect.appendChild(emptyOpt);
+
+          state.teachers
+            .filter((t) => t.is_active || t.id === cls.homeroom_teacher_id)
+            .forEach((t) => {
+              const opt = document.createElement('option');
+              opt.value = t.id;
+              opt.textContent = t.full_name;
+              teacherSelect.appendChild(opt);
+            });
+          teacherSelect.value = cls.homeroom_teacher_id || '';
+
+          const assignBtn = document.createElement('button');
+          assignBtn.type = 'button';
+          assignBtn.className = 'btn-outline-sm';
+          assignBtn.textContent = 'Lưu GV';
+          assignBtn.addEventListener('click', async () => {
+            try {
+              await apiFetch(`/api/v1/admin/classes/${cls.id}/assign-teacher`, {
+                method: 'PATCH',
+                body: JSON.stringify({ teacher_id: teacherSelect.value || null }),
+              });
+              showBanner(`Đã cập nhật giáo viên chủ nhiệm cho lớp ${cls.name}.`, 'success');
+              loadDashboardData();
+            } catch (err) {
+              showBanner(err.message, 'error');
+            }
+          });
+
+          assignRow.append(teacherSelect, assignBtn);
+          teacherTd.appendChild(assignRow);
+          tr.appendChild(teacherTd);
+
           tr.appendChild(makeCell('td', `${cls.snapshot_count} ảnh`, 'Ảnh bảng'));
 
           const actionTd = document.createElement('td');

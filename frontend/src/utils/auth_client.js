@@ -1,4 +1,8 @@
-import { $, setStatus } from './context.js';
+const $ = (id) => (typeof document !== 'undefined' ? document.getElementById(id) : null);
+function setStatus(message) {
+  const saveEl = $('saveState');
+  if (saveEl) saveEl.textContent = message;
+}
 
 const TEACHER_SESSION_KEY = 'ai-canvas:teacher-session:v1';
 const DEVICE_ID_KEY = 'ai-canvas:classroom-device-id:v1';

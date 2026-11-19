@@ -52,9 +52,16 @@ const getAiElements = () => ({
 });
 
 
+export function cancelAIDebounce() {
+  if (aiDebounceTimer) {
+    clearTimeout(aiDebounceTimer);
+    aiDebounceTimer = null;
+  }
+}
+
 export function scheduleAIDebounce() {
   if (!isAutoAiEnabled || state.ended || isOfflineMode()) return;
-  if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
+  cancelAIDebounce();
   aiDebounceTimer = setTimeout(() => {
     performAIRecognition({ isDebounced: true });
   }, 800);
@@ -597,8 +604,11 @@ export function setupAIRecognition() {
     });
   }
 
+  window.addEventListener('app:cancel-ai-debounce', () => {
+    cancelAIDebounce();
+  });
   window.addEventListener('app:network-offline', () => {
-    if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
+    cancelAIDebounce();
   });
   window.addEventListener('app:network-online', () => {
     initBoardWebSocket();

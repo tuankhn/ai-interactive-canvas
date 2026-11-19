@@ -292,8 +292,8 @@ export function setupExamManager() {
       const payload = {
         question_id: question.id || 'q_direct',
         selected_label: selectedLabel,
-        correct_label: question.correct_option || 'A',
-        explanation: question.explanation || 'Phương án chính xác theo định luật bài toán.',
+        correct_label: question.correct_option || null,
+        explanation: question.explanation || null,
         question_content: question.content,
         subject: subject,
       };

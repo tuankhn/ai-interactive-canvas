@@ -1,13 +1,18 @@
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import uuid
+from sqlalchemy.orm import declarative_base
 from app.core.config import settings
+
+# Base ORM cho các model SQLAlchemy trong backend/app/models/*
+Base = declarative_base()
 
 # Bộ nhớ đệm phiên học dự phòng khi chạy local chưa bật PostgreSQL/Redis
 in_memory_sessions: Dict[str, Dict[str, Any]] = {}
 in_memory_pages: Dict[str, Dict[int, Dict[str, Any]]] = {}
 in_memory_snapshots: list = []
 in_memory_snapshot_blobs: Dict[str, bytes] = {}
+in_memory_exam_answer_keys: Dict[str, Dict[str, Any]] = {}
 synced_offline_ids: Dict[str, Dict[str, Any]] = {}
 
 # Bộ nhớ đệm xác thực & phiên thiết bị phòng học 14 ngày (TF28514, TF28515)

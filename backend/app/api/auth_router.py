@@ -119,6 +119,8 @@ def _find_or_create_teacher(
             break
 
     if existing:
+        if not existing.get("is_active", True):
+            return existing
         if password:
             existing["password_hash"] = get_password_hash(password)
         if full_name:
@@ -235,6 +237,11 @@ def get_current_user_from_header(authorization: Optional[str], required: bool = 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
     stored = in_memory_users.get(decoded["sub"], {})
+    if stored and not stored.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản đã bị Quản trị viên tạm khóa.",
+        )
     allowed_classes = stored.get("allowed_classes") or decoded.get("allowed_classes") or []
     class_name = stored.get("class_name") or decoded.get("class_name")
     if class_name and class_name not in allowed_classes:
@@ -287,8 +294,15 @@ def assert_user_can_access_class(
             )
 
     if requested_room_id:
-        room_norm = _normalize_class_name(requested_room_id).replace("ROOM-", "").replace("ROOM_", "")
-        if room_norm and not any(cls == room_norm or room_norm.endswith(cls) for cls in allowed):
+        full_norm = _normalize_class_name(requested_room_id)
+        room_tokens = {
+            _normalize_class_name(tok)
+            for tok in re.split(r"[^a-zA-Z0-9]+", requested_room_id.strip())
+            if tok and tok.upper() != "ROOM"
+        }
+        if (full_norm or room_tokens) and not any(
+            cls == full_norm or cls in room_tokens for cls in allowed
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Không có quyền truy cập phòng học '{requested_room_id}' ngoài lớp của bạn.",
@@ -382,6 +396,11 @@ async def verify_otp(payload: VerifyOTPRequest):
     is_dev_demo_code = settings.APP_ENV != "production" and payload.otp_code.strip() == "123456"
 
     if record:
+        if record.get("verified") and not is_dev_demo_code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mã OTP này đã được sử dụng. Vui lòng yêu cầu mã OTP mới.",
+            )
         if record.get("attempts", 0) >= MAX_OTP_ATTEMPTS:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -414,6 +433,11 @@ async def verify_otp(payload: VerifyOTPRequest):
         password=payload.password,
         role=role,
     )
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản đã bị Quản trị viên tạm khóa.",
+        )
     return _issue_session_tokens(
         user,
         remember_me=payload.remember_me,
@@ -538,6 +562,12 @@ async def login_student_or_parent(payload: StudentParentLoginRequest):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Số điện thoại hoặc mật khẩu không chính xác.",
+        )
+
+    if not matched.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản đã bị Quản trị viên tạm khóa.",
         )
 
     return _issue_session_tokens(
@@ -728,7 +758,16 @@ async def refresh_session(payload: RefreshTokenRequest):
             detail="Phiên duy trì 14 ngày đã hết hạn. Vui lòng xác thực OTP lại.",
         )
 
-    user = in_memory_users.get(decoded["sub"]) or {
+    stored_user = in_memory_users.get(decoded["sub"])
+    if stored_user is not None and not stored_user.get("is_active", True):
+        session["revoked"] = True
+        revoked_token_jtis.add(jti)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản đã bị Quản trị viên tạm khóa.",
+        )
+
+    user = stored_user or {
         "id": decoded["sub"],
         "full_name": "Thầy/Cô Giáo Viên",
         "email": decoded.get("email"),
