@@ -35,16 +35,26 @@ class QuestionOut(BaseModel):
 class GradeMCQRequest(BaseModel):
     question_id: str
     selected_label: str  # "A", "B", "C", "D"
-    session_id: str
+    session_id: Optional[str] = "default-session"
     student_id: Optional[str] = None
+    question_content: Optional[str] = None
+    correct_label: Optional[str] = None
+    explanation: Optional[str] = None
+    distractor_map: Optional[Dict[str, str]] = None
+    subject: Optional[str] = "TOAN"
 
 
 class GradeMCQResponse(BaseModel):
     is_correct: bool
     selected_label: str
     correct_label: str
-    explanation: str  # Why correct is correct
-    distractor_analysis: Optional[str] = None  # Why student choice was wrong
+    status: str = "CORRECT"  # "CORRECT" hoặc "INCORRECT"
+    explanation: str  # Giải thích tại sao đáp án đúng là đúng
+    distractor_analysis: Optional[str] = None  # Chỉ rõ lý do sai của phương án đã chọn
+    guidance: Optional[str] = None  # Hướng dẫn từng bước cách tìm ra đáp án đúng
+    error_category: Optional[str] = None  # Nhóm lỗi (CONCEPTUAL, CALCULATION, SIGN, ...)
+    badge_color: str = "#16a34a"  # "#16a34a" (tích xanh) hoặc "#dc2626" (cảnh báo đỏ)
+    icon: str = "✓"  # "✓" hoặc "✕"
     suggested_bonus_points: float = 1.0
 
 

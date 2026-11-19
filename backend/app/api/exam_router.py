@@ -6,10 +6,14 @@ from app.schemas.quiz import (
     ExamCanvasLayoutResponse,
     ExamParseTextRequest,
     ExamUploadResponse,
+    GradeMCQRequest,
+    GradeMCQResponse,
 )
 from app.services.exam_service import exam_service
+from app.services.grading_service import grading_service
 
 router = APIRouter(prefix="/api/v1/exam", tags=["Exam / Quiz Management"])
+alias_router = APIRouter(prefix="/api/v1/quiz", tags=["Exam / Quiz Management Alias"])
 
 
 @router.post(
@@ -104,3 +108,79 @@ async def get_sample_exam(
     raw_parsed = exam_service.parse_text(sample_text, title=f"Đề mẫu môn {subject}")
     filtered_result = exam_service.filter_by_mode(raw_parsed, mode=mode)
     return filtered_result
+
+
+@router.post(
+    "/grade-mcq",
+    response_model=GradeMCQResponse,
+    summary="Chấm trắc nghiệm và giải thích phương án gây nhiễu (Task TF28519)",
+    description="Kiểm tra đáp án học sinh khoanh: Đúng hiện tích xanh (#16a34a) và giải thích; Sai hiện cảnh báo đỏ (#dc2626), chỉ rõ lý do sai của phương án đã chọn và hướng dẫn cách tìm ra đáp án đúng.",
+)
+async def grade_mcq_choice(payload: GradeMCQRequest):
+    if not payload.selected_label or not payload.selected_label.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vui lòng chọn hoặc khoanh tròn một phương án (A, B, C hoặc D).",
+        )
+
+    result = grading_service.evaluate_mcq_choice(
+        question_id=payload.question_id,
+        selected_label=payload.selected_label,
+        correct_label=payload.correct_label or "A",
+        correct_explanation=payload.explanation or "Phương án chính xác theo định luật và số liệu bài toán.",
+        distractor_map=payload.distractor_map,
+        question_content=payload.question_content,
+        subject=payload.subject or "TOAN",
+        session_id=payload.session_id,
+        student_id=payload.student_id,
+    )
+    return result
+
+
+@router.post(
+    "/distractor-analysis",
+    summary="Phân tích toàn diện tất cả các phương án gây nhiễu của câu hỏi",
+    description="Hỗ trợ giáo viên xem trước lý do sai tiềm ẩn của học sinh cho từng phương án lựa chọn.",
+)
+async def analyze_all_distractors(
+    correct_label: str = Query("A", description="Đáp án đúng (A, B, C, D)"),
+    subject: str = Query("TOAN", description="Môn học"),
+    question_content: Optional[str] = Query(None, description="Nội dung câu hỏi"),
+):
+    labels = ["A", "B", "C", "D"]
+    corr = correct_label.strip().upper()
+    analysis_results = {}
+
+    for lbl in labels:
+        if lbl == corr:
+            analysis_results[lbl] = {
+                "is_correct": True,
+                "badge": "✓ ĐÁP ÁN ĐÚNG",
+                "color": "#16a34a",
+                "explanation": "Phương án chính xác theo định luật bài toán.",
+            }
+        else:
+            res = grading_service.analyze_distractor(
+                selected_label=lbl,
+                correct_label=corr,
+                subject=subject,
+                question_content=question_content,
+            )
+            analysis_results[lbl] = {
+                "is_correct": False,
+                "badge": "✕ PHƯƠNG ÁN GÂY NHIỄU",
+                "color": "#dc2626",
+                "reason": res.get("reason"),
+                "guidance": res.get("guidance"),
+                "category": res.get("category"),
+            }
+
+    return {
+        "subject": subject,
+        "correct_label": corr,
+        "distractors": analysis_results,
+    }
+
+
+alias_router.add_api_route("/grade-mcq", grade_mcq_choice, methods=["POST"], response_model=GradeMCQResponse)
+alias_router.add_api_route("/distractor-analysis", analyze_all_distractors, methods=["POST"])

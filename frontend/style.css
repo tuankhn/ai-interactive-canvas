@@ -1248,3 +1248,163 @@ dialog::backdrop {
   font-weight: 600;
   margin: 8px 0;
 }
+
+/* ==============================================================================
+   TASK TF28519: CHẤM TRẮC NGHIỆM & PHÂN TÍCH PHƯƠNG ÁN GÂY NHIỄU (GIA BẢO 2)
+   ============================================================================== */
+.tool-grade {
+  background: linear-gradient(135deg, #16a34a 0%, #059669 100%);
+  color: #ffffff;
+  font-weight: 700;
+  border: 1px solid #047857;
+}
+.tool-grade:hover {
+  background: linear-gradient(135deg, #15803d 0%, #047857 100%);
+}
+
+.opt-clickable {
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+.opt-clickable:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+.opt-select-btn {
+  font-size: 11px;
+  color: #0284c7;
+  background: #e0f2fe;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: auto;
+  font-weight: 600;
+}
+.opt-clickable:hover .opt-select-btn {
+  background: #0284c7;
+  color: #ffffff;
+}
+
+.opt-student-selected-correct {
+  background: #dcfce7 !important;
+  border: 1.5px solid #16a34a !important;
+  color: #15803d !important;
+  font-weight: 700;
+}
+.opt-student-selected-wrong {
+  background: #fee2e2 !important;
+  border: 1.5px solid #dc2626 !important;
+  color: #b91c1c !important;
+  font-weight: 700;
+}
+
+.grade-feedback-dialog {
+  max-width: 600px;
+  width: 92vw;
+  border-radius: 14px;
+  padding: 20px 24px;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.35);
+}
+
+.feedback-badge-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 12px 0 16px 0;
+}
+.feedback-result-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 24px;
+  font-weight: 800;
+  font-size: 15px;
+}
+.badge-correct {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1.5px solid #86efac;
+}
+.badge-incorrect {
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1.5px solid #fca5a5;
+}
+.feedback-icon {
+  font-size: 18px;
+}
+.feedback-subject-tag {
+  font-size: 12px;
+  font-weight: 600;
+  background: #f1f5f9;
+  color: #475569;
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+}
+
+.feedback-answer-summary {
+  display: flex;
+  gap: 16px;
+  background: #f8fafc;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 14px;
+}
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #334155;
+}
+.choice-student {
+  color: #0369a1;
+  font-size: 15px;
+}
+.choice-correct {
+  color: #16a34a;
+  font-size: 15px;
+}
+
+.feedback-box {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.box-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.box-icon {
+  font-size: 16px;
+}
+.box-content {
+  margin: 0;
+  font-size: 13px;
+}
+
+.distractor-box {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+.guidance-box {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+.explanation-box {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  color: #075985;
+}
