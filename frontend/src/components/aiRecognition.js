@@ -585,6 +585,8 @@ export function setupAIRecognition() {
         }
       }
     });
+  }
+
   // Task TF28512: Kích hoạt dựng đồ thị 2D Plotly từ công thức AI (< 3 giây)
   if (aiElements.openGraphBtn) {
     aiElements.openGraphBtn.addEventListener('click', () => {

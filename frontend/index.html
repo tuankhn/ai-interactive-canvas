@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./src/extensions/handwriting.css">
   <link rel="stylesheet" href="./src/extensions/molecule3d.css">
+  <link rel="stylesheet" href="./src/components/geometry_3d_three.css">
   <!-- KaTeX hỗ trợ hiển thị công thức Toán học trực tiếp trên bảng -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -89,6 +90,7 @@
             <button class="option-button" id="triangleTool" type="button" data-tool="triangle" aria-pressed="false">Tam giác</button>
             <button class="option-button" id="circleTool" type="button" data-tool="circle" aria-pressed="false">Hình tròn</button>
             <button class="option-button" id="ellipseTool" type="button" data-tool="ellipse" aria-pressed="false">Hình elip</button>
+            <button class="option-button" id="geometry3dTool" type="button" aria-expanded="false">Hình học 3D</button>
           </div>
         </section>
 
@@ -741,6 +743,7 @@
   <script defer src="./src/extensions/ai-correction-popup.js"></script>
   <script type="module" src="./src/extensions/handwriting-entry.js"></script>
   <script type="module" src="./src/extensions/molecule3d.js"></script>
+  <script type="module" src="./src/components/geometry_3d_three.js"></script>
 
 </body>
 </html>

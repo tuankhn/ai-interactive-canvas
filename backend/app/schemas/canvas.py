@@ -37,7 +37,7 @@ class RecognizeCanvasResponse(BaseModel):
     visualization: Optional[VisualizationData] = None
     explanation: Optional[str] = None
     subject_details: Optional[Dict[str, Any]] = None
-    illustration: Optional[ChalkIllustrationData] = None
+    illustration: Optional["ChalkIllustrationData"] = None
     latency_ms: Optional[int] = None
     provider: Optional[str] = None
     debounce_ms: Optional[int] = 800
