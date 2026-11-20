@@ -1,0 +1,47 @@
+/* Task hình học không gian: tất cả selector có tiền tố geom3d để không ảnh hưởng UI gốc. */
+/* Nút Three.js nằm trong hàng cuối của menu Hình, không chiếm chỗ thanh bên. */
+#shapeOptions #geometry3dTool {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 48px;
+  min-height: 48px;
+  font-weight: 700;
+  background: #eef2ff;
+  border-color: #8998ce;
+}
+#shapeOptions #geometry3dTool:hover { background: #dfe8ff; }
+.geom3d-panel {
+  position: fixed; top: 70px; right: 18px; z-index: 85;
+  display: flex; flex-direction: column; gap: 10px;
+  width: min(515px, calc(100vw - 24px)); max-height: calc(100dvh - 82px);
+  overflow-x: hidden; overflow-y: auto;
+  padding: 14px; border: 2px solid #253254; border-radius: 13px;
+  background: #fff; color: #26334d; box-shadow: 0 14px 36px #0f172a35;
+  font: 14px/1.5 Arial, Helvetica, sans-serif;
+}
+.geom3d-panel[hidden] { display: none !important; }
+.geom3d-panel * { box-sizing: border-box; }
+.geom3d-titlebar, .geom3d-buttons, .geom3d-samples, .geom3d-section-controls {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.geom3d-titlebar { justify-content: space-between; }
+.geom3d-titlebar strong { font-size: 17px; }
+.geom3d-panel button { min-width: 48px; min-height: 48px; padding: 8px 12px; border: 1px solid #b4c0d4; border-radius: 8px; color: #253254; background: #fff; font: inherit; cursor: pointer; }
+.geom3d-panel button:hover { background: #eaf0fb; }
+.geom3d-panel button:focus-visible, .geom3d-panel textarea:focus-visible, .geom3d-panel input:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+.geom3d-panel .geom3d-primary { background: #253475; color: #fff; border-color: #253475; font-weight: 700; }
+.geom3d-panel .geom3d-primary:hover { background: #172554; }
+.geom3d-panel label { font-weight: 600; }
+.geom3d-panel textarea { width: 100%; min-height: 72px; resize: vertical; padding: 10px; border: 1px solid #b4c0d4; border-radius: 8px; font: inherit; }
+.geom3d-samples button { font-size: 12px; padding: 8px; flex: 1 1 auto; }
+.geom3d-canvas { height: 285px; min-height: 215px; width: 100%; touch-action: none; border: 1px solid #cfd8e6; border-radius: 9px; background: #f7f9fd; overflow: hidden; position: relative; }
+.geom3d-canvas canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.geom3d-canvas canvas:active { cursor: grabbing; }
+.geom3d-viewport-note { font-size: 12px; margin: 0; color: #64748b; }
+.geom3d-section-controls label { display: inline-flex; align-items: center; gap: 8px; }
+.geom3d-section-controls input[type="checkbox"] { width: 20px; height: 20px; }
+.geom3d-section-controls input[type="range"] { flex: 1 1 140px; min-height: 48px; accent-color: #253475; }
+.geom3d-status { min-height: 18px; color: #334155; font-size: 12px; margin: 0; }
+.geom3d-warning { color: #a16207; }
+.geom3d-status[data-error="true"] { color: #b91c1c; }
+@media (max-width: 700px) { .geom3d-panel { top: 8px; right: 8px; max-height: calc(100dvh - 16px); padding: 10px; } .geom3d-canvas { height: 225px; } }
