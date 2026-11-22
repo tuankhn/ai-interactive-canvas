@@ -3,6 +3,7 @@ chia_task_sprint1/
 SRS_AI_Interactive_Canvas_IEEE830.docx
 task-template.xlsx
 *.docx
+!docs/*.docx
 *.xlsx
 ~$*
 
