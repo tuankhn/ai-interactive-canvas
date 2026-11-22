@@ -52,6 +52,8 @@ class Settings:
     # Cấu hình tài khoản Admin mặc định (môi trường local/demo) & hạn ngạch AI/MinIO (TF28528)
     ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "admin@aicanvas.edu.vn")
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "Admin@2026")
+    DEMO_DEFAULT_PASSWORD: str = os.getenv("DEMO_DEFAULT_PASSWORD", "Demo@2026")
+    SEED_DEMO_ON_STARTUP: bool = os.getenv("SEED_DEMO_ON_STARTUP", "true").lower() in ("1", "true", "yes")
     GEMINI_MONTHLY_QUOTA: int = int(os.getenv("GEMINI_MONTHLY_QUOTA", "10000"))
     MATHPIX_MONTHLY_QUOTA: int = int(os.getenv("MATHPIX_MONTHLY_QUOTA", "5000"))
     MINIO_STORAGE_QUOTA_MB: float = float(os.getenv("MINIO_STORAGE_QUOTA_MB", "5120"))

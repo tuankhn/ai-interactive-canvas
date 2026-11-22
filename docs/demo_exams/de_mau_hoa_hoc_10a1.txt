@@ -1,0 +1,23 @@
+Câu 1: Phân tử khí Metan (CH4) có dạng hình học không gian nào sau đây?
+A. Đường thẳng
+B. Gấp khúc chữ V
+*C. Tứ diện đều
+D. Tam giác phẳng
+Lời giải: Nguyên tử C lai hóa sp3 liên kết với 4 nguyên tử H tạo góc 109.5 độ dạng tứ diện đều.
+
+Câu 2: Đốt cháy hoàn toàn 1 mol CH4 cần tối thiểu bao nhiêu mol khí O2 (theo phương trình CH4 + 2O2 -> CO2 + 2H2O)?
+A. 1 mol
+*B. 2 mol
+C. 3 mol
+D. 4 mol
+Lời giải: Tỉ lệ hệ số cân bằng n_CH4 : n_O2 = 1 : 2 nên cần 2 mol O2.
+
+Câu 3: Dung dịch có giá trị pH = 2 mang môi trường gì?
+*A. Môi trường axit mạnh
+B. Môi trường trung tính
+C. Môi trường kiềm yếu
+D. Môi trường kiềm mạnh
+Lời giải: Thang pH < 7 là môi trường axit; pH = 2 thể hiện nồng độ H+ = 10^-2 M (axit mạnh).
+
+Câu 4: Tự luận: Cho 5.6 gam sắt (Fe = 56) tác dụng hết với dung dịch HCl dư. Tính số mol khí H2 thu được.
+Đáp án: n_H2 = 0.1 mol.

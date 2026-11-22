@@ -1,0 +1,23 @@
+Câu 1: Đỉnh I của đồ thị hàm số parabol y = x^2 - 4x + 3 có tọa độ là:
+A. I(-2; -1)
+*B. I(2; -1)
+C. I(2; 1)
+D. I(4; 3)
+Lời giải: Hoành độ đỉnh x_I = -b/(2a) = 4/2 = 2, tung độ y_I = 2^2 - 4*2 + 3 = -1.
+
+Câu 2: Đạo hàm của hàm số y = x^2 + 3x là:
+*A. y' = 2x + 3
+B. y' = x + 3
+C. y' = 2x
+D. y' = 3x^2
+Lời giải: Áp dụng quy tắc (x^n)' = n*x^(n-1), ta được y' = 2x + 3.
+
+Câu 3: Cho hình chóp tứ giác đều có cạnh đáy a = 4 và chiều cao h = 6. Thể tích khối chóp bằng:
+A. 96
+B. 48
+*C. 32
+D. 16
+Lời giải: V = (1/3) * S_đáy * h = (1/3) * 4^2 * 6 = 32.
+
+Câu 4: Giải phương trình bậc nhất tự luận theo từng bước: 3x - 9 = 0.
+Đáp án: x = 3.

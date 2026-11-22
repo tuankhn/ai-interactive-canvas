@@ -1,0 +1,23 @@
+Câu 1: Gia tốc trọng trường g tại mặt đất xấp xỉ bằng bao nhiêu?
+A. 8.9 m/s^2
+*B. 9.8 m/s^2
+C. 12 m/s^2
+D. 1.6 m/s^2
+Lời giải: Gia tốc rơi tự do tiêu chuẩn gần mặt đất là g ≈ 9.8 m/s^2.
+
+Câu 2: Công thức tính động năng của vật khối lượng m chuyển động với vận tốc v là:
+*A. Wd = 1/2 * m * v^2
+B. Wd = m * v
+C. Wd = 2 * m * v^2
+D. Wd = m * g * h
+Lời giải: Động năng tỉ lệ thuận với khối lượng và bình phương vận tốc: Wd = 1/2 mv^2.
+
+Câu 3: Theo định luật II Newton, vật khối lượng m = 2 kg chịu hợp lực F = 10 N sẽ thu gia tốc:
+A. 20 m/s^2
+B. 0.2 m/s^2
+*C. 5 m/s^2
+D. 8 m/s^2
+Lời giải: Áp dụng a = F / m = 10 / 2 = 5 m/s^2.
+
+Câu 4: Tự luận: Vật m = 4 kg chuyển động với vận tốc v = 5 m/s. Tính động năng của vật.
+Đáp án: Wd = 50 J.
