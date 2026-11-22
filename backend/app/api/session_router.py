@@ -175,21 +175,28 @@ async def list_snapshots(
     class_name: Optional[str] = Query(default=None, description="Lọc theo tên lớp (vd: 10A1)"),
     subject: Optional[str] = Query(default=None, description="Lọc theo môn học (vd: TOAN)"),
     date: Optional[str] = Query(default=None, description="Lọc theo ngày YYYY-MM-DD"),
+    room_id: Optional[str] = Query(default=None, description="Lọc theo phòng học (vd: room-10a1)"),
+    session_id: Optional[str] = Query(default=None, description="Lọc theo phiên học"),
     q: Optional[str] = Query(default=None, description="Tìm kiếm theo nội dung văn bản OCR / LaTeX"),
     limit: int = Query(default=24, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     authorization: Optional[str] = Header(default=None),
 ):
-    """Truy vấn và tìm kiếm danh sách Snapshot theo lớp, môn học, ngày học và nội dung OCR."""
+    """Truy vấn và tìm kiếm danh sách Snapshot theo lớp, môn học, ngày học, phòng học và nội dung OCR."""
     user = get_current_user_from_header(authorization, required=False)
-    assert_user_can_access_class(user, requested_class_name=class_name)
+    resolved_class_name = class_name if isinstance(class_name, str) else None
+    assert_user_can_access_class(user, requested_class_name=resolved_class_name)
 
     results = in_memory_snapshots
     if user and user.get("role") in ("STUDENT", "PARENT"):
         allowed = set(user.get("allowed_classes") or [])
         results = [r for r in results if r["tags"]["class_name"].replace(" ", "").upper() in allowed]
-    if class_name:
-        results = [r for r in results if r["tags"]["class_name"].lower() == class_name.lower()]
+    if resolved_class_name:
+        results = [r for r in results if r["tags"]["class_name"].lower() == resolved_class_name.lower()]
+    if room_id and isinstance(room_id, str):
+        results = [r for r in results if r.get("room_id") == room_id]
+    if session_id and isinstance(session_id, str):
+        results = [r for r in results if r.get("session_id") == session_id]
 
     calendar_counts: Dict[str, int] = {}
     for item in results:
@@ -197,19 +204,21 @@ async def list_snapshots(
         if d:
             calendar_counts[d] = calendar_counts.get(d, 0) + 1
 
-    if subject:
+    if subject and isinstance(subject, str):
         results = [r for r in results if r["tags"]["subject"].lower() == subject.lower()]
-    if date:
+    if date and isinstance(date, str):
         results = [r for r in results if r["tags"]["date"] == date]
-    if q:
+    if q and isinstance(q, str):
         q_low = q.lower()
         results = [
             r for r in results
             if q_low in (r.get("ocr_text_metadata") or "").lower()
             or q_low in (r.get("recognized_latex") or "").lower()
         ]
+    offset_val = offset if isinstance(offset, int) else 0
+    limit_val = limit if isinstance(limit, int) else 24
     total_count = len(results)
-    paged = results[offset:offset + limit]
+    paged = results[offset_val:offset_val + limit_val]
     return {
         "count": len(paged),
         "total_count": total_count,

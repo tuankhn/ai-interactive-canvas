@@ -273,14 +273,21 @@ async def get_bonus_score_history(
     class_name: Optional[str] = Query(default=None),
     student_id: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
+    room_id: Optional[str] = Query(default=None),
 ):
-    norm_cls = _norm_class(class_name) if class_name else None
+    cls_str = class_name if isinstance(class_name, str) else None
+    stu_str = student_id if isinstance(student_id, str) else None
+    sess_str = session_id if isinstance(session_id, str) else None
+    room_str = room_id if isinstance(room_id, str) else None
+
+    norm_cls = _norm_class(cls_str) if cls_str else None
     items = [
         log
         for log in in_memory_score_logs
         if (not norm_cls or _norm_class(log["class_name"]) == norm_cls)
-        and (not student_id or log["student_id"] == student_id)
-        and (not session_id or log["session_id"] == session_id)
+        and (not stu_str or log["student_id"] == stu_str)
+        and (not sess_str or log["session_id"] == sess_str)
+        and (not room_str or log.get("room_id") == room_str)
     ]
     return {"count": len(items), "items": items}
 
