@@ -344,12 +344,17 @@ async def submit_circled_answer(payload: CircleAnswerSubmitRequest):
 async def list_circle_submissions(
     session_id: Optional[str] = Query(default=None),
     question_id: Optional[str] = Query(default=None),
+    room_id: Optional[str] = Query(default=None),
 ):
+    sess_str = session_id if isinstance(session_id, str) else None
+    q_str = question_id if isinstance(question_id, str) else None
+    room_str = room_id if isinstance(room_id, str) else None
     items = [
         item
         for item in in_memory_circle_submissions
-        if (not session_id or item.get("session_id") == session_id)
-        and (not question_id or item.get("question_id") == question_id)
+        if (not sess_str or item.get("session_id") == sess_str)
+        and (not q_str or item.get("question_id") == q_str)
+        and (not room_str or item.get("room_id") == room_str)
     ]
     return {"count": len(items), "items": items}
 

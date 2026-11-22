@@ -217,7 +217,7 @@ def _issue_session_tokens(
 
 def get_current_user_from_header(authorization: Optional[str], required: bool = True) -> Optional[Dict[str, Any]]:
     """Giải mã Bearer Access Token phục vụ phân quyền lớp học giữa các router."""
-    if not authorization:
+    if not authorization or not isinstance(authorization, str):
         if required:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

@@ -37,6 +37,9 @@
         <span class="offline-sync-badge" id="offlineSyncBadge" title="Số ảnh snapshot lưu tạm trong IndexedDB chờ đồng bộ" hidden></span>
         <span class="teacher-session-pill" id="teacherSessionPill" hidden></span>
         <button class="teacher-auth-btn" id="teacherAuthBtn" type="button" title="Đăng nhập Giáo viên qua OTP Email (duy trì 14 ngày)">Đăng nhập GV</button>
+        <button class="benchmark-btn" id="benchmarkBtn" type="button" title="Đo kiểm hiệu năng nét bút, thời gian AI và tính cô lập 2 lớp học (Task TF28522)">
+          ⚡ Đo hiệu năng <span class="fps-pill" id="benchmarkFpsValue">60 FPS</span>
+        </button>
         <span class="ai-status-indicator" id="aiStatusIndicator" title="Trạng thái kết nối AI">AI: Sẵn sàng</span>
         <span class="timer" id="sessionTimer">Đang diễn ra 00:00</span>
         <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
@@ -728,6 +731,35 @@
     </div>
   </dialog>
 
+  <!-- MODAL ĐO KIỂM HIỆU NĂNG, ĐỘ TRỄ & CÔ LẬP ĐA PHÒNG HỌC (TASK TF28522) -->
+  <dialog id="benchmarkDialog" class="benchmark-dialog" aria-labelledby="benchmarkDialogTitle">
+    <div class="dialog-header">
+      <div class="dialog-title-group">
+        <h2 id="benchmarkDialogTitle">⚡ Đo kiểm hiệu năng &amp; Cô lập dữ liệu đa phòng học</h2>
+        <span class="benchmark-task-tag">TF28522 · Sprint 4</span>
+      </div>
+      <button id="closeBenchmarkBtn" class="dialog-close-btn" type="button" aria-label="Đóng dialog">✕</button>
+    </div>
+
+    <div class="benchmark-dialog-body">
+      <div class="benchmark-controls-bar">
+        <p class="benchmark-intro">
+          Hệ thống tự động kiểm thử 4 chỉ tiêu: Độ trễ nét vẽ (&lt; 16ms), Thời gian AI (&le; 2s mạng thường, &le; 5s mạng yếu), Độ chính xác công thức phổ thông (&ge; 90%) và Cô lập 2 phòng song song (0% rò rỉ).
+        </p>
+        <button id="runBenchmarkAuditBtn" class="btn-run-benchmark" type="button">
+          🚀 Chạy kiểm thử ngay
+        </button>
+      </div>
+
+      <div id="benchmarkLoadingIndicator" class="benchmark-loading" hidden>
+        <div class="ai-spinner" aria-hidden="true"></div>
+        <span>Đang tiến hành đo 200 nét vẽ, kiểm thử 31 công thức AI và chạy 2 phòng học song song...</span>
+      </div>
+
+      <div id="benchmarkResultsContainer" class="benchmark-results-container"></div>
+    </div>
+  </dialog>
+
   <div id="offlineToastRegion" class="offline-toast-region" role="region" aria-label="Thông báo kết nối mạng">
     <div id="offlineCornerToast" class="offline-toast" popover="manual" data-variant="offline">
       <div class="offline-toast-content">
@@ -744,6 +776,7 @@
   <script type="module" src="./src/extensions/handwriting-entry.js"></script>
   <script type="module" src="./src/extensions/molecule3d.js"></script>
   <script type="module" src="./src/components/geometry_3d_three.js"></script>
+  <script type="module" src="./src/utils/performance_benchmark.js"></script>
 
 </body>
 </html>
