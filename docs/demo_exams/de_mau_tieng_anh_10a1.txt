@@ -1,0 +1,27 @@
+Question 1: Choose the word whose underlined part is pronounced differently:
+A. cat
+B. hat
+*C. car
+D. fat
+Explanation: "car" contains the long vowel /ɑː/, whereas "cat", "hat", and "fat" contain /æ/.
+
+Question 2: She _____ to school by bus every morning.
+*A. goes
+B. go
+C. going
+D. went
+Explanation: "every morning" indicates Present Simple tense with third-person singular subject "She" -> goes.
+
+Question 3: Plants use sunlight, water, and carbon dioxide to create oxygen and energy through _____.
+A. evaporation
+*B. photosynthesis
+C. gravity
+D. distillation
+Explanation: Photosynthesis is the biological process by which green plants synthesize nutrients using sunlight.
+
+Question 4: If it _____ sunny tomorrow, our class will visit the science museum.
+A. will be
+B. were
+*C. is
+D. had been
+Explanation: First conditional structure: If + S + V(present simple), S + will + V-infinitive.

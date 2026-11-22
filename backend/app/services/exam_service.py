@@ -391,13 +391,45 @@ class ExamService:
                 "*B. 9.8 m/s^2\n"
                 "C. 12 m/s^2\n"
                 "D. 1.6 m/s^2\n"
-                "Đáp án: B\n\n"
+                "Đáp án: B\n"
+                "Lời giải: Gia tốc rơi tự do tiêu chuẩn gần mặt đất xấp xỉ g = 9.8 m/s^2.\n\n"
                 "Câu 2: Công thức tính động năng của một vật khối lượng m vận tốc v là:\n"
                 "*A. Wd = 1/2 * m * v^2\n"
                 "B. Wd = m * v\n"
                 "C. Wd = 2 * m * v^2\n"
                 "D. Wd = m * g * h\n"
                 "Đáp án: A\n"
+                "Lời giải: Động năng của vật chuyển động bằng một nửa tích khối lượng và bình phương vận tốc.\n\n"
+                "Câu 3: Theo định luật II Newton, vật m = 2 kg chịu hợp lực F = 10 N thu gia tốc bằng:\n"
+                "A. 20 m/s^2\n"
+                "B. 0.2 m/s^2\n"
+                "*C. 5 m/s^2\n"
+                "D. 8 m/s^2\n"
+                "Đáp án: C\n"
+            ),
+            "HOA_HOC": (
+                "Câu 1: Phân tử khí Metan (CH4) có dạng hình học không gian nào sau đây?\n"
+                "A. Đường thẳng\n"
+                "B. Gấp khúc chữ V\n"
+                "*C. Tứ diện đều\n"
+                "D. Tam giác phẳng\n"
+                "Đáp án: C\n"
+                "Lời giải: Nguyên tử C lai hóa sp3 liên kết với 4 nguyên tử H tạo góc 109.5 độ dạng tứ diện đều.\n\n"
+                "Câu 2: Đốt cháy hoàn toàn 1 mol CH4 cần tối thiểu bao nhiêu mol khí O2 (CH4 + 2O2 -> CO2 + 2H2O)?\n"
+                "A. 1 mol\n"
+                "*B. 2 mol\n"
+                "C. 3 mol\n"
+                "D. 4 mol\n"
+                "Đáp án: B\n"
+                "Lời giải: Theo phương trình cân bằng CH4 + 2O2 -> CO2 + 2H2O, tỉ lệ mol CH4 : O2 là 1 : 2.\n\n"
+                "Câu 3: Dung dịch có giá trị pH = 2 mang môi trường gì?\n"
+                "*A. Môi trường axit mạnh\n"
+                "B. Môi trường trung tính\n"
+                "C. Môi trường kiềm yếu\n"
+                "D. Môi trường kiềm mạnh\n"
+                "Đáp án: A\n\n"
+                "Câu 4: Cho 5.6 gam sắt (Fe = 56) tác dụng hết với dung dịch HCl dư. Tính số mol khí H2 thu được.\n"
+                "Đáp án: n_H2 = 0.1 mol.\n"
             ),
             "TIENG_ANH": (
                 "Question 1: Choose the word whose underlined part is pronounced differently:\n"
@@ -405,16 +437,36 @@ class ExamService:
                 "B. hat\n"
                 "*C. car\n"
                 "D. fat\n"
-                "Answer: C\n\n"
+                "Answer: C\n"
+                "Explanation: 'car' has the /ɑː/ vowel sound while 'cat', 'hat', and 'fat' have /æ/.\n\n"
                 "Question 2: She _____ to school by bus every morning.\n"
                 "*A. goes\n"
                 "B. go\n"
                 "C. going\n"
                 "D. went\n"
-                "Answer: A\n"
+                "Answer: A\n\n"
+                "Question 3: Plants use sunlight, water, and CO2 to produce oxygen through _____.\n"
+                "A. evaporation\n"
+                "*B. photosynthesis\n"
+                "C. gravity\n"
+                "D. distillation\n"
+                "Answer: B\n"
             )
         }
-        return samples.get(subject.upper(), samples["TOAN"])
+        aliases = {
+            "MATH": "TOAN",
+            "PHYS": "VAT_LY",
+            "PHYSICS": "VAT_LY",
+            "CHEM": "HOA_HOC",
+            "CHEMISTRY": "HOA_HOC",
+            "HOA": "HOA_HOC",
+            "LY": "VAT_LY",
+            "ENG": "TIENG_ANH",
+            "ENGLISH": "TIENG_ANH",
+            "ANH": "TIENG_ANH",
+        }
+        norm_key = aliases.get((subject or "TOAN").strip().upper(), (subject or "TOAN").strip().upper())
+        return samples.get(norm_key, samples["TOAN"])
 
     # -------------------------------------------------------------
     # Helper nội bộ bóc tách 1 câu hỏi

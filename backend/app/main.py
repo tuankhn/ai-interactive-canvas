@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import json
 import os
 from typing import Dict, List
@@ -8,10 +9,24 @@ from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.core.database import check_db_status, record_ai_usage_event
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Tự động nạp sẵn tài khoản lớp học & bộ đề mẫu Demo khi khởi chạy máy chủ / Docker (TF28524)."""
+    if settings.SEED_DEMO_ON_STARTUP:
+        try:
+            from app.core.demo_seed import seed_demo_environment
+            seed_demo_environment(force=False)
+        except Exception:
+            pass
+    yield
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     description="Backend API & WebSocket cho Bảng vẽ thông minh hỗ trợ giảng dạy (AI Interactive Canvas)",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -70,6 +85,12 @@ except ImportError:
 try:
     from app.api.benchmark_router import router as benchmark_router
     app.include_router(benchmark_router)
+except ImportError:
+    pass
+
+try:
+    from app.api.demo_router import router as demo_router
+    app.include_router(demo_router)
 except ImportError:
     pass
 
@@ -174,7 +195,9 @@ async def board_websocket(websocket: WebSocket, room_id: str, session_id: str):
             active_connections.pop(channel_key, None)
 
 
-FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
+FRONTEND_DIR = os.path.abspath(
+    os.getenv("FRONTEND_DIR") or os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
+)
 if os.path.isdir(FRONTEND_DIR) and os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
