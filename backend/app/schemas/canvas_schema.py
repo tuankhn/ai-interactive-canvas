@@ -54,6 +54,7 @@ class RecognizeResponse(BaseModel):
     explanation: Optional[str] = None
     subject_details: Optional[Dict[str, Any]] = None
     illustration: Optional[Dict[str, Any]] = None
+    degraded_reason: Optional[str] = None
 
 
 class PageSaveRequest(BaseModel):

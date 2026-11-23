@@ -52,7 +52,7 @@ def upload_snapshot_to_minio(
         try:
             import urllib3
             http_client = urllib3.PoolManager(
-                timeout=urllib3.Timeout(connect=0.5, read=1.0),
+                timeout=urllib3.Timeout(connect=0.5, read=4.0),
                 retries=False,
             )
             client = Minio(

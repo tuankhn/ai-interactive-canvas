@@ -8,8 +8,10 @@ from pydantic import BaseModel, Field
 
 from app.core.database import (
     in_memory_circle_submissions,
+    in_memory_class_rosters,
     in_memory_pages,
     in_memory_score_logs,
+    in_memory_snapshot_blobs,
     in_memory_snapshots,
 )
 from app.schemas.canvas_schema import PageSaveRequest, RecognizeRequest, SnapshotSaveRequest
@@ -20,9 +22,20 @@ from app.schemas.quiz import (
     StrokeBoundingBox,
 )
 from app.services.ai_recognition import COMMON_CURRICULUM_FORMULAS, ai_recognition_service
-from app.api.session_router import get_board_pages, list_snapshots, save_board_page, save_snapshot
-from app.api.score_router import award_bonus_points, get_bonus_score_history
-from app.api.exam_router import list_circle_submissions, submit_circled_answer
+from app.api.session_router import (
+    get_board_pages_core as get_board_pages,
+    list_snapshots_core as list_snapshots,
+    save_board_page_core as save_board_page,
+    save_snapshot_core as save_snapshot,
+)
+from app.api.score_router import (
+    award_bonus_points_core as award_bonus_points,
+    get_bonus_score_history_core as get_bonus_score_history,
+)
+from app.api.exam_router import (
+    list_circle_submissions_core as list_circle_submissions,
+    submit_circled_answer_core as submit_circled_answer,
+)
 
 router = APIRouter(
     prefix="/api/v1/benchmark",
@@ -191,7 +204,8 @@ async def run_full_benchmark(
     accuracy_passed = accuracy_percent >= 90.0
 
     formula_res = {
-        "benchmark_name": "Độ chính xác nhận diện công thức phổ thông",
+        "benchmark_name": "Độ chính xác nhận diện công thức phổ thông (Mô phỏng kiểm chuẩn qua stroke_hint)",
+        "simulation_mode": True,
         "dataset_size": total_formulas,
         "correct_recognitions": correct_count,
         "accuracy_percent": accuracy_percent,
@@ -201,16 +215,16 @@ async def run_full_benchmark(
     }
 
     # =========================================================================
-    # 5. KIỂM THỬ CÔ LẬP DỮ LIỆU 2 PHÒNG HỌC CHẠY SONG SONG
+    # 5. KIỂM THỬ CÔ LẬP DỮ LIỆU 2 PHÒNG HỌC CHẠY SONG SONG (M15: dùng lớp riêng & dọn sạch finally)
     # =========================================================================
     uid = int(time.time() * 1000) % 1000000
-    room_a = f"room-10a1-{uid}"
-    session_a = f"sess-10a1-toan-{uid}"
-    class_a = "10A1"
+    room_a = f"room-bench-a-{uid}"
+    session_a = f"sess-bench-a-{uid}"
+    class_a = f"BENCH{uid}A"
 
-    room_b = f"room-10a2-{uid}"
-    session_b = f"sess-10a2-vatly-{uid}"
-    class_b = "10A2"
+    room_b = f"room-bench-b-{uid}"
+    session_b = f"sess-bench-b-{uid}"
+    class_b = f"BENCH{uid}B"
 
     # Chạy song song hoạt động của 2 phòng học (Pages, Snapshots, Scores, Quiz Circles)
     async def run_room_a_workflow():
@@ -328,52 +342,81 @@ async def run_full_benchmark(
         ))
         return snap_b, score_b, circle_b
 
-    # Thực thi song song cùng lúc (Concurrent Execution)
-    await asyncio.gather(run_room_a_workflow(), run_room_b_workflow())
+    try:
+        # Thực thi song song cùng lúc (Concurrent Execution)
+        await asyncio.gather(run_room_a_workflow(), run_room_b_workflow())
 
-    # KIỂM TRA TÍNH CÔ LẬP TOÀN DIỆN (ISOLATION VERIFICATION)
-    # A. Pages Isolation
-    pages_a_resp = await get_board_pages(room_id=room_a, session_id=session_a)
-    pages_b_resp = await get_board_pages(room_id=room_b, session_id=session_b)
-    pages_a_count = len(pages_a_resp["pages"])
-    pages_b_count = len(pages_b_resp["pages"])
-    pages_isolation_ok = (pages_a_count == 2) and (pages_b_count == 1)
+        # KIỂM TRA TÍNH CÔ LẬP TOÀN DIỆN (ISOLATION VERIFICATION)
+        # A. Pages Isolation
+        pages_a_resp = await get_board_pages(room_id=room_a, session_id=session_a)
+        pages_b_resp = await get_board_pages(room_id=room_b, session_id=session_b)
+        pages_a_count = len(pages_a_resp["pages"])
+        pages_b_count = len(pages_b_resp["pages"])
+        pages_isolation_ok = (pages_a_count == 2) and (pages_b_count == 1)
 
-    # B. Snapshots Isolation
-    snaps_a = await list_snapshots(room_id=room_a)
-    snaps_b = await list_snapshots(room_id=room_b)
-    snaps_a_items = snaps_a["items"]
-    snaps_b_items = snaps_b["items"]
-    snapshots_isolation_ok = (
-        all(s.get("room_id") == room_a for s in snaps_a_items)
-        and all(s.get("room_id") == room_b for s in snaps_b_items)
-        and not any(s.get("room_id") == room_b for s in snaps_a_items)
-        and not any(s.get("room_id") == room_a for s in snaps_b_items)
-    )
+        # B. Snapshots Isolation
+        snaps_a = await list_snapshots(room_id=room_a)
+        snaps_b = await list_snapshots(room_id=room_b)
+        snaps_a_items = snaps_a["items"]
+        snaps_b_items = snaps_b["items"]
+        snapshots_isolation_ok = (
+            all(s.get("room_id") == room_a for s in snaps_a_items)
+            and all(s.get("room_id") == room_b for s in snaps_b_items)
+            and not any(s.get("room_id") == room_b for s in snaps_a_items)
+            and not any(s.get("room_id") == room_a for s in snaps_b_items)
+        )
 
-    # C. Scores Isolation
-    scores_a = await get_bonus_score_history(room_id=room_a)
-    scores_b = await get_bonus_score_history(room_id=room_b)
-    scores_a_items = scores_a["items"]
-    scores_b_items = scores_b["items"]
-    scores_isolation_ok = (
-        all(s.get("room_id") == room_a for s in scores_a_items)
-        and all(s.get("room_id") == room_b for s in scores_b_items)
-        and not any(s.get("room_id") == room_b for s in scores_a_items)
-        and not any(s.get("room_id") == room_a for s in scores_b_items)
-    )
+        # C. Scores Isolation
+        scores_a = await get_bonus_score_history(room_id=room_a)
+        scores_b = await get_bonus_score_history(room_id=room_b)
+        scores_a_items = scores_a["items"]
+        scores_b_items = scores_b["items"]
+        scores_isolation_ok = (
+            all(s.get("room_id") == room_a for s in scores_a_items)
+            and all(s.get("room_id") == room_b for s in scores_b_items)
+            and not any(s.get("room_id") == room_b for s in scores_a_items)
+            and not any(s.get("room_id") == room_a for s in scores_b_items)
+        )
 
-    # D. Quiz Circle Submissions Isolation
-    circles_a = await list_circle_submissions(room_id=room_a)
-    circles_b = await list_circle_submissions(room_id=room_b)
-    circles_a_items = circles_a["items"]
-    circles_b_items = circles_b["items"]
-    circles_isolation_ok = (
-        all(c.get("room_id") == room_a for c in circles_a_items)
-        and all(c.get("room_id") == room_b for c in circles_b_items)
-        and not any(c.get("room_id") == room_b for c in circles_a_items)
-        and not any(c.get("room_id") == room_a for c in circles_b_items)
-    )
+        # D. Quiz Circle Submissions Isolation
+        circles_a = await list_circle_submissions(room_id=room_a)
+        circles_b = await list_circle_submissions(room_id=room_b)
+        circles_a_items = circles_a["items"]
+        circles_b_items = circles_b["items"]
+        circles_isolation_ok = (
+            all(c.get("room_id") == room_a for c in circles_a_items)
+            and all(c.get("room_id") == room_b for c in circles_b_items)
+            and not any(c.get("room_id") == room_b for c in circles_a_items)
+            and not any(c.get("room_id") == room_a for c in circles_b_items)
+        )
+    finally:
+        bench_rooms = {room_a, room_b}
+        bench_classes = {class_a, class_b}
+        in_memory_pages.pop(f"{room_a}:{session_a}", None)
+        in_memory_pages.pop(f"{room_b}:{session_b}", None)
+        removed_snap_ids = {
+            s.get("id")
+            for s in in_memory_snapshots
+            if s.get("room_id") in bench_rooms or (s.get("tags") or {}).get("class_name") in bench_classes
+        }
+        in_memory_snapshots[:] = [
+            s
+            for s in in_memory_snapshots
+            if s.get("room_id") not in bench_rooms and (s.get("tags") or {}).get("class_name") not in bench_classes
+        ]
+        for sid in removed_snap_ids:
+            if sid:
+                in_memory_snapshot_blobs.pop(sid, None)
+        in_memory_score_logs[:] = [
+            log
+            for log in in_memory_score_logs
+            if log.get("room_id") not in bench_rooms and log.get("class_name") not in bench_classes
+        ]
+        in_memory_circle_submissions[:] = [
+            sub for sub in in_memory_circle_submissions if sub.get("room_id") not in bench_rooms
+        ]
+        for cls_key in bench_classes:
+            in_memory_class_rosters.pop(cls_key, None)
 
     # E. WebSocket Channel Routing Isolation Check
     channel_key_a = f"{room_a}:{session_a}"

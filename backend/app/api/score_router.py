@@ -4,16 +4,22 @@ import re
 from typing import Any, Dict, List, Optional
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 
+from app.api.auth_router import (
+    assert_user_can_access_class,
+    get_current_user_from_header,
+    require_role,
+)
+from app.api.session_router import store_snapshot_record_from_base64
+from app.core.config import settings
 from app.core.database import (
     in_memory_class_rosters,
     in_memory_score_logs,
-    in_memory_snapshot_blobs,
     in_memory_snapshots,
     in_memory_users,
+    trim_in_memory_stores,
 )
-from app.core.storage import convert_canvas_to_highres, upload_snapshot_to_minio
 from app.schemas.score import (
     BonusPointAwardRequest,
     BonusPointAwardResponse,
@@ -44,15 +50,18 @@ def _norm_class(class_name: str) -> str:
 def _ensure_class_roster(class_name: str) -> List[Dict[str, Any]]:
     norm = _norm_class(class_name)
     if norm not in in_memory_class_rosters:
-        in_memory_class_rosters[norm] = [
-            {
-                "student_id": f"stu_{norm.lower()}_{idx + 1}",
-                "student_code": f"{norm}-{code}",
-                "full_name": name,
-                "class_name": norm,
-            }
-            for idx, (code, name) in enumerate(DEFAULT_DEMO_STUDENTS)
-        ]
+        if settings.APP_ENV == "development":
+            in_memory_class_rosters[norm] = [
+                {
+                    "student_id": f"stu_{norm.lower()}_{idx + 1}",
+                    "student_code": f"{norm}-{code}",
+                    "full_name": name,
+                    "class_name": norm,
+                }
+                for idx, (code, name) in enumerate(DEFAULT_DEMO_STUDENTS)
+            ]
+        else:
+            in_memory_class_rosters[norm] = []
     return in_memory_class_rosters[norm]
 
 
@@ -102,7 +111,10 @@ def _compute_student_totals(student_id: str, class_name: str) -> tuple[float, in
 async def list_class_students(
     class_name: str = Query(default="10A1", description="Tên lớp đang giảng dạy"),
     q: Optional[str] = Query(default=None, description="Từ khóa tìm tên/mã học sinh"),
+    authorization: Optional[str] = Header(default=None),
 ):
+    user = get_current_user_from_header(authorization, required=settings.AUTH_ENFORCE)
+    assert_user_can_access_class(user, requested_class_name=class_name)
     norm = _norm_class(class_name)
     students = _collect_class_students(norm)
     keyword = (q or "").strip().lower()
@@ -130,7 +142,12 @@ async def list_class_students(
 
 
 @router.post("/students", status_code=status.HTTP_201_CREATED, summary="TF2851C: Thêm nhanh học sinh vào thanh danh sách lớp")
-async def add_student_to_roster(payload: StudentRosterCreateRequest):
+async def add_student_to_roster(
+    payload: StudentRosterCreateRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_role(authorization, "TEACHER", "ADMIN")
+    assert_user_can_access_class(user, requested_class_name=payload.class_name)
     norm = _norm_class(payload.class_name)
     roster = _ensure_class_roster(norm)
     norm_code = (payload.student_code or "").strip().upper() or f"{norm}-HS-{len(roster) + 1:02d}"
@@ -155,8 +172,13 @@ async def add_student_to_roster(payload: StudentRosterCreateRequest):
     }
 
 
-@router.post("/award", response_model=BonusPointAwardResponse, summary="TF2851C: Cộng điểm thưởng cho học sinh và lưu kèm snapshot bài làm")
-async def award_bonus_points(payload: BonusPointAwardRequest):
+async def award_bonus_points_core(
+    payload: BonusPointAwardRequest,
+    *,
+    teacher_name_override: Optional[str] = None,
+    allow_autocreate_student: bool = True,
+) -> BonusPointAwardResponse:
+    """Logic lõi cộng điểm thưởng học sinh (dùng chung cho HTTP handler và benchmark)."""
     norm = _norm_class(payload.class_name)
     students = _collect_class_students(norm)
     matched_student = next((s for s in students if s["student_id"] == payload.student_id), None)
@@ -170,7 +192,7 @@ async def award_bonus_points(payload: BonusPointAwardRequest):
                 "student_code": user_rec.get("student_code"),
                 "class_name": norm,
             }
-        elif payload.student_name:
+        elif payload.student_name and allow_autocreate_student:
             matched_student = {
                 "student_id": payload.student_id,
                 "full_name": payload.student_name.strip(),
@@ -183,52 +205,33 @@ async def award_bonus_points(payload: BonusPointAwardRequest):
                 detail=f"Không tìm thấy học sinh '{payload.student_id}' trong lớp {norm}.",
             )
 
+    effective_teacher = teacher_name_override or payload.teacher_name
     snapshot_id = payload.snapshot_id
     snapshot_url: Optional[str] = None
     snapshot_saved = False
 
     if payload.image_base64:
         try:
-            storage_info = upload_snapshot_to_minio(
+            snap_rec = store_snapshot_record_from_base64(
                 image_base64=payload.image_base64,
+                session_id=payload.session_id,
+                room_id=payload.room_id,
                 class_name=norm,
+                teacher_name=effective_teacher,
                 subject=payload.subject,
-                image_format="webp",
-            )
-            snapshot_id = str(uuid.uuid4())
-            snapshot_url = storage_info["image_url"]
-            snapshot_saved = True
-            if storage_info.get("data_uri") and "," in storage_info["data_uri"]:
-                in_memory_snapshot_blobs[snapshot_id] = base64.b64decode(storage_info["data_uri"].split(",", 1)[1])
-            else:
-                in_memory_snapshot_blobs[snapshot_id] = convert_canvas_to_highres(payload.image_base64, "webp")
-            in_memory_snapshots.insert(
-                0,
-                {
-                    "id": snapshot_id,
-                    "session_id": payload.session_id,
-                    "room_id": payload.room_id,
-                    "tags": {
-                        "teacher_name": payload.teacher_name,
-                        "class_name": norm,
-                        "subject": payload.subject,
-                        "period_number": payload.period_number,
-                        "page_number": payload.page_number,
-                        "student_id": matched_student["student_id"],
-                        "student_name": matched_student["full_name"],
-                        "date": storage_info["created_at"][:10],
-                    },
-                    "trigger_type": "BONUS_SCORE",
-                    "image_url": snapshot_url,
-                    "preview_url": f"/api/v1/sessions/snapshots/{snapshot_id}/image?format=webp",
-                    "image_format": storage_info["image_format"],
-                    "size_bytes": storage_info["size_bytes"],
-                    "ocr_text_metadata": f"Cộng +{payload.points_added} điểm cho {matched_student['full_name']}: {payload.reason}",
-                    "recognized_latex": "",
-                    "created_at": storage_info["created_at"],
-                    "retention_until": storage_info["retention_until"],
+                period_number=payload.period_number,
+                page_number=payload.page_number,
+                trigger_type="BONUS_SCORE",
+                recognized_latex="",
+                ocr_text_metadata=f"Cộng +{payload.points_added} điểm cho {matched_student['full_name']}: {payload.reason}",
+                extra_tags={
+                    "student_id": matched_student["student_id"],
+                    "student_name": matched_student["full_name"],
                 },
             )
+            snapshot_id = snap_rec["id"]
+            snapshot_url = snap_rec["image_url"]
+            snapshot_saved = True
         except Exception:
             snapshot_saved = False
     elif snapshot_id:
@@ -249,7 +252,7 @@ async def award_bonus_points(payload: BonusPointAwardRequest):
         class_name=norm,
         session_id=payload.session_id,
         room_id=payload.room_id,
-        teacher_name=payload.teacher_name,
+        teacher_name=effective_teacher,
         subject=payload.subject,
         points_added=float(payload.points_added),
         total_points=new_total,
@@ -259,6 +262,7 @@ async def award_bonus_points(payload: BonusPointAwardRequest):
         created_at=now_iso,
     )
     in_memory_score_logs.insert(0, record.model_dump())
+    trim_in_memory_stores()
 
     return BonusPointAwardResponse(
         status="awarded",
@@ -268,13 +272,28 @@ async def award_bonus_points(payload: BonusPointAwardRequest):
     )
 
 
-@router.get("/history", summary="TF2851C: Lịch sử cộng điểm thưởng kèm snapshot bài làm")
-async def get_bonus_score_history(
-    class_name: Optional[str] = Query(default=None),
-    student_id: Optional[str] = Query(default=None),
-    session_id: Optional[str] = Query(default=None),
-    room_id: Optional[str] = Query(default=None),
+@router.post("/award", response_model=BonusPointAwardResponse, summary="TF2851C: Cộng điểm thưởng cho học sinh và lưu kèm snapshot bài làm")
+async def award_bonus_points(
+    payload: BonusPointAwardRequest,
+    authorization: Optional[str] = Header(default=None),
 ):
+    user = require_role(authorization, "TEACHER", "ADMIN")
+    assert_user_can_access_class(user, requested_class_name=payload.class_name, requested_room_id=payload.room_id)
+    teacher_override = user.get("full_name") if user else None
+    return await award_bonus_points_core(
+        payload,
+        teacher_name_override=teacher_override,
+        allow_autocreate_student=(not settings.AUTH_ENFORCE),
+    )
+
+
+async def get_bonus_score_history_core(
+    class_name: Optional[str] = None,
+    student_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    room_id: Optional[str] = None,
+) -> dict:
+    """Logic lõi truy vấn lịch sử cộng điểm thưởng."""
     cls_str = class_name if isinstance(class_name, str) else None
     stu_str = student_id if isinstance(student_id, str) else None
     sess_str = session_id if isinstance(session_id, str) else None
@@ -292,8 +311,31 @@ async def get_bonus_score_history(
     return {"count": len(items), "items": items}
 
 
+@router.get("/history", summary="TF2851C: Lịch sử cộng điểm thưởng kèm snapshot bài làm")
+async def get_bonus_score_history(
+    class_name: Optional[str] = Query(default=None),
+    student_id: Optional[str] = Query(default=None),
+    session_id: Optional[str] = Query(default=None),
+    room_id: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = get_current_user_from_header(authorization, required=settings.AUTH_ENFORCE)
+    cls_str = class_name if isinstance(class_name, str) else None
+    room_str = room_id if isinstance(room_id, str) else None
+    assert_user_can_access_class(user, requested_class_name=cls_str, requested_room_id=room_str)
+    return await get_bonus_score_history_core(
+        class_name=class_name,
+        student_id=student_id,
+        session_id=session_id,
+        room_id=room_id,
+    )
+
+
 @router.get("/leaderboard", summary="TF2851C: Bảng xếp hạng điểm thưởng trong lớp")
-async def get_class_leaderboard(class_name: str = Query(default="10A1")):
-    resp = await list_class_students(class_name=class_name, q=None)
+async def get_class_leaderboard(
+    class_name: str = Query(default="10A1"),
+    authorization: Optional[str] = Header(default=None),
+):
+    resp = await list_class_students(class_name=class_name, q=None, authorization=authorization)
     ranked = sorted(resp.items, key=lambda x: (-x.total_points, -x.award_count, x.full_name))
     return {"class_name": resp.class_name, "count": len(ranked), "items": ranked}

@@ -3,11 +3,13 @@
 # (TASK TF28508) - Phụ trách: Nguyễn Ngọc Gia Bảo (AI / Backend)
 # ==============================================================================
 
+from datetime import datetime, timezone
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status
 
 from app.core.config import settings
+from app.core.database import in_memory_pages
 from app.services.ai_recognition import ai_recognition_service
 from app.services.image_processing import image_processing_service
 from app.services.illustration_service import illustration_service
@@ -141,13 +143,13 @@ async def get_debounce_config():
 
 @router.get(
     "/recognize/providers",
-    summary="Kiểm tra trạng thái kết nối các nhà cung cấp AI (Gemini 2.5 Flash & Mathpix)",
+    summary="Kiểm tra trạng thái kết nối các nhà cung cấp AI (Gemini & Mathpix)",
 )
 async def get_providers_status():
-    """Kiểm tra tính sẵn sàng của Gemini 2.5 Flash và Mathpix OCR API."""
+    """Kiểm tra tính sẵn sàng của Google Gemini và Mathpix OCR API."""
     return {
         "gemini": {
-            "name": "Gemini 2.5 Flash",
+            "name": f"Google Gemini ({settings.GEMINI_MODEL})",
             "model": settings.GEMINI_MODEL,
             "configured": ai_recognition_service.gemini.is_configured,
             "status": "ready" if ai_recognition_service.gemini.is_configured else "mock_fallback",
@@ -221,14 +223,34 @@ async def canvas_illustrate_alias(payload: Dict[str, Any]):
     summary="Sửa ký tự mơ hồ hoặc công thức nhận diện chưa chuẩn",
 )
 async def correct_token(request: CorrectTokenRequest):
-    """Tiếp nhận sửa lỗi ký tự từ popup gợi ý trên bảng vẽ và cập nhật biểu thức LaTeX."""
+    """Tiếp nhận sửa lỗi ký tự từ popup gợi ý trên bảng vẽ và cập nhật biểu thức LaTeX (H6)."""
     updated_latex = request.context_latex or ""
     if request.original_text and request.corrected_text and updated_latex:
         updated_latex = updated_latex.replace(request.original_text, request.corrected_text)
 
+    persisted_page = False
+    if request.room_id and request.session_id and request.page_number:
+        session_key = f"{request.room_id}:{request.session_id}"
+        page_store = in_memory_pages.setdefault(session_key, {})
+        existing_page = page_store.get(request.page_number)
+        if existing_page:
+            existing_page["recognized_latex"] = updated_latex
+            existing_page["updated_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            page_store[request.page_number] = {
+                "page_number": request.page_number,
+                "canvas_json": {},
+                "recognized_latex": updated_latex,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        persisted_page = True
+
     return {
         "status": "success",
         "session_id": request.session_id,
+        "room_id": request.room_id,
+        "page_number": request.page_number,
+        "persisted": persisted_page,
         "original_text": request.original_text,
         "corrected_text": request.corrected_text,
         "updated_latex": updated_latex,

@@ -100,15 +100,29 @@ class MathpixOCRService:
                 }
             else:
                 logger.warning(f"Mathpix API phản hồi HTTP {resp.status_code}: {resp.text}")
-                result = self._mock_mathpix_response(clean_b64, subject)
-                result["latency_ms"] = int((time.perf_counter() - start_time) * 1000)
-                return result
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                return {
+                    "success": False,
+                    "latex": "",
+                    "recognized_text": "",
+                    "confidence": 0.0,
+                    "provider": "mathpix-error",
+                    "error": f"HTTP {resp.status_code}",
+                    "latency_ms": latency_ms,
+                }
 
         except Exception as ex:
             logger.error(f"Lỗi kết nối Mathpix OCR: {ex}")
-            result = self._mock_mathpix_response(clean_b64, subject)
-            result["latency_ms"] = int((time.perf_counter() - start_time) * 1000)
-            return result
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            return {
+                "success": False,
+                "latex": "",
+                "recognized_text": "",
+                "confidence": 0.0,
+                "provider": "mathpix-error",
+                "error": str(ex),
+                "latency_ms": latency_ms,
+            }
 
     def _mock_mathpix_response(self, clean_b64: str, subject: str = "MATH") -> Dict[str, Any]:
         """

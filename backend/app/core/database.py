@@ -21,6 +21,8 @@ in_memory_student_bindings: Dict[str, str] = {}  # student_code -> user_id (1 h�
 in_memory_otps: Dict[str, Dict[str, Any]] = {}
 in_memory_refresh_sessions: Dict[str, Dict[str, Any]] = {}
 revoked_token_jtis: set = set()
+in_memory_login_failures: Dict[str, Dict[str, Any]] = {}
+in_memory_otp_cooldowns: Dict[str, float] = {}
 
 # Bộ nhớ đệm quản trị Trường, Lớp & Thống kê hạn ngạch AI / MinIO (TF28528)
 in_memory_schools: Dict[str, Dict[str, Any]] = {}
@@ -70,7 +72,47 @@ def record_ai_usage_event(
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     in_memory_ai_usage_logs.insert(0, entry)
+    trim_in_memory_stores()
     return entry
+
+
+def trim_in_memory_stores() -> None:
+    """M7: Giới hạn kích thước các kho in-memory & thu dọn mục quá hạn tránh tăng trưởng không giới hạn."""
+    max_snaps = max(10, int(getattr(settings, "MAX_IN_MEMORY_SNAPSHOTS", 500)))
+    if len(in_memory_snapshots) > max_snaps:
+        evicted = in_memory_snapshots[max_snaps:]
+        del in_memory_snapshots[max_snaps:]
+        for item in evicted:
+            sid = item.get("id")
+            if sid:
+                in_memory_snapshot_blobs.pop(sid, None)
+
+    max_keys = max(50, int(getattr(settings, "MAX_IN_MEMORY_ANSWER_KEYS", 2000)))
+    while len(in_memory_exam_answer_keys) > max_keys:
+        oldest_qid = next(iter(in_memory_exam_answer_keys))
+        in_memory_exam_answer_keys.pop(oldest_qid, None)
+
+    max_logs = max(50, int(getattr(settings, "MAX_IN_MEMORY_LOGS", 2000)))
+    if len(in_memory_ai_usage_logs) > max_logs:
+        del in_memory_ai_usage_logs[max_logs:]
+    if len(in_memory_score_logs) > max_logs:
+        del in_memory_score_logs[max_logs:]
+    if len(in_memory_circle_submissions) > max_logs:
+        del in_memory_circle_submissions[max_logs:]
+
+    while len(synced_offline_ids) > max_logs:
+        oldest_sync = next(iter(synced_offline_ids))
+        synced_offline_ids.pop(oldest_sync, None)
+
+    if len(in_memory_otps) > max_logs:
+        now_dt = datetime.now(timezone.utc)
+        expired_keys = [
+            k
+            for k, v in list(in_memory_otps.items())
+            if v.get("verified") or datetime.fromisoformat(v["expires_at"]) < now_dt
+        ]
+        for k in expired_keys:
+            in_memory_otps.pop(k, None)
 
 
 def check_db_status() -> Dict[str, str]:

@@ -22,7 +22,7 @@ class ExamService:
     )
 
     ANSWER_KEY_BLOCK_REGEX = re.compile(
-        r"(?:Đáp\s*án|Key|Answer|Lời\s*giải|Hướng\s*dẫn\s*giải)[:\s]*([A-D])",
+        r"(?:Đáp\s*án|Key|Answer)\s*:\s*([A-D])(?![A-Za-zÀ-ỹ])",
         re.IGNORECASE,
     )
 
@@ -483,9 +483,9 @@ class ExamService:
         detected_correct: Optional[str] = external_key.upper() if external_key else None
         explanation: Optional[str] = None
 
-        # Kiểm tra đáp án ghi chú cuối câu (VD: "Đáp án: A", "Key: B")
+        # Kiểm tra đáp án ghi chú cuối câu (VD: "Đáp án: A", "Key: B") — không ghi đè bảng đáp án cuối đề (H13)
         ans_match = self.ANSWER_KEY_BLOCK_REGEX.search(body)
-        if ans_match:
+        if ans_match and not detected_correct:
             detected_correct = ans_match.group(1).upper()
 
         # Kiểm tra phần lời giải

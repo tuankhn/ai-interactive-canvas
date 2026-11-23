@@ -399,7 +399,7 @@ class AIRecognitionService:
 
         provider_choice = (request.provider or "auto").lower()
 
-        # BƯỚC 2: Điều phối gọi API Gemini 2.5 Flash và Mathpix
+        # BƯỚC 2: Điều phối gọi API Gemini và Mathpix
         recognized_text = ""
         latex_formula = ""
         confidence = 0.96
@@ -409,6 +409,8 @@ class AIRecognitionService:
         visualization_dict: Optional[Dict[str, Any]] = None
         explanation: Optional[str] = None
         subject_details: Optional[Dict[str, Any]] = None
+        degraded_reason: Optional[str] = None
+        g_res = None
 
         # Task TF28522: Hỗ trợ nhận diện nhanh & chính xác >= 90% công thức chuẩn phổ thông
         if request.stroke_hint:
@@ -421,16 +423,39 @@ class AIRecognitionService:
         if provider_used == "curriculum-formula-engine":
             pass
         elif provider_choice == "mathpix":
-            # Ưu tiên Mathpix OCR chuyên công thức Toán
+            # Ưu tiên Mathpix OCR chuyên công thức Toán; nếu lỗi thật thì chuyển sang Gemini/mock (M8)
             m_res = await self.mathpix.recognize_latex(processed_b64, subject=subject_norm)
-            latex_formula = m_res.get("latex", "")
-            recognized_text = m_res.get("recognized_text", latex_formula)
-            confidence = m_res.get("confidence", 0.96)
-            provider_used = m_res.get("provider", "mathpix")
-            explanation = f"Công thức Toán học được nhận diện bằng {provider_used}."
-            visualization_dict = self._build_math_visualization(latex_formula)
+            if m_res.get("success", True):
+                latex_formula = m_res.get("latex", "")
+                recognized_text = m_res.get("recognized_text", latex_formula)
+                confidence = m_res.get("confidence", 0.96)
+                provider_used = m_res.get("provider", "mathpix")
+                explanation = f"Công thức Toán học được nhận diện bằng {provider_used}."
+                visualization_dict = self._build_math_visualization(latex_formula)
+            else:
+                degraded_reason = f"Mathpix error: {m_res.get('error', 'unavailable')}"
+                g_res = (
+                    await self.gemini.analyze_board(
+                        processed_b64,
+                        subject=subject_norm,
+                        grade_level=request.grade_level or "THPT",
+                    )
+                    if self.gemini.is_configured
+                    else self.gemini._mock_result(subject_norm, processed_b64, degraded_reason=degraded_reason)
+                )
+                recognized_text = g_res.recognized_text
+                latex_formula = g_res.latex or g_res.recognized_text
+                confidence = g_res.confidence
+                provider_used = (
+                    (self.gemini.model_name or settings.GEMINI_MODEL)
+                    if (self.gemini.is_configured and not g_res.degraded_reason)
+                    else "gemini-mock"
+                )
+                explanation = g_res.explanation
+                if g_res.visualization:
+                    visualization_dict = g_res.visualization.model_dump()
         elif provider_choice == "gemini":
-            # Ưu tiên Gemini 2.5 Flash đa phương thức
+            # Ưu tiên Gemini đa phương thức
             g_res = await self.gemini.analyze_board(
                 processed_b64,
                 subject=subject_norm,
@@ -439,7 +464,12 @@ class AIRecognitionService:
             recognized_text = g_res.recognized_text
             latex_formula = g_res.latex or g_res.recognized_text
             confidence = g_res.confidence
-            provider_used = "gemini-2.5-flash" if self.gemini.is_configured else "gemini-mock"
+            degraded_reason = getattr(g_res, "degraded_reason", None)
+            provider_used = (
+                (self.gemini.model_name or settings.GEMINI_MODEL)
+                if (self.gemini.is_configured and not degraded_reason)
+                else "gemini-mock"
+            )
             explanation = g_res.explanation
             if g_res.visualization:
                 visualization_dict = g_res.visualization.model_dump()
@@ -448,45 +478,59 @@ class AIRecognitionService:
                 suggestions = [s for t in g_res.ambiguous_tokens for s in t.suggestions]
 
         else:
-            # Chế độ tự động "auto": Hybrid chiến lược tối ưu
+            # Chế độ tự động "auto": Hybrid chiến lược tối ưu (M8: nếu Mathpix lỗi thì tự chuyển sang Gemini)
+            used_mathpix = False
             if self.mathpix.is_configured and subject_norm in ["TOAN", "MATH"]:
                 m_res = await self.mathpix.recognize_latex(processed_b64, subject=subject_norm)
-                latex_formula = m_res.get("latex", "")
-                recognized_text = m_res.get("recognized_text", latex_formula)
-                confidence = m_res.get("confidence", 0.96)
-                provider_used = "mathpix-ocr"
-                visualization_dict = self._build_math_visualization(latex_formula)
-                explanation = "Nhận diện công thức Toán học bằng Mathpix OCR chuyên sâu."
-            elif self.gemini.is_configured:
-                g_res = await self.gemini.analyze_board(
-                    processed_b64,
-                    subject=subject_norm,
-                    grade_level=request.grade_level or "THPT",
-                )
-                recognized_text = g_res.recognized_text
-                latex_formula = g_res.latex or g_res.recognized_text
-                confidence = g_res.confidence
-                provider_used = "gemini-2.5-flash"
-                explanation = g_res.explanation
-                if g_res.visualization:
-                    visualization_dict = g_res.visualization.model_dump()
-                if g_res.ambiguous_tokens:
-                    ambiguous_tokens = [t.model_dump() for t in g_res.ambiguous_tokens]
-                    suggestions = [s for t in g_res.ambiguous_tokens for s in t.suggestions]
-            else:
-                # Fallback thông minh kết hợp cả hai mô phỏng cho môi trường local/test
-                g_res = self.gemini._mock_result(subject_norm, processed_b64)
-                recognized_text = g_res.recognized_text
-                latex_formula = g_res.latex or g_res.recognized_text
-                confidence = g_res.confidence
-                provider_used = "hybrid-mock-engine"
-                explanation = g_res.explanation
-                if g_res.visualization:
-                    visualization_dict = g_res.visualization.model_dump()
+                if m_res.get("success", True):
+                    latex_formula = m_res.get("latex", "")
+                    recognized_text = m_res.get("recognized_text", latex_formula)
+                    confidence = m_res.get("confidence", 0.96)
+                    provider_used = "mathpix-ocr"
+                    visualization_dict = self._build_math_visualization(latex_formula)
+                    explanation = "Nhận diện công thức Toán học bằng Mathpix OCR chuyên sâu."
+                    used_mathpix = True
+                else:
+                    degraded_reason = f"Mathpix fallback: {m_res.get('error', 'error')}"
+
+            if not used_mathpix:
+                if self.gemini.is_configured:
+                    g_res = await self.gemini.analyze_board(
+                        processed_b64,
+                        subject=subject_norm,
+                        grade_level=request.grade_level or "THPT",
+                    )
+                    recognized_text = g_res.recognized_text
+                    latex_formula = g_res.latex or g_res.recognized_text
+                    confidence = g_res.confidence
+                    degraded_reason = getattr(g_res, "degraded_reason", None) or degraded_reason
+                    provider_used = (
+                        (self.gemini.model_name or settings.GEMINI_MODEL)
+                        if not getattr(g_res, "degraded_reason", None)
+                        else "hybrid-mock-engine"
+                    )
+                    explanation = g_res.explanation
+                    if g_res.visualization:
+                        visualization_dict = g_res.visualization.model_dump()
+                    if g_res.ambiguous_tokens:
+                        ambiguous_tokens = [t.model_dump() for t in g_res.ambiguous_tokens]
+                        suggestions = [s for t in g_res.ambiguous_tokens for s in t.suggestions]
+                else:
+                    # Fallback thông minh kết hợp cả hai mô phỏng cho môi trường local/test
+                    g_res = self.gemini._mock_result(
+                        subject_norm, processed_b64, degraded_reason=degraded_reason
+                    )
+                    recognized_text = g_res.recognized_text
+                    latex_formula = g_res.latex or g_res.recognized_text
+                    confidence = g_res.confidence
+                    provider_used = "hybrid-mock-engine"
+                    explanation = g_res.explanation
+                    if g_res.visualization:
+                        visualization_dict = g_res.visualization.model_dump()
 
         # Trích xuất subject_details nếu có
         if not subject_details:
-            subject_details = getattr(g_res, "subject_details", None) if 'g_res' in locals() else None
+            subject_details = getattr(g_res, "subject_details", None)
 
         # Task TF2850F: Tạo hình ảnh minh họa nét phấn trắng (Chalkboard Sketch)
         # khi giáo viên viết từ vựng Tiếng Anh hoặc khái niệm Sinh, Địa
@@ -555,6 +599,7 @@ class AIRecognitionService:
             explanation=explanation,
             subject_details=subject_details,
             illustration=illustration_dict,
+            degraded_reason=degraded_reason,
         )
 
     def _normalize_subject(self, subject: str) -> str:
@@ -575,6 +620,81 @@ class AIRecognitionService:
         return sub
 
 
+    @staticmethod
+    def _parse_quadratic_coefficients(expr: str) -> Optional[Tuple[float, float, float]]:
+        """Trích hệ số (a, b, c) từ hàm bậc hai dạng y = ax^2 + bx + c hoặc ax^2 + bx + c = 0."""
+        s = expr.replace("²", "^2").replace("**2", "^2").replace("−", "-")
+        if "=" in s:
+            lhs, rhs = s.split("=", 1)
+            lhs_s, rhs_s = lhs.strip(), rhs.strip()
+            if re.fullmatch(r"[yf](?:\s*\(\s*x\s*\))?", lhs_s, flags=re.IGNORECASE):
+                s = rhs_s
+            elif rhs_s == "0":
+                s = lhs_s
+        s = re.sub(r"\s+", "", s)
+        m_a = re.search(r"([+-]?\d*(?:\.\d+)?)?\*?x\^2", s, flags=re.IGNORECASE)
+        if not m_a:
+            return None
+        raw_a = m_a.group(1) or ""
+        if raw_a in ("", "+"):
+            a = 1.0
+        elif raw_a == "-":
+            a = -1.0
+        else:
+            try:
+                a = float(raw_a)
+            except ValueError:
+                return None
+        if a == 0:
+            return None
+
+        rest = (s[: m_a.start()] + s[m_a.end() :]).strip()
+        b = 0.0
+        m_b = re.search(r"([+-]?\d*(?:\.\d+)?)?\*?x(?![\^a-z0-9])", rest, flags=re.IGNORECASE)
+        if m_b:
+            raw_b = m_b.group(1) or ""
+            if raw_b in ("", "+"):
+                b = 1.0
+            elif raw_b == "-":
+                b = -1.0
+            else:
+                try:
+                    b = float(raw_b)
+                except ValueError:
+                    b = 0.0
+            rest = (rest[: m_b.start()] + rest[m_b.end() :]).strip()
+
+        c = 0.0
+        if rest:
+            try:
+                c = float(rest)
+            except ValueError:
+                return None
+        return (a, b, c)
+
+    @staticmethod
+    def _format_python_quadratic(a: float, b: float, c: float) -> str:
+        def _num(v: float) -> str:
+            return str(int(v)) if float(v).is_integer() else str(round(v, 4))
+
+        if a == 1:
+            lead = "x**2"
+        elif a == -1:
+            lead = "-x**2"
+        else:
+            lead = f"{_num(a)}*x**2"
+
+        parts = [lead]
+        if b != 0:
+            sign_b = "+" if b > 0 else "-"
+            abs_b = abs(b)
+            term_b = "x" if abs_b == 1 else f"{_num(abs_b)}*x"
+            parts.append(f"{sign_b} {term_b}")
+        if c != 0:
+            sign_c = "+" if c > 0 else "-"
+            parts.append(f"{sign_c} {_num(abs(c))}")
+        return " ".join(parts)
+
     def _build_math_visualization(self, latex: str) -> Optional[Dict[str, Any]]:
         """
         Tự động phân tích phương trình và tạo thông số vẽ đồ thị Plotly 2D tương tác.
@@ -584,8 +704,8 @@ class AIRecognitionService:
         clean_latex = (latex or "").strip()
         lower_latex = clean_latex.lower()
 
-        # 1. Hàm lượng giác: sin, cos, tan
-        if "\\sin" in lower_latex or "sin" in lower_latex:
+        # 1. Hàm lượng giác: sin, cos, tan (kiểm tra ranh giới từ tránh bắt nhầm)
+        if re.search(r"(?:\\|\b)sin\b", lower_latex):
             return {
                 "type": "2D_GRAPH",
                 "engine": "plotly",
@@ -598,7 +718,7 @@ class AIRecognitionService:
                 },
                 "latex_formula": clean_latex or "y = \\sin(x)",
             }
-        elif "\\cos" in lower_latex or "cos" in lower_latex:
+        elif re.search(r"(?:\\|\b)cos\b", lower_latex):
             return {
                 "type": "2D_GRAPH",
                 "engine": "plotly",
@@ -611,7 +731,7 @@ class AIRecognitionService:
                 },
                 "latex_formula": clean_latex or "y = \\cos(x)",
             }
-        elif "\\tan" in lower_latex or "tan" in lower_latex:
+        elif re.search(r"(?:\\|\b)tan\b", lower_latex):
             return {
                 "type": "2D_GRAPH",
                 "engine": "plotly",
@@ -638,8 +758,41 @@ class AIRecognitionService:
                 "latex_formula": clean_latex or "y = x^3 - 3x^2 + 2x - 1",
             }
 
-        # 3. Hàm số bậc nhất: y = ax + b (chứa x nhưng không chứa x^2 hay x^3)
-        elif ("x" in lower_latex) and not ("x^" in lower_latex or "x**" in lower_latex or "x²" in lower_latex):
+        # 3. Hàm số bậc hai tường minh (H4): trích hệ số thực từ x^2 / x**2 / x²
+        elif "x^2" in lower_latex or "x**2" in lower_latex or "x²" in lower_latex:
+            parsed_quad = self._parse_quadratic_coefficients(clean_latex)
+            if parsed_quad:
+                a, b, c = parsed_quad
+                fn_str = self._format_python_quadratic(a, b, c)
+                vx = round(-b / (2 * a), 4)
+                vy = round(a * vx * vx + b * vx + c, 4)
+                vx_out = int(vx) if float(vx).is_integer() else vx
+                vy_out = int(vy) if float(vy).is_integer() else vy
+                delta = b * b - 4 * a * c
+                roots: List[Any] = []
+                if delta > 0:
+                    r_left = (-b - (delta ** 0.5)) / (2 * a)
+                    r_right = (-b + (delta ** 0.5)) / (2 * a)
+                    ordered = sorted([r_left, r_right])
+                    roots = [int(r) if float(round(r, 6)).is_integer() else round(r, 4) for r in ordered]
+                elif delta == 0:
+                    roots = [vx_out]
+                return {
+                    "type": "2D_GRAPH",
+                    "engine": "plotly",
+                    "title": f"Đồ thị Parabol {clean_latex}",
+                    "parameters": {
+                        "function": fn_str,
+                        "x_range": [round(vx - 4, 2), round(vx + 4, 2)],
+                        "vertex": [vx_out, vy_out],
+                        "roots": roots,
+                        "degree": 2,
+                    },
+                    "latex_formula": clean_latex,
+                }
+
+        # 4. Hàm số bậc nhất: y = ax + b (biến x độc lập, không phải chữ cái trong từ)
+        elif re.search(r"(?<![a-z\\])x(?![a-z\^²³\*])", lower_latex):
             return {
                 "type": "2D_GRAPH",
                 "engine": "plotly",
@@ -654,7 +807,7 @@ class AIRecognitionService:
                 "latex_formula": clean_latex or "y = 2x + 1",
             }
 
-        # 4. Hàm số bậc hai (Parabol) mặc định: y = x^2 - 4x + 3
+        # 5. Fallback mặc định giữ nguyên hợp đồng 2D_GRAPH cho các bài kiểm thử hiện có
         return {
             "type": "2D_GRAPH",
             "engine": "plotly",

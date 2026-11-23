@@ -1,12 +1,18 @@
+import hashlib
+import hmac
+import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 import uuid
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from app.core.config import settings
 from app.core.database import (
+    in_memory_login_failures,
+    in_memory_otp_cooldowns,
     in_memory_otps,
     in_memory_refresh_sessions,
     in_memory_snapshots,
@@ -46,11 +52,100 @@ router = APIRouter(
     tags=["Authentication, 14-Day Session & Student/Parent RBAC (TF28514, TF28515)"],
 )
 
+logger = logging.getLogger(__name__)
+
 # Alias tương thích ngược cho các module cũ nếu có import OTP_STORE
 OTP_STORE = in_memory_otps
 
 MAX_OTP_ATTEMPTS = 5
+AUTH_FAILURE_WINDOW_SECONDS = 900
+MAX_LOCKOUT_SECONDS = 900
 VALID_SCHOOL_LEVELS = {"TIEU_HOC", "THCS", "THPT"}
+
+
+def get_client_ip(request: Optional[Request]) -> str:
+    if request is not None and getattr(request, "client", None) and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _rate_limit_keys(scope: str, identity: str, client_ip: str) -> List[str]:
+    norm_id = (identity or "").strip().lower() or "anonymous"
+    norm_ip = (client_ip or "unknown").strip().lower()
+    return [f"{scope}|id:{norm_id}|ip:{norm_ip}", f"{scope}|id:{norm_id}|ip:*"]
+
+
+def check_auth_rate_limit(scope: str, identity: str, client_ip: str = "unknown") -> None:
+    if not settings.LOGIN_RATE_LIMIT_ENABLED:
+        return
+    now_ts = time.monotonic()
+    for key in _rate_limit_keys(scope, identity, client_ip):
+        entry = in_memory_login_failures.get(key)
+        if not entry:
+            continue
+        locked_until = entry.get("locked_until", 0.0)
+        if locked_until > now_ts:
+            retry_after = max(1, int(locked_until - now_ts + 0.999))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Quá nhiều lần thử xác thực thất bại. Vui lòng thử lại sau {retry_after} giây.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+
+def record_auth_failure(scope: str, identity: str, client_ip: str = "unknown") -> None:
+    if not settings.LOGIN_RATE_LIMIT_ENABLED:
+        return
+    now_ts = time.monotonic()
+    max_attempts = max(1, int(settings.LOGIN_MAX_FAILED_ATTEMPTS))
+    base_lockout = max(1, int(settings.LOGIN_LOCKOUT_BASE_SECONDS))
+    for key in _rate_limit_keys(scope, identity, client_ip):
+        entry = in_memory_login_failures.get(key)
+        if not entry or (now_ts - entry.get("last_failed_at", now_ts)) > AUTH_FAILURE_WINDOW_SECONDS:
+            entry = {"count": 0, "locked_until": 0.0, "last_failed_at": now_ts}
+        entry["count"] = entry.get("count", 0) + 1
+        entry["last_failed_at"] = now_ts
+        if entry["count"] >= max_attempts:
+            exponent = min(6, entry["count"] - max_attempts)
+            backoff = min(MAX_LOCKOUT_SECONDS, base_lockout * (2 ** exponent))
+            entry["locked_until"] = now_ts + backoff
+        in_memory_login_failures[key] = entry
+
+
+def clear_auth_failures(scope: str, identity: str, client_ip: str = "unknown") -> None:
+    for key in _rate_limit_keys(scope, identity, client_ip):
+        in_memory_login_failures.pop(key, None)
+
+
+def _check_otp_request_cooldown(otp_key: str, client_ip: str) -> None:
+    if not settings.LOGIN_RATE_LIMIT_ENABLED:
+        return
+    cooldown_sec = max(0, int(settings.OTP_REQUEST_COOLDOWN_SECONDS))
+    if cooldown_sec <= 0:
+        return
+    now_ts = time.monotonic()
+    for cd_key in (otp_key, f"{otp_key}|ip:{client_ip}"):
+        last_ts = in_memory_otp_cooldowns.get(cd_key)
+        if last_ts is not None and (now_ts - last_ts) < cooldown_sec:
+            wait_sec = max(1, int(cooldown_sec - (now_ts - last_ts) + 0.999))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Vui lòng chờ {wait_sec} giây trước khi yêu cầu gửi lại mã OTP.",
+                headers={"Retry-After": str(wait_sec)},
+            )
+
+
+def _mark_otp_request_cooldown(otp_key: str, client_ip: str) -> None:
+    if not settings.LOGIN_RATE_LIMIT_ENABLED:
+        return
+    now_ts = time.monotonic()
+    in_memory_otp_cooldowns[otp_key] = now_ts
+    in_memory_otp_cooldowns[f"{otp_key}|ip:{client_ip}"] = now_ts
+
+
+def _clear_otp_request_cooldown(otp_key: str, client_ip: str) -> None:
+    in_memory_otp_cooldowns.pop(otp_key, None)
+    in_memory_otp_cooldowns.pop(f"{otp_key}|ip:{client_ip}", None)
 
 
 def _normalize_phone(phone: str) -> str:
@@ -101,6 +196,43 @@ def _revoke_all_user_sessions(user_id: str) -> int:
     return revoked_count
 
 
+def _find_existing_user(email: Optional[str], phone_number: str) -> Optional[Dict[str, Any]]:
+    norm_email = (email or "").strip().lower() or None
+    norm_phone = _normalize_phone(phone_number)
+    for user in in_memory_users.values():
+        user_email = (user.get("email") or "").strip().lower() or None
+        if (norm_email and user_email == norm_email) or user.get("phone_number") == norm_phone:
+            return user
+    return None
+
+
+def _validate_existing_user_for_otp(
+    existing: Optional[Dict[str, Any]],
+    *,
+    norm_email: Optional[str],
+    norm_phone: str,
+) -> None:
+    if not existing:
+        return
+    if existing.get("role") == "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản Quản trị viên không sử dụng luồng đăng nhập OTP phòng học.",
+        )
+    existing_email = (existing.get("email") or "").strip().lower() or None
+    existing_phone = existing.get("phone_number")
+    if norm_email and existing_email and existing_email != norm_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email và số điện thoại không khớp với tài khoản đã đăng ký.",
+        )
+    if existing_phone and existing_phone != norm_phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email và số điện thoại không khớp với tài khoản đã đăng ký.",
+        )
+
+
 def _find_or_create_teacher(
     *,
     email: Optional[str],
@@ -108,29 +240,26 @@ def _find_or_create_teacher(
     full_name: Optional[str] = None,
     password: Optional[str] = None,
     role: str = "TEACHER",
+    allow_password_set: bool = False,
 ) -> Dict[str, Any]:
     norm_email = (email or "").strip().lower() or None
     norm_phone = _normalize_phone(phone_number)
 
-    existing = None
-    for user in in_memory_users.values():
-        if (norm_email and user.get("email") == norm_email) or user.get("phone_number") == norm_phone:
-            existing = user
-            break
+    existing = _find_existing_user(norm_email, norm_phone)
 
     if existing:
         if not existing.get("is_active", True):
             return existing
-        if password:
+        if password and allow_password_set and not existing.get("password_hash") and existing.get("role") != "ADMIN":
             existing["password_hash"] = get_password_hash(password)
-        if full_name:
+        if full_name and existing.get("role") != "ADMIN":
             existing["full_name"] = full_name.strip()
-        if norm_email and not existing.get("email"):
+        if norm_email and not existing.get("email") and existing.get("role") != "ADMIN":
             existing["email"] = norm_email
         existing["updated_at"] = datetime.now(timezone.utc).isoformat()
         return existing
 
-    pw_hash = get_password_hash(password) if password else None
+    pw_hash = get_password_hash(password) if (password and allow_password_set) else None
     user_id = f"teacher_{uuid.uuid4().hex[:12]}" if role == "TEACHER" else f"user_{uuid.uuid4().hex[:12]}"
     user_record = {
         "id": user_id,
@@ -263,6 +392,59 @@ def get_current_user_from_header(authorization: Optional[str], required: bool = 
     }
 
 
+def create_snapshot_signature(snapshot_id: str, expires_epoch: int) -> str:
+    msg = f"snap:{snapshot_id}:{int(expires_epoch)}".encode("utf-8")
+    return hmac.new(settings.SECRET_KEY.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def verify_snapshot_signature(snapshot_id: str, expires_epoch: Optional[int], signature: Optional[str]) -> bool:
+    if not snapshot_id or not expires_epoch or not signature:
+        return False
+    try:
+        exp_int = int(expires_epoch)
+    except (TypeError, ValueError):
+        return False
+    if exp_int < int(datetime.now(timezone.utc).timestamp()):
+        return False
+    expected = create_snapshot_signature(snapshot_id, exp_int)
+    return hmac.compare_digest(expected, str(signature))
+
+
+def require_role(authorization: Optional[str], *allowed_roles: str) -> Optional[Dict[str, Any]]:
+    """
+    Kiểm tra vai trò theo khuôn `require_admin(authorization)` (không refactor sang Depends):
+    - Khi `settings.AUTH_ENFORCE == False` (mặc định log-only): nếu chưa có token thì ghi cảnh báo và cho phép;
+      nếu có token hợp lệ thì giải mã trả về user để các bước downstream dùng được danh tính.
+    - Khi `settings.AUTH_ENFORCE == True`: bắt buộc Bearer token hợp lệ và khớp một trong `allowed_roles`.
+    """
+    auth_str = authorization if isinstance(authorization, str) else None
+    normalized_roles = {r.upper() for r in allowed_roles if r}
+
+    if not auth_str:
+        if settings.AUTH_ENFORCE:
+            get_current_user_from_header(None, required=True)
+        logger.warning(
+            "AUTH_ENFORCE=false (log-only): cho phép request chưa đính kèm Bearer token (yêu cầu role=%s)",
+            sorted(normalized_roles) or ["ANY"],
+        )
+        return None
+
+    user = get_current_user_from_header(auth_str, required=True)
+    user_role = (user.get("role") or "").upper()
+    if normalized_roles and user_role not in normalized_roles:
+        if settings.AUTH_ENFORCE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Tài khoản vai trò '{user_role}' không đủ quyền thực hiện thao tác này (cần: {', '.join(sorted(normalized_roles))}).",
+            )
+        logger.warning(
+            "AUTH_ENFORCE=false (log-only): role=%s không nằm trong %s",
+            user_role,
+            sorted(normalized_roles),
+        )
+    return user
+
+
 def assert_user_can_access_class(
     user: Optional[Dict[str, Any]],
     *,
@@ -271,26 +453,51 @@ def assert_user_can_access_class(
 ) -> None:
     """
     Giới hạn Học sinh / Phụ huynh chỉ được xem bài của lớp mình học (TF28515).
-    Giáo viên và Admin có quyền truy cập toàn lớp được phân công.
+    N8: Khi bật AUTH_ENFORCE, Giáo viên cũng chỉ được thao tác trên các lớp thuộc `allowed_classes`.
     """
     if not user:
         return
     role = (user.get("role") or "").upper()
-    if role in ("TEACHER", "ADMIN"):
+    if role == "ADMIN":
         return
 
     allowed = {_normalize_class_name(c) for c in (user.get("allowed_classes") or []) if c}
+    if "*" in allowed:
+        return
+
+    is_teacher = role == "TEACHER"
+    if is_teacher and not settings.AUTH_ENFORCE:
+        if not allowed or (
+            requested_class_name and _normalize_class_name(requested_class_name) not in allowed
+        ):
+            logger.warning(
+                "AUTH_ENFORCE=false (log-only): TEACHER user_id=%s truy cập class=%s room=%s ngoài allowed_classes=%s",
+                user.get("user_id"),
+                requested_class_name,
+                requested_room_id,
+                sorted(allowed),
+            )
+        return
+
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tài khoản chưa được gán lớp học hợp lệ.",
+            detail=(
+                "Tài khoản Giáo viên chưa được Quản trị viên phân công lớp giảng dạy."
+                if is_teacher
+                else "Tài khoản chưa được gán lớp học hợp lệ."
+            ),
         )
 
     if requested_class_name:
         if _normalize_class_name(requested_class_name) not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Bạn chỉ được phép xem bài học của lớp mình học ({', '.join(sorted(allowed))}).",
+                detail=(
+                    f"Giáo viên chỉ được thao tác trên lớp được phân công ({', '.join(sorted(allowed))})."
+                    if is_teacher
+                    else f"Bạn chỉ được phép xem bài học của lớp mình học ({', '.join(sorted(allowed))})."
+                ),
             )
 
     if requested_room_id:
@@ -305,7 +512,7 @@ def assert_user_can_access_class(
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Không có quyền truy cập phòng học '{requested_room_id}' ngoài lớp của bạn.",
+                detail=f"Không có quyền truy cập phòng học '{requested_room_id}' ngoài lớp được phân quyền.",
             )
 
 
@@ -326,6 +533,7 @@ async def register_teacher(payload: TeacherRegisterRequest):
         full_name=payload.full_name,
         password=payload.password,
         role="TEACHER",
+        allow_password_set=True,
     )
     return UserOut(
         id=user["id"],
@@ -340,7 +548,7 @@ async def register_teacher(payload: TeacherRegisterRequest):
 
 @router.post("/request-otp", summary="Giáo viên nhập Email & SĐT để nhận mã OTP 6 số qua Email")
 @router.post("/teacher/request-otp", include_in_schema=False)
-async def request_otp(payload: RequestOTPRequest):
+async def request_otp(payload: RequestOTPRequest, request: Request):
     role = (payload.role or "TEACHER").upper()
     norm_phone = _normalize_phone(payload.phone_number)
     if role == "TEACHER" and not payload.email:
@@ -350,9 +558,31 @@ async def request_otp(payload: RequestOTPRequest):
         )
 
     norm_email = payload.email.strip().lower() if payload.email else None
-    code = generate_otp_code(6)
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=settings.OTP_EXPIRE_SECONDS)
+    existing_user = _find_existing_user(norm_email, norm_phone)
+    _validate_existing_user_for_otp(existing_user, norm_email=norm_email, norm_phone=norm_phone)
+
+    client_ip = get_client_ip(request)
     key = _otp_key(norm_email, norm_phone, purpose="LOGIN")
+    check_auth_rate_limit("verify_otp", key, client_ip)
+    _check_otp_request_cooldown(key, client_ip)
+
+    now_dt = datetime.now(timezone.utc)
+    existing_record = in_memory_otps.get(key)
+    preserved_attempts = 0
+    if (
+        existing_record
+        and not existing_record.get("verified")
+        and datetime.fromisoformat(existing_record["expires_at"]) > now_dt
+    ):
+        preserved_attempts = int(existing_record.get("attempts", 0))
+        if preserved_attempts >= MAX_OTP_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Bạn đã nhập sai OTP quá 5 lần. Vui lòng chờ mã hiện tại hết hạn trước khi yêu cầu mã mới.",
+            )
+
+    code = generate_otp_code(6)
+    expires_at = now_dt + timedelta(seconds=settings.OTP_EXPIRE_SECONDS)
 
     in_memory_otps[key] = {
         "otp_hash": hash_otp_code(code),
@@ -361,9 +591,10 @@ async def request_otp(payload: RequestOTPRequest):
         "role": role,
         "full_name": payload.full_name,
         "expires_at": expires_at.isoformat(),
-        "attempts": 0,
+        "attempts": preserved_attempts,
         "verified": False,
     }
+    _mark_otp_request_cooldown(key, client_ip)
 
     delivery = (
         send_otp_email(norm_email, code, payload.full_name or "Thầy/Cô Giáo Viên")
@@ -386,52 +617,87 @@ async def request_otp(payload: RequestOTPRequest):
 
 @router.post("/verify-otp", response_model=TokenResponse, summary="Xác thực OTP 6 số và giữ phiên 14 ngày trên thiết bị phòng học")
 @router.post("/teacher/verify-otp", response_model=TokenResponse, include_in_schema=False)
-async def verify_otp(payload: VerifyOTPRequest):
+async def verify_otp(payload: VerifyOTPRequest, request: Request):
     role = "TEACHER" if payload.email else "STUDENT"
     norm_email = payload.email.strip().lower() if payload.email else None
     norm_phone = _normalize_phone(payload.phone_number)
+    client_ip = get_client_ip(request)
     key = _otp_key(norm_email, norm_phone, purpose="LOGIN")
-    record = in_memory_otps.get(key)
+    check_auth_rate_limit("verify_otp", key, client_ip)
 
-    is_dev_demo_code = settings.APP_ENV != "production" and payload.otp_code.strip() == "123456"
+    existing_user = _find_existing_user(norm_email, norm_phone)
+    _validate_existing_user_for_otp(existing_user, norm_email=norm_email, norm_phone=norm_phone)
+
+    record = in_memory_otps.get(key)
+    can_use_dev_bypass = (
+        settings.APP_ENV != "production"
+        and settings.DEV_OTP_BYPASS
+        and existing_user is None
+        and payload.otp_code.strip() == "123456"
+    )
+    otp_verified_genuinely = False
 
     if record:
-        if record.get("verified") and not is_dev_demo_code:
+        if record.get("verified") and not can_use_dev_bypass:
+            record_auth_failure("verify_otp", key, client_ip)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Mã OTP này đã được sử dụng. Vui lòng yêu cầu mã OTP mới.",
             )
         if record.get("attempts", 0) >= MAX_OTP_ATTEMPTS:
+            record_auth_failure("verify_otp", key, client_ip)
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Bạn đã nhập sai OTP quá 5 lần. Vui lòng yêu cầu mã OTP mới.",
             )
-        if datetime.fromisoformat(record["expires_at"]) < datetime.now(timezone.utc) and not is_dev_demo_code:
+        is_expired = datetime.fromisoformat(record["expires_at"]) < datetime.now(timezone.utc)
+        if is_expired and not can_use_dev_bypass:
+            record_auth_failure("verify_otp", key, client_ip)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Mã OTP đã hết hạn. Vui lòng yêu cầu gửi lại mã mới.",
             )
-        if not verify_otp_hash(payload.otp_code, record["otp_hash"]) and not is_dev_demo_code:
+        hash_matches = not is_expired and not record.get("verified") and verify_otp_hash(payload.otp_code, record["otp_hash"])
+        if hash_matches:
+            otp_verified_genuinely = True
+            record["verified"] = True
+            role = record.get("role", role)
+        elif not can_use_dev_bypass:
             record["attempts"] = record.get("attempts", 0) + 1
+            record_auth_failure("verify_otp", key, client_ip)
+            if record["attempts"] >= MAX_OTP_ATTEMPTS:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Bạn đã nhập sai OTP quá 5 lần. Vui lòng yêu cầu mã OTP mới.",
+                )
             remaining = MAX_OTP_ATTEMPTS - record["attempts"]
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Mã OTP không chính xác (còn {remaining} lần thử).",
             )
-        record["verified"] = True
-        role = record.get("role", role)
-    elif not is_dev_demo_code:
+        else:
+            role = record.get("role", role)
+    elif not can_use_dev_bypass:
+        record_auth_failure("verify_otp", key, client_ip)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Chưa có yêu cầu OTP hoặc mã OTP đã hết hạn.",
         )
 
+    if role == "ADMIN":
+        role = "TEACHER"
+
+    clear_auth_failures("verify_otp", key, client_ip)
+    if otp_verified_genuinely:
+        _clear_otp_request_cooldown(key, client_ip)
+
     user = _find_or_create_teacher(
         email=norm_email,
         phone_number=norm_phone,
         full_name=payload.full_name or (record.get("full_name") if record else None),
-        password=payload.password,
+        password=payload.password if otp_verified_genuinely else None,
         role=role,
+        allow_password_set=otp_verified_genuinely,
     )
     if not user.get("is_active", True):
         raise HTTPException(
@@ -447,7 +713,7 @@ async def verify_otp(payload: VerifyOTPRequest):
 
 
 @router.post("/teacher/login-password", response_model=TokenResponse, summary="Đăng nhập Giáo viên bằng mật khẩu băm Argon2/BCrypt")
-async def teacher_login_password(payload: TeacherPasswordLoginRequest):
+async def teacher_login_password(payload: TeacherPasswordLoginRequest, request: Request):
     norm_email = payload.email.strip().lower() if payload.email else None
     norm_phone = _normalize_phone(payload.phone_number) if payload.phone_number else None
     if not norm_email and not norm_phone:
@@ -456,6 +722,10 @@ async def teacher_login_password(payload: TeacherPasswordLoginRequest):
             detail="Vui lòng nhập Email hoặc Số điện thoại.",
         )
 
+    client_ip = get_client_ip(request)
+    identity = norm_email or norm_phone or "unknown"
+    check_auth_rate_limit("teacher_pw", identity, client_ip)
+
     matched = None
     for user in in_memory_users.values():
         if (norm_email and user.get("email") == norm_email) or (norm_phone and user.get("phone_number") == norm_phone):
@@ -463,6 +733,7 @@ async def teacher_login_password(payload: TeacherPasswordLoginRequest):
             break
 
     if not matched or not matched.get("password_hash") or not verify_password(payload.password, matched["password_hash"]):
+        record_auth_failure("teacher_pw", identity, client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Thông tin đăng nhập hoặc mật khẩu không chính xác.",
@@ -474,6 +745,7 @@ async def teacher_login_password(payload: TeacherPasswordLoginRequest):
             detail="Tài khoản giáo viên đã bị Quản trị viên tạm khóa.",
         )
 
+    clear_auth_failures("teacher_pw", identity, client_ip)
     return _issue_session_tokens(
         matched,
         remember_me=payload.remember_me,
@@ -550,8 +822,11 @@ async def register_student_or_parent(payload: StudentParentRegisterRequest):
 
 
 @router.post("/student/login", response_model=TokenResponse, summary="TF28515: Đăng nhập Học sinh/Phụ huynh bằng SĐT & mật khẩu kèm phân quyền lớp")
-async def login_student_or_parent(payload: StudentParentLoginRequest):
+async def login_student_or_parent(payload: StudentParentLoginRequest, request: Request):
     norm_phone = _normalize_phone(payload.phone_number)
+    client_ip = get_client_ip(request)
+    check_auth_rate_limit("student_pw", norm_phone, client_ip)
+
     matched = None
     for user in in_memory_users.values():
         if user.get("phone_number") == norm_phone and user.get("role") in ("STUDENT", "PARENT"):
@@ -559,6 +834,7 @@ async def login_student_or_parent(payload: StudentParentLoginRequest):
             break
 
     if not matched or not matched.get("password_hash") or not verify_password(payload.password, matched["password_hash"]):
+        record_auth_failure("student_pw", norm_phone, client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Số điện thoại hoặc mật khẩu không chính xác.",
@@ -570,6 +846,7 @@ async def login_student_or_parent(payload: StudentParentLoginRequest):
             detail="Tài khoản đã bị Quản trị viên tạm khóa.",
         )
 
+    clear_auth_failures("student_pw", norm_phone, client_ip)
     return _issue_session_tokens(
         matched,
         remember_me=payload.remember_me,
@@ -579,8 +856,13 @@ async def login_student_or_parent(payload: StudentParentLoginRequest):
 
 
 @router.post("/forgot-password/request-otp", summary="TF28515: Yêu cầu mã OTP 6 số lấy lại mật khẩu qua SĐT")
-async def forgot_password_request_otp(payload: ForgotPasswordOTPRequest):
+async def forgot_password_request_otp(payload: ForgotPasswordOTPRequest, request: Request):
     norm_phone = _normalize_phone(payload.phone_number)
+    client_ip = get_client_ip(request)
+    key = _otp_key(None, norm_phone, purpose="RESET_PW")
+    check_auth_rate_limit("reset_otp", key, client_ip)
+    _check_otp_request_cooldown(key, client_ip)
+
     matched = None
     for user in in_memory_users.values():
         if user.get("phone_number") == norm_phone:
@@ -593,17 +875,32 @@ async def forgot_password_request_otp(payload: ForgotPasswordOTPRequest):
             detail="Không tìm thấy tài khoản nào đăng ký với số điện thoại này.",
         )
 
+    now_dt = datetime.now(timezone.utc)
+    existing_record = in_memory_otps.get(key)
+    preserved_attempts = 0
+    if (
+        existing_record
+        and not existing_record.get("verified")
+        and datetime.fromisoformat(existing_record["expires_at"]) > now_dt
+    ):
+        preserved_attempts = int(existing_record.get("attempts", 0))
+        if preserved_attempts >= MAX_OTP_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Đã vượt quá 5 lần nhập sai OTP. Vui lòng chờ mã hiện tại hết hạn trước khi yêu cầu mã mới.",
+            )
+
     code = generate_otp_code(6)
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=settings.OTP_EXPIRE_SECONDS)
-    key = _otp_key(None, norm_phone, purpose="RESET_PW")
+    expires_at = now_dt + timedelta(seconds=settings.OTP_EXPIRE_SECONDS)
     in_memory_otps[key] = {
         "otp_hash": hash_otp_code(code),
         "user_id": matched["id"],
         "phone_number": norm_phone,
         "expires_at": expires_at.isoformat(),
-        "attempts": 0,
+        "attempts": preserved_attempts,
         "verified": False,
     }
+    _mark_otp_request_cooldown(key, client_ip)
 
     resp: Dict[str, Any] = {
         "success": True,
@@ -617,23 +914,28 @@ async def forgot_password_request_otp(payload: ForgotPasswordOTPRequest):
 
 
 @router.post("/forgot-password/reset", summary="TF28515: Xác thực OTP và đặt lại mật khẩu mới (băm Argon2/BCrypt)")
-async def forgot_password_reset(payload: ResetPasswordOTPRequest):
+async def forgot_password_reset(payload: ResetPasswordOTPRequest, request: Request):
     norm_phone = _normalize_phone(payload.phone_number)
+    client_ip = get_client_ip(request)
     key = _otp_key(None, norm_phone, purpose="RESET_PW")
+    check_auth_rate_limit("reset_otp", key, client_ip)
     record = in_memory_otps.get(key)
     if not record or record.get("verified"):
+        record_auth_failure("reset_otp", key, client_ip)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Chưa có yêu cầu OTP khôi phục mật khẩu hoặc mã OTP đã được sử dụng.",
         )
 
     if record.get("attempts", 0) >= MAX_OTP_ATTEMPTS:
+        record_auth_failure("reset_otp", key, client_ip)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Đã vượt quá 5 lần nhập sai OTP. Vui lòng yêu cầu gửi lại mã mới.",
         )
 
     if datetime.fromisoformat(record["expires_at"]) < datetime.now(timezone.utc):
+        record_auth_failure("reset_otp", key, client_ip)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mã OTP khôi phục mật khẩu đã hết hạn.",
@@ -641,11 +943,20 @@ async def forgot_password_reset(payload: ResetPasswordOTPRequest):
 
     if not verify_otp_hash(payload.otp_code, record["otp_hash"]):
         record["attempts"] = record.get("attempts", 0) + 1
+        record_auth_failure("reset_otp", key, client_ip)
+        if record["attempts"] >= MAX_OTP_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Đã vượt quá 5 lần nhập sai OTP. Vui lòng yêu cầu gửi lại mã mới.",
+            )
         remaining = MAX_OTP_ATTEMPTS - record["attempts"]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Mã OTP không chính xác (còn {remaining} lần thử).",
         )
+
+    clear_auth_failures("reset_otp", key, client_ip)
+    _clear_otp_request_cooldown(key, client_ip)
 
     user = in_memory_users.get(record["user_id"])
     if not user:
@@ -712,8 +1023,13 @@ async def list_student_class_lessons(
             if q_low not in haystack:
                 continue
         enriched = dict(snap)
-        if not enriched.get("preview_url") and enriched.get("id"):
-            enriched["preview_url"] = f"/api/v1/sessions/snapshots/{enriched['id']}/image?format=webp"
+        if enriched.get("id"):
+            snap_exp = int(datetime.now(timezone.utc).timestamp()) + 300
+            snap_sig = create_snapshot_signature(enriched["id"], snap_exp)
+            enriched["signed_exp"] = snap_exp
+            enriched["signed_sig"] = snap_sig
+            if not enriched.get("preview_url"):
+                enriched["preview_url"] = f"/api/v1/sessions/snapshots/{enriched['id']}/image?format=webp"
         results.append(enriched)
 
     total_count = len(results)
