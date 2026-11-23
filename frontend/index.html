@@ -3,9 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#202d66">
+  <meta name="theme-color" content="#1e3a5f">
   <meta name="description" content="Bảng vẽ tương tác thông minh hỗ trợ giảng dạy với bút Stylus, hình học, quản lý trang và AI nhận diện công thức.">
   <title>Bảng vẽ thông minh tích hợp AI | AI Interactive Canvas</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231e3a5f'/%3E%3Cpath d='M8 22L14 10l4 7 3-4 3 9' stroke='%23ffffff' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./src/extensions/handwriting.css">
   <link rel="stylesheet" href="./src/extensions/molecule3d.css">
@@ -14,119 +18,202 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 </head>
-<body> 
-  <div class="app"> 
+<body>
+  <a href="#boardCanvas" class="skip-link">Chuyển tới vùng bảng vẽ</a>
+
+  <div class="app" id="appShell">
     <header class="topbar">
       <div class="class-meta">
-        <strong>Lớp <span id="className">10A1</span></strong>
-        <span class="session-meta">Phiên: <span id="sessionId">session-10a1</span> | Phòng: <span id="roomId">room-10a1</span></span>
+        <div class="brand-class-badge">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="14" rx="2.5"></rect>
+            <path d="M8 21h8M12 18v3M7 11l3-3 2.5 2.5L17 7"></path>
+          </svg>
+          <label for="classSelect" class="subject-label">Lớp <span id="className" class="sr-only">10A1</span></label>
+          <select id="classSelect" class="subject-select class-select" title="Chọn lớp giảng dạy cho phiên bảng thông minh">
+            <option value="10A1" selected>10A1</option>
+            <option value="10A2">10A2</option>
+            <option value="12A1">12A1</option>
+            <option value="8A2">8A2</option>
+            <option value="4A1">4A1</option>
+          </select>
+        </div>
+
         <div class="subject-wrapper">
-          <label for="subjectSelect" class="subject-label">Môn học:</label>
+          <label for="subjectSelect" class="subject-label">Môn học</label>
           <select id="subjectSelect" class="subject-select" title="Chọn môn học để AI nhận diện tối ưu">
             <option value="TOAN" selected>Toán học (LaTeX)</option>
-            <option value="VAT_LY">Vật lý (Công thức/Vector)</option>
-            <option value="HOA_HOC">Hóa học (Phương trình/Chất)</option>
-            <option value="TIENG_ANH">Tiếng Anh (Từ vựng/Minh họa)</option>
-            <option value="SINH_HOC">Sinh học (Quang hợp/Tế bào)</option>
-            <option value="DIA_LY">Địa lý (Núi lửa/Hệ Mặt Trời)</option>
+            <option value="VAT_LY">Vật lý (Công thức)</option>
+            <option value="HOA_HOC">Hóa học (Phân tử)</option>
+            <option value="TIENG_ANH">Tiếng Anh (Từ vựng)</option>
+            <option value="SINH_HOC">Sinh học (Khái niệm)</option>
+            <option value="DIA_LY">Địa lý (Bản đồ/Hệ MT)</option>
           </select>
-
         </div>
       </div>
+
       <div class="session-actions">
         <span class="offline-sync-badge" id="offlineSyncBadge" title="Số ảnh snapshot lưu tạm trong IndexedDB chờ đồng bộ" hidden></span>
-        <span class="teacher-session-pill" id="teacherSessionPill" hidden></span>
-        <button class="teacher-auth-btn" id="teacherAuthBtn" type="button" title="Đăng nhập Giáo viên qua OTP Email (duy trì 14 ngày)">Đăng nhập GV</button>
-        <button class="benchmark-btn" id="benchmarkBtn" type="button" title="Đo kiểm hiệu năng nét bút, thời gian AI và tính cô lập 2 lớp học (Task TF28522)">
-          ⚡ Đo hiệu năng <span class="fps-pill" id="benchmarkFpsValue">60 FPS</span>
-        </button>
         <span class="ai-status-indicator" id="aiStatusIndicator" title="Trạng thái kết nối AI">AI: Sẵn sàng</span>
-        <span class="timer" id="sessionTimer">Đang diễn ra 00:00</span>
+        <span class="timer" id="sessionTimer" title="Thời lượng tiết học hiện tại">Đang diễn ra 00:00</span>
+
+        <button
+          class="topbar-btn topbar-btn-subtle"
+          id="toggleStudentsBtn"
+          type="button"
+          aria-controls="studentsPanel"
+          aria-expanded="true"
+          title="Đóng hoặc mở bảng danh sách học sinh và cộng điểm thưởng"
+        >
+          <span>Học sinh</span>
+        </button>
+
+        <button
+          class="topbar-btn topbar-btn-subtle"
+          id="systemMenuBtn"
+          type="button"
+          popovertarget="systemInfoPopover"
+          aria-haspopup="dialog"
+          title="Thông tin phòng học, đo hiệu năng và lối tắt cổng hệ thống"
+        >
+          <span>Hệ thống</span>
+        </button>
+
+        <span class="teacher-session-pill" id="teacherSessionPill" hidden></span>
+        <button class="topbar-btn teacher-auth-btn" id="teacherAuthBtn" type="button" title="Đăng nhập Giáo viên qua OTP Email (duy trì 14 ngày)">Đăng nhập GV</button>
         <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
       </div>
     </header>
 
-    <div class="workspace">
-      <aside class="toolbar" id="toolbar" aria-label="Thanh công cụ vẽ">
-        <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" aria-pressed="true" title="Bút vẽ cảm ứng Stylus">Bút</button>
-        <button class="tool-button" id="highlighterTool" type="button" data-tool="highlighter" aria-pressed="false" title="Bút dạ quang">Dạ quang</button>
-        <button class="tool-button" id="eraserMenu" type="button" aria-controls="eraserOptions" aria-expanded="false" title="Tùy chọn tẩy">Tẩy</button>
-        <button class="tool-button" id="shapeMenu" type="button" aria-controls="shapeOptions" aria-expanded="false" title="Chọn hình học">Hình</button>
-        <button class="tool-button" id="rulerTool" type="button" data-tool="ruler" aria-pressed="false" title="Thước kẻ ảo theo pixel">Thước</button>
-        <button class="tool-button" id="textTool" type="button" data-tool="text" aria-pressed="false" title="Thêm chữ">Chữ</button>
-        <button class="tool-button" id="handwritingTool" type="button" aria-pressed="false" title="Khoanh vùng chữ viết tay để chuyển thành văn bản hoặc LaTeX">Chuyển chữ</button>
-        <button class="tool-button" id="colorMenu" type="button" aria-controls="colorOptions" aria-expanded="false" title="Màu sắc và độ dày nét">Màu</button>
-        
-        <div class="toolbar-divider" role="separator" aria-hidden="true"></div>
-        
-        <!-- Nút kích hoạt nhận diện AI thủ công & Bật/Tắt tự động Debounce 800ms -->
-        <button class="tool-button tool-ai" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini 2.5 Flash / Mathpix) bóc tách công thức">Nhận diện AI</button>
-        <button class="tool-button tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét vẽ phấn trắng từ vựng và khái niệm (Task TF2850F)">Minh họa AI</button>
-        <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
-        <button class="tool-button tool-quiz" id="quizBoardToggleBtn" type="button" title="Hiển thị đề trắc nghiệm lên bảng và bắt nét khoanh đáp án A, B, C, D (Task TF28518)">Trắc nghiệm</button>
-        <button class="tool-button tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích các phương án gây nhiễu (Task TF28519)">Chấm trắc nghiệm</button>
-        <button class="tool-button tool-essay" id="gradeEssayBtn" type="button" title="AI chấm bài giải tự luận từng dòng viết tay, tích xanh bước đúng, gạch chân đỏ dòng sai và gợi ý không lộ đáp án (Task TF2851A)">Chấm tự luận AI</button>
-        <button class="tool-button tool-variant" id="aiVariantBtn" type="button" title="AI tạo bài tập tương tự (đổi số liệu) hoặc nâng cao độ khó cho học sinh khá giỏi (Task TF2851B)">Đổi đề AI</button>
-        <button class="tool-button tool-auto-ai is-active" id="autoAiToggle" type="button" data-auto="true" title="Bật/Tắt tự động nhận diện AI sau khi dừng bút 800ms">Tự động: BẬT</button>
+    <!-- Popover thông tin kỹ thuật phiên học, đo hiệu năng & lối tắt cổng phụ -->
+    <div id="systemInfoPopover" class="system-popover" popover="auto" role="region" aria-label="Thông tin phiên học và công cụ hệ thống">
+      <div class="system-popover-section">
+        <span class="system-popover-heading">Thông tin phòng học</span>
+        <p class="session-meta">Phiên: <code id="sessionId">session-10a1</code> · Phòng: <code id="roomId">room-10a1</code></p>
+      </div>
+      <div class="system-popover-section">
+        <span class="system-popover-heading">Vị trí thanh công cụ (Tablet / Bảng cảm ứng)</span>
+        <div class="toolbar-dock-switcher" role="group" aria-label="Chọn vị trí thanh công cụ vừa tầm tay">
+          <button type="button" class="dock-option-btn is-active" data-toolbar-dock="left" aria-pressed="true">Bên trái</button>
+          <button type="button" class="dock-option-btn" data-toolbar-dock="bottom" aria-pressed="false">Cạnh dưới</button>
+          <button type="button" class="dock-option-btn" data-toolbar-dock="right" aria-pressed="false">Bên phải</button>
+        </div>
+      </div>
+      <div class="system-popover-section">
+        <span class="system-popover-heading">Kiểm chuẩn kỹ thuật</span>
+        <button class="benchmark-btn" id="benchmarkBtn" type="button" title="Đo kiểm hiệu năng nét bút, thời gian AI và tính cô lập 2 lớp học (Task TF28522)">
+          <span>Đo hiệu năng &amp; Cô lập</span>
+          <span class="fps-pill" id="benchmarkFpsValue">60 FPS</span>
+        </button>
+      </div>
+      <div class="system-popover-section">
+        <span class="system-popover-heading">Cổng liên kết trong hệ sinh thái</span>
+        <div class="portal-shortcut-links">
+          <a href="./src/pages/student_portal.html" target="_blank" rel="noopener">Cổng Ôn tập HS / PH</a>
+          <a href="./src/pages/admin.html" target="_blank" rel="noopener">Cổng Quản trị Admin</a>
+        </div>
+      </div>
+    </div>
 
-        
-        <div class="toolbar-divider" role="separator" aria-hidden="true"></div>
+    <div class="workspace" id="workspaceGrid">
+      <aside
+        class="toolbar"
+        id="toolbar"
+        role="toolbar"
+        aria-orientation="vertical"
+        aria-controls="boardCanvas"
+        focusgroup="toolbar wrap block"
+        aria-label="Thanh công cụ vẽ và trợ lý AI"
+      >
+        <div class="tool-group" role="group" aria-label="Công cụ vẽ và hình học">
+          <span class="tool-group-label" aria-hidden="true">Bút &amp; Hình</span>
+          <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" aria-pressed="true" title="Bút vẽ cảm ứng Stylus">Bút</button>
+          <button class="tool-button" id="highlighterTool" type="button" data-tool="highlighter" aria-pressed="false" title="Bút dạ quang">Dạ quang</button>
+          <button class="tool-button" id="eraserMenu" type="button" aria-controls="eraserOptions" aria-expanded="false" title="Tùy chọn tẩy">Tẩy</button>
+          <button class="tool-button" id="shapeMenu" type="button" aria-controls="shapeOptions" aria-expanded="false" title="Chọn hình học 2D &amp; 3D">Hình học</button>
+          <button class="tool-button" id="rulerTool" type="button" data-tool="ruler" aria-pressed="false" title="Thước kẻ ảo theo pixel">Thước</button>
+          <button class="tool-button" id="colorMenu" type="button" aria-controls="colorOptions" aria-expanded="false" title="Màu sắc, độ dày nét và nền bảng">Màu &amp; Nét</button>
+          <button class="tool-button" id="textTool" type="button" data-tool="text" aria-pressed="false" title="Thêm khung chữ lên bảng">Chữ</button>
+          <button class="tool-button" id="handwritingTool" type="button" aria-pressed="false" title="Khoanh vùng chữ viết tay để chuyển thành văn bản hoặc LaTeX">Chuyển chữ</button>
+        </div>
 
-        <button class="tool-button" id="undoButton" type="button" title="Hoàn tác (Ctrl + Z)">Hoàn tác</button>
-        <button class="tool-button" id="redoButton" type="button" title="Làm lại (Ctrl + Y)">Làm lại</button>
-        <button class="tool-button" id="captureButton" type="button" title="Lưu hình PNG">Chụp</button>
-        <button class="tool-button tool-danger" id="clearButton" type="button" title="Xóa tất cả trên trang hiện tại">Xóa bảng</button>
+        <div class="toolbar-divider" role="separator" aria-orientation="horizontal"></div>
+
+        <!-- Nút kích hoạt nhận diện AI thủ công & Bật/Tắt tự động nhận diện khi dừng viết -->
+        <div class="tool-group" role="group" aria-label="Trợ lý AI và kiểm tra đánh giá">
+          <span class="tool-group-label" aria-hidden="true">Trợ lý AI</span>
+          <button class="tool-button tool-ai tool-span-2" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini / Mathpix) bóc tách công thức">Nhận diện AI</button>
+          <button class="tool-button tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét vẽ phấn trắng từ vựng và khái niệm (Task TF2850F)">Minh họa</button>
+          <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
+          <button class="tool-button tool-quiz" id="quizBoardToggleBtn" type="button" title="Hiển thị đề trắc nghiệm lên bảng và bắt nét khoanh đáp án A, B, C, D (Task TF28518)">Trắc nghiệm</button>
+          <button class="tool-button tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích các phương án gây nhiễu (Task TF28519)">Chấm TN</button>
+          <button class="tool-button tool-essay" id="gradeEssayBtn" type="button" title="AI chấm bài giải tự luận từng dòng viết tay, tích xanh bước đúng, gạch chân đỏ dòng sai và gợi ý không lộ đáp án (Task TF2851A)">Tự luận AI</button>
+          <button class="tool-button tool-variant" id="aiVariantBtn" type="button" title="AI tạo bài tập tương tự (đổi số liệu) hoặc nâng cao độ khó cho học sinh khá giỏi (Task TF2851B)">Đổi đề AI</button>
+          <button class="tool-button tool-auto-ai tool-span-2" id="autoAiToggle" type="button" data-auto="false" aria-pressed="false" title="Bật/Tắt tự động nhận diện AI sau khi ngừng viết bút 1.8 giây (mặc định TẮT để vẽ tự do)">Tự động: TẮT</button>
+        </div>
+
+        <div class="toolbar-divider" role="separator" aria-orientation="horizontal"></div>
+
+        <div class="tool-group" role="group" aria-label="Thao tác bảng">
+          <span class="tool-group-label" aria-hidden="true">Thao tác</span>
+          <button class="tool-button" id="undoButton" type="button" title="Hoàn tác (Ctrl + Z)">Hoàn tác</button>
+          <button class="tool-button" id="redoButton" type="button" title="Làm lại (Ctrl + Y)">Làm lại</button>
+          <button class="tool-button" id="captureButton" type="button" title="Lưu ảnh chụp bảng PNG">Chụp bảng</button>
+          <button class="tool-button tool-danger" id="clearButton" type="button" title="Xóa tất cả trên trang hiện tại">Xóa bảng</button>
+        </div>
 
         <section class="tool-popover" id="eraserOptions" aria-label="Chọn loại tẩy" hidden>
           <h3>Công cụ tẩy</h3>
-          <p class="popover-help">Chọn kiểu tẩy rồi thao tác trên bảng.</p>
+          <p class="popover-help">Chọn kiểu tẩy rồi chạm hoặc kéo trên mặt bảng.</p>
           <div class="popover-grid">
-            <button class="option-button" id="eraserTool" type="button" data-tool="eraser" aria-pressed="false">Tẩy nét</button>
-            <button class="option-button" id="areaEraserTool" type="button" data-tool="areaEraser" aria-pressed="false">Tẩy vùng</button>
+            <button class="option-button" id="eraserTool" type="button" data-tool="eraser" aria-pressed="false">Tẩy từng nét</button>
+            <button class="option-button" id="areaEraserTool" type="button" data-tool="areaEraser" aria-pressed="false">Tẩy khoanh vùng</button>
           </div>
         </section>
 
         <section class="tool-popover" id="shapeOptions" aria-label="Chọn hình học" hidden>
-          <h3>Hình học</h3>
+          <h3>Hình học phẳng &amp; 3D</h3>
           <div class="popover-grid">
             <button class="option-button" id="lineTool" type="button" data-tool="line" aria-pressed="false">Đoạn thẳng</button>
             <button class="option-button" id="triangleTool" type="button" data-tool="triangle" aria-pressed="false">Tam giác</button>
             <button class="option-button" id="circleTool" type="button" data-tool="circle" aria-pressed="false">Hình tròn</button>
             <button class="option-button" id="ellipseTool" type="button" data-tool="ellipse" aria-pressed="false">Hình elip</button>
-            <button class="option-button" id="geometry3dTool" type="button" aria-expanded="false">Hình học 3D</button>
+            <button class="option-button" id="geometry3dTool" type="button" aria-expanded="false">Hình học không gian 3D</button>
           </div>
         </section>
 
         <section class="tool-popover color-popover" id="colorOptions" aria-label="Tùy chọn màu và nét" hidden>
-          <h3>Nét vẽ &amp; màu sắc</h3>
-          <label for="colorPicker" class="control-label">Chọn màu</label>
-          <input id="colorPicker" type="color" value="#172554">
+          <h3>Màu mực, độ dày &amp; nền bảng</h3>
+          <div class="color-picker-row">
+            <label for="colorPicker" class="control-label">Màu tùy chỉnh</label>
+            <input id="colorPicker" type="color" value="#172554">
+          </div>
           <div class="color-palette" role="group" aria-label="Bảng màu nhanh">
-            <button type="button" class="swatch is-selected" data-color="#172554" style="background:#172554" aria-label="Xanh đậm"></button>
-            <button type="button" class="swatch" data-color="#ffffff" style="background:#ffffff" aria-label="Trắng"></button>
-            <button type="button" class="swatch" data-color="#dc2626" style="background:#dc2626" aria-label="Đỏ"></button>
-            <button type="button" class="swatch" data-color="#16a34a" style="background:#16a34a" aria-label="Xanh lá"></button>
-            <button type="button" class="swatch" data-color="#ca8a04" style="background:#ca8a04" aria-label="Vàng đậm"></button>
-            <button type="button" class="swatch" data-color="#0284c7" style="background:#0284c7" aria-label="Xanh dương"></button>
-            <button type="button" class="swatch" data-color="#9333ea" style="background:#9333ea" aria-label="Tím"></button>
+            <button type="button" class="swatch swatch-navy is-selected" data-color="#172554" aria-label="Xanh mực đậm"></button>
+            <button type="button" class="swatch swatch-white" data-color="#ffffff" aria-label="Phấn trắng"></button>
+            <button type="button" class="swatch swatch-red" data-color="#dc2626" aria-label="Đỏ nhấn mạnh"></button>
+            <button type="button" class="swatch swatch-green" data-color="#15803d" aria-label="Xanh lá"></button>
+            <button type="button" class="swatch swatch-amber" data-color="#b45309" aria-label="Vàng hổ phách"></button>
+            <button type="button" class="swatch swatch-blue" data-color="#0369a1" aria-label="Xanh lam"></button>
+            <button type="button" class="swatch swatch-slate" data-color="#334155" aria-label="Xám than"></button>
           </div>
           <div class="range-row">
-            <label for="widthRange" class="control-label">Độ dày nét</label>
-            <span id="widthValue">4 px</span>
+            <label for="widthRange" class="control-label">Độ dày nét bút</label>
+            <span id="widthValue" class="width-value-pill">4 px</span>
           </div>
-          <input id="widthRange" type="range" min="1" max="24" value="4">
+          <input id="widthRange" class="width-range" type="range" min="1" max="24" value="4">
           <div class="width-presets" role="group" aria-label="Độ dày thông dụng">
-            <button type="button" class="is-selected" data-width="4">4</button>
-            <button type="button" data-width="8">8</button>
-            <button type="button" data-width="14">14</button>
-            <button type="button" data-width="24">24</button>
+            <button type="button" class="is-selected" data-width="4">4 px</button>
+            <button type="button" data-width="8">8 px</button>
+            <button type="button" data-width="14">14 px</button>
+            <button type="button" data-width="24">24 px</button>
           </div>
-          <span class="control-label">Màu nền bảng</span>
+          <span class="control-label">Chế độ mặt bảng</span>
           <div class="background-options" role="group" aria-label="Chọn nền bảng">
             <button type="button" class="background-button is-selected" data-background="#ffffff" aria-pressed="true">Bảng trắng</button>
-            <button type="button" class="background-button" data-background="#111827" aria-pressed="false">Bảng đen</button>
+            <button type="button" class="background-button" data-background="#111827" aria-pressed="false">Bảng phấn đen</button>
           </div>
-          <p class="popover-help">Có thể đổi nền ngay cả khi đã vẽ.</p>
+          <p class="popover-help">Tự động chuyển màu mực tương phản khi đổi nền bảng.</p>
         </section>
       </aside>
 
@@ -135,16 +222,15 @@
           <div class="canvas-stage" id="canvasStage">
             <canvas id="boardCanvas" aria-label="Vùng vẽ"></canvas>
             <canvas id="previewCanvas" class="preview-canvas" aria-hidden="true"></canvas>
-            <div class="canvas-hint" id="canvasHint">Vùng vẽ cảm ứng (Smartboard Canvas)</div>
+            <div class="canvas-hint" id="canvasHint">Chạm bút hoặc kéo chuột để bắt đầu viết bài giảng</div>
             <div id="latencyStatus" class="latency-badge" title="Ước tính thời gian từ khi xử lý sự kiện bút/chuột đến khi hoàn thành vẽ khung hình">Độ trễ vẽ: -- ms</div>
 
             <!-- BẢNG OVERLAY HIỂN THỊ KẾT QUẢ NHẬN DIỆN AI TRÊN MẶT BẢNG (TASK TF28509) -->
             <section id="aiOverlayPanel" class="ai-overlay-panel" hidden aria-label="Bảng kết quả nhận diện AI">
               <div class="ai-panel-header">
                 <div class="ai-title-group">
-                  <span class="ai-sparkle-icon">✨</span>
-                  <strong id="aiPanelTitle">AI Nhận Diện Nét Viết</strong>
-                  <span id="aiProviderBadge" class="ai-provider-badge">Gemini 2.5 Flash</span>
+                  <strong id="aiPanelTitle">Kết quả Nhận diện AI</strong>
+                  <span id="aiProviderBadge" class="ai-provider-badge">Gemini AI</span>
                 </div>
                 <div class="ai-meta-group">
                   <span id="aiConfidenceBadge" class="ai-badge ai-badge-confidence" title="Độ tin cậy">--%</span>
@@ -155,16 +241,16 @@
               <div class="ai-panel-body">
                 <div id="aiLoadingIndicator" class="ai-loading" hidden>
                   <div class="ai-spinner" aria-hidden="true"></div>
-                  <span>Đang gửi ảnh nét vẽ lên AI (Debounce 800ms)...</span>
+                  <span>Đang phân tích nét viết (Debounce 800ms)...</span>
                 </div>
                 <div id="aiResultContent" class="ai-result-content">
-                  <div class="ai-formula-title">Công thức LaTeX nhận diện:</div>
+                  <div class="ai-formula-title">Công thức LaTeX nhận diện</div>
                   <div id="aiLatexBox" class="ai-latex-box" aria-live="polite">
                     <div id="aiLatexRendered" class="ai-latex-rendered">Chưa có kết quả</div>
                     <code id="aiLatexRaw" class="ai-latex-raw">--</code>
                   </div>
                   <div id="aiExplanationBox" class="ai-explanation-box"></div>
-                  
+
                   <!-- Khung hiển thị hình minh họa nét phấn trắng AI (Task TF2850F) -->
                   <div id="aiIllustrationBox" class="ai-illustration-box" hidden>
                     <div class="ai-illustration-head">
@@ -183,14 +269,14 @@
                       <strong id="aiGraphTitle" class="ai-graph-title">Đồ thị hàm số</strong>
                     </div>
                     <div id="aiGraphDesc" class="ai-graph-desc">Hàm số toán học đã sẵn sàng dựng đồ thị tương tác dưới 3 giây.</div>
-                    <button id="openGraphBtn" class="ai-btn ai-btn-graph" type="button" title="Mở đồ thị tương tác 2D Plotly từ công thức">📈 Mở đồ thị tương tác 2D (&lt; 3s)</button>
+                    <button id="openGraphBtn" class="ai-btn ai-btn-graph" type="button" title="Mở đồ thị tương tác 2D Plotly từ công thức">Mở đồ thị tương tác 2D (&lt; 3s)</button>
                   </div>
                 </div>
               </div>
 
               <div class="ai-panel-footer">
-                <button id="insertToBoardBtn" class="ai-btn ai-btn-primary" type="button" title="Chèn văn bản / công thức nhận diện trực tiếp vào vị trí bảng">Chèn vào mặt bảng</button>
                 <button id="reRecognizeBtn" class="ai-btn ai-btn-secondary" type="button" title="Gửi lại ảnh nét vẽ nhận diện">Nhận diện lại</button>
+                <button id="insertToBoardBtn" class="ai-btn ai-btn-primary" type="button" title="Chèn văn bản / công thức nhận diện trực tiếp vào vị trí bảng">Chèn vào mặt bảng</button>
               </div>
             </section>
           </div>
@@ -201,9 +287,16 @@
         </div>
       </main>
 
-      <aside class="students" aria-label="Danh sách học sinh và cộng điểm thưởng">
+      <aside class="students" id="studentsPanel" aria-label="Danh sách học sinh và cộng điểm thưởng">
         <div class="students-head">
           <h2>Học sinh · <span id="sidebarClassName">10A1</span></h2>
+          <button
+            type="button"
+            id="closeStudentsDrawerBtn"
+            class="students-close-btn"
+            aria-label="Thu gọn bảng học sinh"
+            title="Thu gọn bảng học sinh để mở rộng vùng viết"
+          >✕</button>
         </div>
 
         <div class="score-step-group" role="group" aria-label="Chọn mức điểm thưởng mỗi lần chạm">
@@ -215,17 +308,17 @@
 
         <search class="student-search-box">
           <label for="studentSearchInput" class="sr-only">Tìm học sinh theo tên hoặc mã</label>
-          <input id="studentSearchInput" name="student_q" type="search" placeholder="Tìm tên hoặc mã HS..." autocomplete="off">
+          <input id="studentSearchInput" name="student_q" type="search" placeholder="Tìm tên hoặc mã học sinh..." autocomplete="off">
         </search>
 
         <label class="student-snap-check" for="attachSnapshotOnScore">
           <input id="attachSnapshotOnScore" type="checkbox" checked>
-          <span>Đính kèm ảnh bảng vào DB</span>
+          <span>Lưu kèm ảnh bài làm trên bảng</span>
         </label>
 
         <div class="student-reason-wrap">
           <label for="bonusScoreReasonInput" class="sr-only">Lý do cộng điểm</label>
-          <input id="bonusScoreReasonInput" type="text" maxlength="120" value="Làm bài tốt trên bảng" placeholder="Lý do cộng điểm...">
+          <input id="bonusScoreReasonInput" type="text" maxlength="120" value="Làm bài tốt trên bảng" placeholder="Ghi chú lý do cộng điểm...">
         </div>
 
         <div id="studentList" aria-live="polite">
@@ -235,18 +328,18 @@
         <p id="studentScoreStatus" class="score-sidebar-status" role="status" aria-live="polite">Chạm vào tên học sinh để cộng điểm.</p>
 
         <details class="add-student-details">
-          <summary>+ Thêm học sinh vào lớp</summary>
+          <summary>+ Thêm học sinh mới vào lớp</summary>
           <form id="addStudentRosterForm" class="add-student-form">
             <label for="newStudentNameInput" class="sr-only">Họ tên học sinh</label>
-            <input id="newStudentNameInput" name="full_name" type="text" required minlength="2" placeholder="Họ tên học sinh">
+            <input id="newStudentNameInput" name="full_name" type="text" required minlength="2" placeholder="Họ và tên học sinh">
             <label for="newStudentCodeInput" class="sr-only">Mã học sinh</label>
             <input id="newStudentCodeInput" name="student_code" type="text" placeholder="Mã HS (tuỳ chọn)">
-            <button type="submit" class="add-student-submit">Thêm vào lớp</button>
+            <button type="submit" class="add-student-submit">Lưu vào danh sách lớp</button>
           </form>
         </details>
 
         <section class="score-history-section" aria-label="Lịch sử cộng điểm gần đây">
-          <h3>Lịch sử điểm gần đây</h3>
+          <h3>Lịch sử cộng điểm</h3>
           <ul id="scoreHistoryList" class="score-history-list"></ul>
         </section>
       </aside>
@@ -254,13 +347,13 @@
 
     <footer class="footer">
       <div class="pagination" aria-label="Quản lý các trang bảng">
-        <button id="prevPage" type="button" aria-label="Trang trước" title="Trang trước">&lt;</button>
+        <button id="prevPage" type="button" aria-label="Trang trước" title="Trang trước">&lsaquo;</button>
         <span id="pageIndicator" aria-live="polite">Trang 1 / 1</span>
-        <button id="nextPage" type="button" aria-label="Trang sau" title="Trang sau">&gt;</button>
+        <button id="nextPage" type="button" aria-label="Trang sau" title="Trang sau">&rsaquo;</button>
         <button id="addPageButton" class="add-page-button" type="button" title="Thêm trang bảng mới">+ Thêm trang</button>
         <button id="deletePageButton" class="delete-page-button" type="button" title="Xóa trang hiện tại (không xóa các trang khác)" aria-label="Xóa trang hiện tại">Xóa trang</button>
       </div>
-      <span class="footer-status" id="footerStatus">Trạng thái: Sẵn sàng kết nối Backend API (/api/v1/recognize)</span>
+      <span class="footer-status" id="footerStatus">Sẵn sàng kết nối máy chủ</span>
     </footer>
   </div>
 
@@ -289,10 +382,11 @@
   </dialog>
 
   <dialog id="illustrateDialog" class="clear-dialog" aria-labelledby="illustrateDialogTitle">
-    <h2 id="illustrateDialogTitle">🎨 AI Tạo hình minh họa nét phấn trắng</h2>
+    <h2 id="illustrateDialogTitle">AI Tạo hình minh họa nét phấn trắng</h2>
     <p>Nhập từ vựng Tiếng Anh hoặc khái niệm Sinh học, Địa lý (như <strong>Photosynthesis, Solar System, Volcano, Cell, Heart, Apple...</strong>) để AI tạo hình minh họa nét phấn trắng và đặt cạnh từ vựng trên bảng vẽ:</p>
-    <div style="margin: 14px 0;">
-      <input id="illustrateInput" type="text" style="width:100%;box-sizing:border-box;padding:10px 14px;border-radius:6px;border:1px solid #cbd5e1;font-size:15px;" placeholder="Ví dụ: Photosynthesis, Solar System, Volcano, Apple, Heart..." />
+    <div class="dialog-input-wrap">
+      <label for="illustrateInput" class="sr-only">Từ vựng hoặc khái niệm cần minh họa</label>
+      <input id="illustrateInput" class="dialog-text-input" type="text" placeholder="Ví dụ: Photosynthesis, Solar System, Volcano, Apple, Heart..." />
     </div>
     <div class="dialog-actions">
       <button id="cancelIllustrateBtn" class="dialog-cancel" type="button">Hủy</button>
@@ -307,7 +401,7 @@
     <form id="teacherOtpRequestForm" novalidate>
       <div class="auth-field">
         <label for="teacherEmailInput">Email giáo viên</label>
-        <span id="teacherEmailHint" class="auth-hint">Ví dụ: giaovien@truong.edu.vn</span>
+        <span id="teacherEmailHint" class="auth-hint">Ví dụ: gv.toan@aicanvas.edu.vn</span>
         <input
           type="email"
           id="teacherEmailInput"
@@ -321,13 +415,13 @@
           data-error="teacherEmailError"
         />
         <div id="teacherEmailError" class="auth-error-msg">
-          <span role="img" aria-label="Lỗi">❌</span> Vui lòng nhập đúng định dạng Email giáo viên.
+          Vui lòng nhập đúng định dạng Email giáo viên.
         </div>
       </div>
 
       <div class="auth-field">
         <label for="teacherPhoneInput">Số điện thoại giáo viên</label>
-        <span id="teacherPhoneHint" class="auth-hint">Định dạng: 10 chữ số (ví dụ 0987654321)</span>
+        <span id="teacherPhoneHint" class="auth-hint">Định dạng: 10 chữ số (ví dụ 0901000101)</span>
         <input
           type="tel"
           id="teacherPhoneInput"
@@ -341,7 +435,7 @@
           data-error="teacherPhoneError"
         />
         <div id="teacherPhoneError" class="auth-error-msg">
-          <span role="img" aria-label="Lỗi">❌</span> Nhập số điện thoại hợp lệ gồm 9–12 chữ số.
+          Nhập số điện thoại hợp lệ gồm 9–12 chữ số.
         </div>
       </div>
 
@@ -372,7 +466,7 @@
           data-error="teacherOtpError"
         />
         <div id="teacherOtpError" class="auth-error-msg">
-          <span role="img" aria-label="Lỗi">❌</span> Mã OTP gồm đúng 6 chữ số.
+          Mã OTP gồm đúng 6 chữ số.
         </div>
       </div>
 
@@ -393,7 +487,7 @@
           <button id="toggleTeacherPwBtn" class="auth-pw-toggle" type="button" aria-pressed="false">Hiện</button>
         </div>
         <div id="teacherPasswordError" class="auth-error-msg">
-          <span role="img" aria-label="Lỗi">❌</span> Mật khẩu tối thiểu 6 ký tự.
+          Mật khẩu tối thiểu 6 ký tự.
         </div>
       </div>
 
@@ -441,7 +535,7 @@
     </div>
 
     <div class="exam-tabs" role="tablist">
-      <button id="examTabFile" class="exam-tab-btn is-active" type="button" role="tab" aria-selected="true">Tải file (.docx, .pdf)</button>
+      <button id="examTabFile" class="exam-tab-btn is-active" type="button" role="tab" aria-selected="true">Tải file (.docx, .pdf, .txt)</button>
       <button id="examTabText" class="exam-tab-btn" type="button" role="tab" aria-selected="false">Viết / Dán đề trực tiếp</button>
     </div>
 
@@ -450,8 +544,7 @@
       <div class="exam-dropzone" id="examDropzone">
         <input type="file" id="examFileInput" accept=".docx,.pdf,.txt" class="exam-file-hidden" />
         <div class="dropzone-content">
-          <span class="dropzone-icon">📄</span>
-          <p>Kéo thả tệp <strong>.docx, .pdf, .txt</strong> vào đây hoặc click để chọn file</p>
+          <p>Kéo thả tệp <strong>.docx, .pdf, .txt</strong> vào đây hoặc chạm để chọn tệp</p>
           <span id="selectedFileName" class="selected-file-name">Chưa chọn tệp nào</span>
         </div>
       </div>
@@ -465,9 +558,10 @@
       <div class="exam-direct-controls">
         <label for="examDirectTextInput">Nhập nội dung đề thi (hỗ trợ câu trắc nghiệm A, B, C, D hoặc tự luận):</label>
         <div class="sample-shortcuts">
-          <span>Chèn đề mẫu nhanh:</span>
+          <span>Đề mẫu nhanh:</span>
           <button type="button" class="sample-btn" data-subject="TOAN">Toán</button>
           <button type="button" class="sample-btn" data-subject="VAT_LY">Vật lý</button>
+          <button type="button" class="sample-btn" data-subject="HOA_HOC">Hóa học</button>
           <button type="button" class="sample-btn" data-subject="TIENG_ANH">Tiếng Anh</button>
         </div>
       </div>
@@ -481,7 +575,7 @@
     <div id="examPreviewSection" class="exam-preview-section" hidden>
       <div class="preview-header">
         <h3 id="previewTitle">Kết quả bóc tách câu hỏi (<span id="questionCount">0</span> câu)</h3>
-        <span id="previewSecurityBadge" class="preview-badge badge-student">🛡️ Đã ẩn an toàn đáp án đúng</span>
+        <span id="previewSecurityBadge" class="preview-badge badge-student">Đã ẩn an toàn đáp án đúng</span>
       </div>
       <div id="examQuestionsList" class="exam-questions-list"></div>
     </div>
@@ -504,14 +598,14 @@
     <div class="feedback-badge-row">
       <div id="feedbackResultBadge" class="feedback-result-badge badge-correct">
         <span id="feedbackIcon" class="feedback-icon">✓</span>
-        <span id="feedbackText" class="feedback-text">Chính xác! (+1.0 điểm)</span>
+        <span id="feedbackText" class="feedback-text">Chính xác (+1.0 điểm)</span>
       </div>
       <span id="feedbackSubjectTag" class="feedback-subject-tag">Toán học</span>
     </div>
 
     <div class="feedback-answer-summary">
       <div class="summary-item">
-        <span class="summary-label">Bạn đã chọn:</span>
+        <span class="summary-label">Phương án đã chọn:</span>
         <strong id="feedbackSelectedLabel" class="summary-value choice-student">A</strong>
       </div>
       <div class="summary-item">
@@ -520,28 +614,22 @@
       </div>
     </div>
 
-    <!-- Khối phân tích phương án gây nhiễu (Chỉ rõ lý do sai của phương án đã chọn) -->
     <div id="feedbackDistractorBox" class="feedback-box distractor-box" hidden>
       <div class="box-header">
-        <span class="box-icon">⚠️</span>
-        <strong>Chỉ rõ lý do sai của phương án đã chọn (Phương án gây nhiễu):</strong>
+        <strong>Lý do sai của phương án đã chọn (Phương án gây nhiễu):</strong>
       </div>
       <p id="feedbackDistractorText" class="box-content"></p>
     </div>
 
-    <!-- Khối hướng dẫn cách tìm ra đáp án đúng -->
     <div id="feedbackGuidanceBox" class="feedback-box guidance-box" hidden>
       <div class="box-header">
-        <span class="box-icon">💡</span>
         <strong>Hướng dẫn cách tìm ra đáp án đúng:</strong>
       </div>
       <p id="feedbackGuidanceText" class="box-content"></p>
     </div>
 
-    <!-- Khối giải thích tại sao đáp án đúng là đúng -->
     <div id="feedbackExplanationBox" class="feedback-box explanation-box">
       <div class="box-header">
-        <span class="box-icon">📖</span>
         <strong>Lời giải thích chi tiết:</strong>
       </div>
       <p id="feedbackExplanationText" class="box-content"></p>
@@ -565,14 +653,15 @@
       <select id="quizBoardSubjectSelect" name="quiz_subject">
         <option value="TOAN">Đề mẫu Toán</option>
         <option value="VAT_LY">Đề mẫu Vật lý</option>
+        <option value="HOA_HOC">Đề mẫu Hóa học</option>
         <option value="TIENG_ANH">Đề mẫu Tiếng Anh</option>
       </select>
       <button id="quizLoadSampleBtn" class="quiz-btn-primary" type="button">Hiện đề lên bảng</button>
     </div>
     <div class="quiz-nav-row">
-      <button id="quizPrevQuestionBtn" class="quiz-btn-secondary" type="button">← Câu trước</button>
+      <button id="quizPrevQuestionBtn" class="quiz-btn-secondary" type="button">&larr; Câu trước</button>
       <span id="quizQuestionCounter" class="quiz-counter">Chưa có câu hỏi</span>
-      <button id="quizNextQuestionBtn" class="quiz-btn-secondary" type="button">Câu sau →</button>
+      <button id="quizNextQuestionBtn" class="quiz-btn-secondary" type="button">Câu sau &rarr;</button>
       <button id="quizClearCardBtn" class="quiz-btn-danger" type="button">Gỡ khỏi bảng</button>
     </div>
     <p id="quizBoardStatus" class="quiz-board-status" role="status" aria-live="polite" data-variant="info">Sẵn sàng bắt nét khoanh đáp án A, B, C, D.</p>
@@ -586,7 +675,6 @@
     </div>
 
     <div class="essay-guide-banner">
-      <span class="guide-icon">✨</span>
       <p>AI đọc từng bước giải học sinh viết trên bảng: <strong>Đánh dấu tích xanh ✓</strong> ở bước biến đổi đúng, <strong>Gạch chân đỏ ✕</strong> ngay dòng tính sai hoặc nhầm công thức và <strong>Hiện gợi ý sửa mà không lộ đáp án cuối</strong>.</p>
     </div>
 
@@ -623,25 +711,25 @@
     <div id="essayResultSection" class="essay-result-section" hidden>
       <div class="essay-summary-card">
         <div class="summary-metric">
-          <span>Tổng số bước:</span>
+          <span>Tổng số bước</span>
           <strong id="metricTotalSteps">0</strong>
         </div>
         <div class="summary-metric metric-correct">
-          <span>Bước đúng (Tích xanh):</span>
+          <span>Bước đúng</span>
           <strong id="metricCorrectSteps">0</strong>
         </div>
         <div class="summary-metric metric-wrong">
-          <span>Dòng sai (Gạch chân đỏ):</span>
+          <span>Dòng sai</span>
           <strong id="metricWrongSteps">0</strong>
         </div>
         <div class="summary-metric">
-          <span>Điểm bước giải:</span>
+          <span>Điểm bước giải</span>
           <strong id="metricScore">0.0 / 10</strong>
         </div>
       </div>
       <p id="essayOverallFeedback" class="essay-overall-feedback"></p>
 
-      <h3 class="essay-steps-heading">Chi tiết đánh dấu từng bước biến đổi:</h3>
+      <h3 class="essay-steps-heading">Chi tiết đánh dấu từng bước biến đổi</h3>
       <div id="essayStepsList" class="essay-steps-list"></div>
     </div>
 
@@ -656,9 +744,8 @@
   <dialog id="aiVariantDialog" class="board-dialog ai-variant-dialog" aria-labelledby="aiVariantDialogTitle">
     <div class="dialog-header">
       <div class="dialog-title-group">
-        <span class="dialog-title-icon">✨</span>
         <h2 id="aiVariantDialogTitle">AI Tạo câu hỏi tương tự &amp; Nâng cao</h2>
-        <span class="dialog-badge-bonus">Bonus 4đ · TF2851B</span>
+        <span class="dialog-badge-bonus">TF2851B</span>
       </div>
       <button id="closeAiVariantXBtn" class="dialog-close-btn" type="button" aria-label="Đóng hộp thoại">✕</button>
     </div>
@@ -667,13 +754,13 @@
       <div class="variant-input-card">
         <div class="variant-input-header">
           <label for="variantOriginalInput">
-            <strong>Bài tập đang chiếu trên bảng:</strong>
+            <strong>Bài tập đang chiếu trên bảng</strong>
           </label>
           <button id="variantExtractBoardBtn" class="variant-action-pill" type="button" title="Tự động quét đề bài đang có trên bảng vẽ">
-            📋 Lấy từ bảng vẽ
+            Lấy từ bảng vẽ
           </button>
         </div>
-        
+
         <div class="variant-sample-row">
           <span>Đề mẫu nhanh:</span>
           <button type="button" class="variant-sample-pill" data-sample="quad">Phương trình bậc 2</button>
@@ -687,40 +774,35 @@
 
         <div class="variant-trigger-row">
           <button id="btnGenSimilar" class="btn-gen-variant btn-gen-similar" type="button" title="AI đổi các con số để tạo bài mới có cùng dạng toán, nghiệm nguyên đẹp">
-            <span class="gen-icon">🔄</span>
             <div class="gen-texts">
               <strong>Đổi số liệu (Bài tương tự)</strong>
-              <small>Giữ nguyên dạng, nghiệm đẹp</small>
+              <small>Giữ nguyên dạng, nghiệm nguyên đẹp</small>
             </div>
           </button>
           <button id="btnGenAdvanced" class="btn-gen-variant btn-gen-advanced" type="button" title="AI thêm điều kiện tham số m, Vi-et, cực trị nâng cao độ khó cho học sinh khá giỏi">
-            <span class="gen-icon">🚀</span>
             <div class="gen-texts">
               <strong>Thêm điều kiện (Bài nâng cao)</strong>
-              <small>Tham số m, Vi-et, cực trị khá giỏi</small>
+              <small>Tham số m, Vi-et, phân hóa khá giỏi</small>
             </div>
           </button>
           <button id="btnGenBoth" class="btn-gen-variant btn-gen-both" type="button" title="Sinh cả hai bài tương tự và nâng cao cùng lúc">
-            <span class="gen-icon">🌟</span>
             <div class="gen-texts">
-              <strong>Tạo cả hai biến thể</strong>
-              <small>Tương tự &amp; Nâng cao cùng lúc</small>
+              <strong>Tạo đồng thời cả hai</strong>
+              <small>Bài tương tự &amp; Bài nâng cao</small>
             </div>
           </button>
         </div>
       </div>
 
-      <!-- Trạng thái đang tải -->
       <div id="variantLoadingIndicator" class="variant-loading" hidden>
         <div class="ai-spinner" aria-hidden="true"></div>
         <span>AI đang phân tích bài toán, đổi số liệu và thiết lập điều kiện nâng cao...</span>
       </div>
 
-      <!-- Khu vực hiển thị kết quả -->
       <div id="variantResultsContainer" class="variant-results-container" hidden>
         <div class="variant-results-header">
           <h3>Kết quả bài tập do AI tạo (<span id="variantCount">0</span> biến thể)</h3>
-          <span id="variantSourceBadge" class="variant-source-badge">⚡ Math Perturbation Engine</span>
+          <span id="variantSourceBadge" class="variant-source-badge">Math Perturbation Engine</span>
         </div>
         <div id="variantCardsList" class="variant-cards-list"></div>
       </div>
@@ -735,7 +817,7 @@
   <dialog id="benchmarkDialog" class="benchmark-dialog" aria-labelledby="benchmarkDialogTitle">
     <div class="dialog-header">
       <div class="dialog-title-group">
-        <h2 id="benchmarkDialogTitle">⚡ Đo kiểm hiệu năng &amp; Cô lập dữ liệu đa phòng học</h2>
+        <h2 id="benchmarkDialogTitle">Đo kiểm hiệu năng &amp; Cô lập dữ liệu đa phòng học</h2>
         <span class="benchmark-task-tag">TF28522 · Sprint 4</span>
       </div>
       <button id="closeBenchmarkBtn" class="dialog-close-btn" type="button" aria-label="Đóng dialog">✕</button>
@@ -747,7 +829,7 @@
           Hệ thống tự động kiểm thử 4 chỉ tiêu: Độ trễ nét vẽ (&lt; 16ms), Thời gian AI (&le; 2s mạng thường, &le; 5s mạng yếu), Độ chính xác công thức phổ thông (&ge; 90%) và Cô lập 2 phòng song song (0% rò rỉ).
         </p>
         <button id="runBenchmarkAuditBtn" class="btn-run-benchmark" type="button">
-          🚀 Chạy kiểm thử ngay
+          Chạy kiểm thử ngay
         </button>
       </div>
 

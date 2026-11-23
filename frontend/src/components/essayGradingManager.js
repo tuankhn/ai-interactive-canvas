@@ -1,5 +1,7 @@
 import { $, fabricCanvas, state, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
+import { escapeHtml } from '../utils/escape.js';
+import { authFetch } from '../utils/auth_client.js';
 import { FabricText, Line, Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 let lastEssayResult = null;
@@ -99,7 +101,7 @@ export function setupEssayGradingManager() {
       showStatus('AI đang đọc từng dòng viết tay và kiểm tra công thức...');
 
       try {
-        const res = await fetch('/api/v1/exam/grade-essay-solution', {
+        const res = await authFetch('/api/v1/exam/grade-essay-solution', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -163,7 +165,7 @@ export function setupEssayGradingManager() {
               <span class="guidance-icon">💡</span>
               <div class="guidance-content">
                 <strong>Gợi ý sửa (không lộ đáp án):</strong>
-                <p>${step.guidance}</p>
+                <p>${escapeHtml(step.guidance)}</p>
               </div>
             </div>
           `;
@@ -171,14 +173,14 @@ export function setupEssayGradingManager() {
 
         stepCard.innerHTML = `
           <div class="step-header-row">
-            <span class="step-num">Dòng ${step.step_number}</span>
+            <span class="step-num">Dòng ${escapeHtml(step.step_number)}</span>
             ${iconBadge}
           </div>
           <div class="step-line-content ${lineClass}">
-            <code>${step.written_text}</code>
+            <code>${escapeHtml(step.written_text)}</code>
           </div>
           <div class="step-feedback-note">
-            ${step.feedback}
+            ${escapeHtml(step.feedback)}
           </div>
           ${guidanceBlock}
         `;

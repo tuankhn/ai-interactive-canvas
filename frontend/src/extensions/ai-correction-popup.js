@@ -205,6 +205,8 @@
     if (newValue !== original) {
       const payload = {
         session_id: data.session_id || document.getElementById('sessionId')?.textContent?.trim() || 'session-10a1',
+        room_id: data.room_id || document.getElementById('roomId')?.textContent?.trim() || 'room-10a1',
+        page_number: Number(data.page_number) || getCurrentPageNumber() || 1,
         original_text: original,
         corrected_text: newValue,
         context_latex: previousLatex

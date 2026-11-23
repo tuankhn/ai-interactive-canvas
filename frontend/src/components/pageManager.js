@@ -37,7 +37,7 @@ async function loadPageData(data) {
   const safePage = data && Array.isArray(data.objects) ? data : blankPage();
   await fabricCanvas.loadFromJSON({
     objects: safePage.objects,
-    background: safePage.background || '#ffffff'
+    background: safePage.backgroundColor ?? safePage.background ?? '#ffffff'
   }, (original, object) => {
     if (!object) return;
     const isInteractiveAnswer = original?.meta?.type === 'answer_option';
@@ -71,6 +71,7 @@ export async function switchPage(nextIndex) {
   state.pages[state.pageIndex] = serializeCurrentPage();
   const oldIndex = state.pageIndex;
   state.pageBusy = true;
+  window.dispatchEvent(new CustomEvent('app:cancel-ai-debounce'));
   closePanels();
   refreshPages();
 
@@ -116,6 +117,7 @@ export async function deleteCurrentPage() {
   const targetPage = state.pages[targetIndex];
 
   state.pageBusy = true;
+  window.dispatchEvent(new CustomEvent('app:cancel-ai-debounce'));
   closePanels();
   refreshPages();
   try {
@@ -148,7 +150,8 @@ export async function restoreSavedPages() {
     const saved = readStoredPages();
     if (saved) {
       if (saved.version === 1 && Array.isArray(saved.pages) && saved.pages.length > 0 &&
-          saved.pages.every((page) => page && Array.isArray(page.objects) && typeof page.background === 'string')) {
+          saved.pages.every((page) => page && Array.isArray(page.objects) &&
+            (typeof page.background === 'string' || typeof page.backgroundColor === 'string'))) {
         state.pages = saved.pages;
         state.pageIndex = Number.isInteger(saved.pageIndex)
           ? Math.max(0, Math.min(saved.pageIndex, state.pages.length - 1)) : 0;

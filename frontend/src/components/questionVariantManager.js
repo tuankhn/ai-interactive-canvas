@@ -4,7 +4,9 @@
 // ==============================================================================
 
 import { $, fabricCanvas, setStatus } from '../utils/context.js';
-import { snapshot } from './history.js';
+import { snapshot, remember, updateHint } from './history.js';
+import { escapeHtml } from '../utils/escape.js';
+import { authFetch } from '../utils/auth_client.js';
 import { Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 const VARIANT_ENDPOINT = '/api/v1/exam/generate-variant';
@@ -121,7 +123,7 @@ export function setupQuestionVariantManager() {
     const seed = customSeed !== null ? customSeed : Math.floor(Math.random() * 100000);
 
     try {
-      const response = await fetch(VARIANT_ENDPOINT, {
+      const response = await authFetch(VARIANT_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -299,7 +301,7 @@ function cleanQuestionText(text) {
  */
 export function insertVariantCardToCanvas(variantItem) {
   if (!fabricCanvas || !variantItem) return;
-  snapshot();
+  const before = snapshot();
 
   const isDark = fabricCanvas.backgroundColor === '#111827';
   const isAdv = variantItem.variant_type === 'ADVANCED';
@@ -360,16 +362,8 @@ export function insertVariantCardToCanvas(variantItem) {
   fabricCanvas.add(cardText);
   fabricCanvas.setActiveObject(cardText);
   fabricCanvas.renderAll();
+  remember(before);
+  updateHint();
 
   setStatus(`Đã chiếu "${variantItem.title}" lên bảng vẽ`);
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }

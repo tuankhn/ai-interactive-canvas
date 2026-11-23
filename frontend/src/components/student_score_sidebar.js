@@ -1,5 +1,5 @@
 import { $, fabricCanvas, state, setStatus } from '../utils/context.js';
-import { readStoredTeacherSession } from '../utils/auth_client.js';
+import { authFetch, readStoredTeacherSession } from '../utils/auth_client.js';
 
 const SCORES_API_BASE = '/api/v1/scores';
 
@@ -172,8 +172,8 @@ export function setupStudentScoreSidebar() {
     try {
       const clsParam = encodeURIComponent(sidebarState.className);
       const [stuRes, histRes] = await Promise.all([
-        fetch(`${SCORES_API_BASE}/students?class_name=${clsParam}`),
-        fetch(`${SCORES_API_BASE}/history?class_name=${clsParam}`),
+        authFetch(`${SCORES_API_BASE}/students?class_name=${clsParam}`),
+        authFetch(`${SCORES_API_BASE}/history?class_name=${clsParam}`),
       ]);
       if (stuRes.ok) {
         const stuData = await stuRes.json();
@@ -203,7 +203,7 @@ export function setupStudentScoreSidebar() {
 
     showScoreStatus(`Đang cộng +${pts} điểm cho ${student.full_name}...`, 'info');
     try {
-      const res = await fetch(`${SCORES_API_BASE}/award`, {
+      const res = await authFetch(`${SCORES_API_BASE}/award`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -259,7 +259,7 @@ export function setupStudentScoreSidebar() {
         return;
       }
       try {
-        const res = await fetch(`${SCORES_API_BASE}/students`, {
+        const res = await authFetch(`${SCORES_API_BASE}/students`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -280,6 +280,15 @@ export function setupStudentScoreSidebar() {
       }
     });
   }
+
+  window.addEventListener('app:class-changed', (event) => {
+    const nextCls = event?.detail?.className || ($('className')?.textContent || '10A1').trim();
+    sidebarState.className = nextCls || '10A1';
+    if (sidebarClassNameEl) {
+      sidebarClassNameEl.textContent = sidebarState.className;
+    }
+    void refreshRosterAndHistory();
+  });
 
   updateStepButtons();
   void refreshRosterAndHistory();

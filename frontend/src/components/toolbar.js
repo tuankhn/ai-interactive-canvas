@@ -22,12 +22,13 @@ export function togglePanel(name) {
   // Popup dùng position:fixed vì thanh công cụ có thể cuộn riêng.
   const rect = chosen.button.getBoundingClientRect();
   const panel = chosen.panel;
-  const margin = 8;
+  const margin = 10;
   const maxTop = Math.max(margin, window.innerHeight - panel.offsetHeight - margin);
 
-  if (window.innerWidth <= 690) {
+  if (window.innerWidth <= 760) {
     const preferredTop = rect.bottom + margin;
-    panel.style.left = `${margin}px`;
+    const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin);
+    panel.style.left = `${Math.max(margin, Math.min(rect.left, maxLeft))}px`;
     panel.style.top = `${Math.max(margin, Math.min(preferredTop, maxTop))}px`;
   } else {
     const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin);
@@ -69,6 +70,7 @@ export function setBackground(color) {
   const before = snapshot();
   fabricCanvas.backgroundColor = color;
   stage.style.backgroundColor = color;
+  stage.classList.toggle('is-dark-board', color === '#111827');
   // Đổi màu bút mặc định để luôn nhìn thấy nét khi chuyển nền.
   if (color === '#111827' && ui.color.value.toLowerCase() === '#172554') {
     ui.color.value = '#ffffff';
@@ -80,7 +82,148 @@ export function setBackground(color) {
   updateHint();
   fabricCanvas.requestRenderAll();
   remember(before);
-  setStatus(color === '#111827' ? 'Đã chọn bảng đen' : 'Đã chọn bảng trắng');
+  setStatus(color === '#111827' ? 'Đã chuyển sang bảng phấn đen' : 'Đã chuyển sang bảng trắng');
+}
+
+function setupStudentsDrawer() {
+  const workspace = $('workspaceGrid') || document.querySelector('.workspace');
+  const studentsPanel = $('studentsPanel') || document.querySelector('.students');
+  const toggleBtn = $('toggleStudentsBtn');
+  const closeBtn = $('closeStudentsDrawerBtn');
+  if (!workspace || !studentsPanel || !toggleBtn) return;
+
+  function setDrawerOpen(open) {
+    workspace.classList.toggle('is-students-collapsed', !open);
+    toggleBtn.setAttribute('aria-expanded', String(open));
+    toggleBtn.classList.toggle('is-active', open);
+    studentsPanel.inert = !open;
+  }
+
+  // Trên khung hình hẹp / chia đôi cửa sổ (< 1060px), mặc định thu gọn để ưu tiên diện tích viết bảng
+  setDrawerOpen(window.innerWidth >= 1060);
+
+  toggleBtn.addEventListener('click', () => {
+    const currentlyOpen = toggleBtn.getAttribute('aria-expanded') === 'true';
+    setDrawerOpen(!currentlyOpen);
+  });
+
+  closeBtn?.addEventListener('click', () => setDrawerOpen(false));
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && window.innerWidth < 1060 && toggleBtn.getAttribute('aria-expanded') === 'true') {
+      setDrawerOpen(false);
+    }
+  });
+}
+
+function setupToolbarRovingFocusFallback() {
+  if (!toolbar || 'focusGroup' in HTMLElement.prototype) return;
+
+  const getToolbarButtons = () =>
+    Array.from(toolbar.querySelectorAll(':scope > .tool-group > button, :scope > button')).filter(
+      (btn) => !btn.hidden && !btn.disabled
+    );
+
+  const initItems = getToolbarButtons();
+  initItems.forEach((btn, idx) => {
+    btn.tabIndex = idx === 0 ? 0 : -1;
+  });
+
+  toolbar.addEventListener('focusin', ({ target }) => {
+    const items = getToolbarButtons();
+    if (items.includes(target)) {
+      items.forEach((btn) => {
+        btn.tabIndex = btn === target ? 0 : -1;
+      });
+    }
+  });
+
+  toolbar.addEventListener('keydown', (event) => {
+    const items = getToolbarButtons();
+    const currentIdx = items.indexOf(document.activeElement);
+    if (currentIdx === -1 || items.length === 0) return;
+
+    const vertical = window.innerWidth > 760 && toolbar.getAttribute('aria-orientation') === 'vertical';
+    let nextIdx = -1;
+    if (event.key === 'Home') nextIdx = 0;
+    else if (event.key === 'End') nextIdx = items.length - 1;
+    else if (vertical && event.key === 'ArrowDown') nextIdx = (currentIdx + 1) % items.length;
+    else if (vertical && event.key === 'ArrowUp') nextIdx = (currentIdx - 1 + items.length) % items.length;
+    else if (!vertical && event.key === 'ArrowRight') nextIdx = (currentIdx + 1) % items.length;
+    else if (!vertical && event.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + items.length) % items.length;
+
+    if (nextIdx !== -1) {
+      event.preventDefault();
+      items[nextIdx].focus();
+    }
+  });
+}
+
+function setupSystemPopoverPositioning() {
+  const sysBtn = $('systemMenuBtn');
+  const sysPop = $('systemInfoPopover');
+  const benchBtn = $('benchmarkBtn');
+  if (!sysBtn || !sysPop) return;
+
+  sysPop.addEventListener('toggle', ({ newState }) => {
+    if (newState !== 'open' || CSS.supports('position-area', 'block-end')) return;
+    const t = sysBtn.getBoundingClientRect();
+    const p = sysPop.getBoundingClientRect();
+    const margin = 8;
+    const below = t.bottom + margin + p.height <= window.innerHeight;
+    sysPop.style.top = `${below ? t.bottom + margin : Math.max(margin, t.top - p.height - margin)}px`;
+    sysPop.style.left = `${Math.max(margin, Math.min(t.right - p.width, window.innerWidth - p.width - margin))}px`;
+  });
+
+  benchBtn?.addEventListener('click', () => {
+    if (typeof sysPop.hidePopover === 'function') {
+      try { sysPop.hidePopover(); } catch { /* ignore */ }
+    }
+  });
+}
+
+const TOOLBAR_DOCK_STORAGE_KEY = 'ai-canvas:toolbar-dock:v1';
+
+function setupToolbarErgonomicDock() {
+  const workspace = $('workspaceGrid');
+  const dockButtons = Array.from(document.querySelectorAll('[data-toolbar-dock]'));
+  if (!workspace || !dockButtons.length) return;
+
+  function applyDock(mode) {
+    const validMode = ['left', 'bottom', 'right'].includes(mode) ? mode : 'left';
+    workspace.classList.toggle('is-toolbar-bottom', validMode === 'bottom');
+    workspace.classList.toggle('is-toolbar-right', validMode === 'right');
+    if (toolbar) {
+      toolbar.setAttribute('aria-orientation', validMode === 'bottom' ? 'horizontal' : 'vertical');
+    }
+    dockButtons.forEach((btn) => {
+      const active = btn.dataset.toolbarDock === validMode;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+    try {
+      localStorage.setItem(TOOLBAR_DOCK_STORAGE_KEY, validMode);
+    } catch {
+      // Ignore storage quota errors
+    }
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+
+  let savedDock = 'left';
+  try {
+    savedDock = localStorage.getItem(TOOLBAR_DOCK_STORAGE_KEY) || 'left';
+  } catch {
+    savedDock = 'left';
+  }
+  applyDock(savedDock);
+
+  dockButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyDock(btn.dataset.toolbarDock || 'left');
+    });
+  });
 }
 
 export function setupToolbar() {
@@ -113,4 +256,9 @@ export function setupToolbar() {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closePanels();
   });
+
+  setupStudentsDrawer();
+  setupToolbarRovingFocusFallback();
+  setupSystemPopoverPositioning();
+  setupToolbarErgonomicDock();
 }

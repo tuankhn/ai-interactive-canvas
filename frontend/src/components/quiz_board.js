@@ -1,5 +1,6 @@
 import { $, fabricCanvas, state, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
+import { authFetch } from '../utils/auth_client.js';
 import { Circle, FabricText, Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 const CIRCLE_ANSWER_ENDPOINT = '/api/v1/exam/circle-answer';
@@ -397,7 +398,7 @@ export function setupQuizBoard() {
   async function loadSampleQuiz(subject) {
     setQuizPanelStatus(`Đang tải câu hỏi trắc nghiệm môn ${subject}...`, 'info');
     try {
-      const res = await fetch(`/api/v1/exam/sample?subject=${encodeURIComponent(subject)}&mode=${encodeURIComponent(quizState.mode)}`);
+      const res = await authFetch(`/api/v1/exam/sample?subject=${encodeURIComponent(subject)}&mode=${encodeURIComponent(quizState.mode)}`);
       if (!res.ok) throw new Error('Không tải được đề trắc nghiệm mẫu.');
       const data = await res.json();
       const mcqOnly = (data.questions || []).filter((q) => Array.isArray(q.options) && q.options.length >= 2);
@@ -461,7 +462,7 @@ export function setupQuizBoard() {
     );
 
     try {
-      const res = await fetch(CIRCLE_ANSWER_ENDPOINT, {
+      const res = await authFetch(CIRCLE_ANSWER_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

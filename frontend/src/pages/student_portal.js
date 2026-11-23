@@ -1,6 +1,7 @@
 import {
   clearPortalSession,
   fetchStudentClassLessons,
+  getPortalAuthHeaders,
   loginStudentOrParent,
   readPortalSession,
   registerStudentOrParent,
@@ -22,6 +23,7 @@ const PAGE_LIMIT = 12;
 const portalState = {
   session: readPortalSession(),
   lessons: [],
+  signedUrlTokens: new Map(),
   totalCount: 0,
   calendarCounts: {},
   offset: 0,
@@ -57,10 +59,15 @@ function hideBanner() {
 }
 
 function buildSnapshotImageUrl(snapshotId, format = 'webp', download = false) {
-  const token = portalState.session?.access_token || '';
   const params = new URLSearchParams({ format });
   if (download) params.set('download', '1');
-  if (token) params.set('token', token);
+  const signed = portalState.signedUrlTokens.get(snapshotId);
+  if (signed?.exp && signed?.sig) {
+    params.set('exp', String(signed.exp));
+    params.set('sig', String(signed.sig));
+  } else if (portalState.session?.access_token) {
+    params.set('token', portalState.session.access_token);
+  }
   return `/api/v1/sessions/snapshots/${encodeURIComponent(snapshotId)}/image?${params.toString()}`;
 }
 
@@ -347,12 +354,22 @@ async function loadClassLessons() {
         limit: PAGE_LIMIT,
         offset: portalState.offset,
       }),
-      fetch(`/api/v1/scores/history?class_name=${encodeURIComponent(className)}`)
+      fetch(`/api/v1/scores/history?class_name=${encodeURIComponent(className)}`, {
+        headers: getPortalAuthHeaders(),
+      })
         .then((r) => (r.ok ? r.json() : { count: 0 }))
         .catch(() => ({ count: 0 })),
     ]);
 
     portalState.lessons = lessonsData.items || [];
+    for (const lesson of portalState.lessons) {
+      if (lesson?.id && lesson.signed_exp && lesson.signed_sig) {
+        portalState.signedUrlTokens.set(lesson.id, {
+          exp: lesson.signed_exp,
+          sig: lesson.signed_sig,
+        });
+      }
+    }
     portalState.totalCount = Number(lessonsData.total_count ?? portalState.lessons.length);
     portalState.calendarCounts = lessonsData.calendar_counts || {};
 
@@ -426,22 +443,39 @@ async function seedSampleSnapshotsForClass() {
   showBanner(`Đang tạo 3 bài giảng mẫu cho lớp ${className}...`, 'info');
   for (let i = 0; i < samples.length; i += 1) {
     const s = samples[i];
-    await fetch('/api/v1/sessions/snapshots', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: `portal-demo-${className}-${i + 1}`,
-        room_id: `room-${className.toLowerCase()}`,
-        teacher_name: s.teacher_name,
-        class_name: className,
-        subject: s.subject,
-        period_number: s.period_number,
-        page_number: 1,
-        trigger_type: 'MANUAL_SAVE',
-        recognized_latex: s.recognized_latex,
-        image_base64: buildSampleCanvasDataUrl(`Bài giảng mẫu ${s.subject} - Lớp ${className}`, s.recognized_latex, s.color),
-      }),
+    const reqHeaders = {
+      'Content-Type': 'application/json',
+      ...getPortalAuthHeaders(),
+    };
+    const payloadBody = JSON.stringify({
+      session_id: `portal-demo-${className}-${i + 1}`,
+      room_id: `room-${className.toLowerCase()}`,
+      teacher_name: s.teacher_name,
+      class_name: className,
+      subject: s.subject,
+      period_number: s.period_number,
+      page_number: 1,
+      trigger_type: 'MANUAL_SAVE',
+      recognized_latex: s.recognized_latex,
+      image_base64: buildSampleCanvasDataUrl(`Bài giảng mẫu ${s.subject} - Lớp ${className}`, s.recognized_latex, s.color),
     });
+    let res = await fetch('/api/v1/demo/portal-sample-snapshot', {
+      method: 'POST',
+      headers: reqHeaders,
+      body: payloadBody,
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (res.status === 404 || res.status === 405 || contentType.includes('text/html')) {
+      res = await fetch('/api/v1/sessions/snapshots', {
+        method: 'POST',
+        headers: reqHeaders,
+        body: payloadBody,
+      });
+    }
+    if (res.status === 403) {
+      showBanner('Tính năng tạo bài giảng mẫu đã tắt trên môi trường chính thức.', 'error');
+      return;
+    }
   }
   showBanner(`Đã tạo xong 3 ảnh bài học mẫu cho lớp ${className}.`, 'success');
   await loadClassLessons();
