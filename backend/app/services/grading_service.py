@@ -302,17 +302,17 @@ class GradingService:
                 "guidance": "💡 Gợi ý: √(A² + B²) ≠ A + B. Cần giữ nguyên căn thức hoặc tìm cách phân tích nhân tử thích hợp.",
             }
 
-        # 2. Kiểm tra nhầm công thức đạo hàm / tích phân / lượng giác
-        # Đạo hàm của sin(x) = -cos(x) (sai dấu)
-        if "sin" in text_clean and ("-cos" in text_clean or "-\\cos" in text_clean) and "'" in text:
+        # 2. Kiểm tra nhầm công thức đạo hàm / tích phân / lượng giác (H14: neo đúng vế trái/phải)
+        # Đạo hàm của +sin(x) = -cos(x) (sai dấu)
+        if re.search(r"\(\s*\+?\s*\\?sin\b[^)]*\)\s*'\s*=\s*-\s*\\?cos\b", text_clean):
             return {
                 "error_type": "FORMULA_ERROR",
                 "reason": "Nhầm dấu đạo hàm: Đạo hàm của hàm sin(x) là +cos(x), không có dấu âm.",
                 "guidance": "💡 Gợi ý: Nhớ lại bảng đạo hàm lượng giác: (sin x)' = cos x; còn (cos x)' mới bằng -sin x.",
             }
 
-        # Đạo hàm của cos(x) = sin(x) (quên dấu trừ)
-        if "cos" in text_clean and "sin" in text_clean and "'" in text and ("-" not in text_clean):
+        # Đạo hàm của +cos(x) = +sin(x) (quên dấu trừ; loại trừ (-cos x)' = sin x là đúng)
+        if re.search(r"\(\s*\+?\s*\\?cos\b[^)]*\)\s*'\s*=\s*\+?\s*\\?sin\b", text_clean):
             return {
                 "error_type": "FORMULA_ERROR",
                 "reason": "Quên dấu âm khi lấy đạo hàm: Đạo hàm của cos(x) phải có dấu trừ đằng trước.",
@@ -330,14 +330,16 @@ class GradingService:
                     "guidance": "💡 Gợi ý: Áp dụng công thức lũy thừa: (xⁿ)' = n · xⁿ⁻¹.",
                 }
 
-        # Công thức lượng giác: sin^2 + cos^2 = 0 hoặc sin^2 - cos^2 = 1
-        if "sin" in text_clean and "cos" in text_clean and ("= 0" in text_clean or "- cos" in text_clean or "-\\cos" in text_clean):
-            if "sin^2" in text_clean or "\\sin^2" in text_clean:
-                return {
-                    "error_type": "FORMULA_ERROR",
-                    "reason": "Nhầm lẫn hệ thức lượng giác cơ bản giữa sin và cos.",
-                    "guidance": "💡 Gợi ý: Hệ thức cơ bản luôn là sin²(x) + cos²(x) = 1 với mọi góc x.",
-                }
+        # Công thức lượng giác sai: sin^2 + cos^2 = 0 hoặc sin^2 - cos^2 = 1 (không bắt nhầm sin^2 = 1 - cos^2)
+        if (
+            re.search(r"\\?sin\s*(?:\^2|²)[^=]*\+\s*\\?cos\s*(?:\^2|²)[^=]*=\s*0\b", text_clean)
+            or re.search(r"\\?sin\s*(?:\^2|²)[^=]*-\s*\\?cos\s*(?:\^2|²)[^=]*=\s*1\b", text_clean)
+        ):
+            return {
+                "error_type": "FORMULA_ERROR",
+                "reason": "Nhầm lẫn hệ thức lượng giác cơ bản giữa sin và cos.",
+                "guidance": "💡 Gợi ý: Hệ thức cơ bản luôn là sin²(x) + cos²(x) = 1 với mọi góc x.",
+            }
 
         # 3. Kiểm tra lỗi chuyển vế không đổi dấu (SIGN_ERROR)
         # So sánh với bước trước đó nếu có dạng: ax - b = 0 => ax = -b (hoặc ax + b = c => ax = c + b)

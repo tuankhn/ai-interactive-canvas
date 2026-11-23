@@ -19,13 +19,32 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+from app.core.database import (
+    in_memory_circle_submissions,
+    in_memory_class_rosters,
+    in_memory_pages,
+    in_memory_score_logs,
+    in_memory_snapshot_blobs,
+    in_memory_snapshots,
+)
 from app.services.ai_recognition import COMMON_CURRICULUM_FORMULAS, ai_recognition_service
 from app.schemas.canvas_schema import PageSaveRequest, RecognizeRequest, SnapshotSaveRequest
 from app.schemas.score import BonusPointAwardRequest
 from app.schemas.quiz import CircleAnswerSubmitRequest, QuizOptionRegion, StrokeBoundingBox
-from app.api.session_router import get_board_pages, list_snapshots, save_board_page, save_snapshot
-from app.api.score_router import award_bonus_points, get_bonus_score_history
-from app.api.exam_router import list_circle_submissions, submit_circled_answer
+from app.api.session_router import (
+    get_board_pages_core as get_board_pages,
+    list_snapshots_core as list_snapshots,
+    save_board_page_core as save_board_page,
+    save_snapshot_core as save_snapshot,
+)
+from app.api.score_router import (
+    award_bonus_points_core as award_bonus_points,
+    get_bonus_score_history_core as get_bonus_score_history,
+)
+from app.api.exam_router import (
+    list_circle_submissions_core as list_circle_submissions,
+    submit_circled_answer_core as submit_circled_answer,
+)
 
 SAMPLE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
@@ -159,72 +178,103 @@ async def run_benchmark():
     # -------------------------------------------------------------------------
     # 4. KIỂM THỬ CÔ LẬP DỮ LIỆU 2 PHÒNG HỌC CHẠY SONG SONG
     # -------------------------------------------------------------------------
-    print(f"{BOLD}[4/4] Kiểm thử cô lập dữ liệu 2 phòng học chạy song song (Zero Cross-leakage)...{RESET}")
+    print(f"{BOLD}[4/4] Kiểm thử cô lập dữ liệu 2 phòng học chạy song song (Mô phỏng kiểm chuẩn nội bộ - Zero Cross-leakage)...{RESET}")
     uid = int(time.time() * 1000) % 100000
-    room_a = f"room-10a1-live-{uid}"
-    session_a = f"sess-10a1-toan-{uid}"
-    room_b = f"room-10a2-live-{uid}"
-    session_b = f"sess-10a2-vatly-{uid}"
+    room_a = f"room-bench-a-{uid}"
+    session_a = f"sess-bench-a-{uid}"
+    class_a = f"BENCH{uid}A"
+    room_b = f"room-bench-b-{uid}"
+    session_b = f"sess-bench-b-{uid}"
+    class_b = f"BENCH{uid}B"
 
-    # Phòng A lưu 2 trang bảng, 1 snapshot, 1 điểm, 1 bài khoanh
-    await save_board_page(PageSaveRequest(
-        room_id=room_a, session_id=session_a, page_number=1,
-        canvas_json={"type": "math_page_1"}, recognized_latex="y = ax^2 + bx + c"
-    ))
-    await save_board_page(PageSaveRequest(
-        room_id=room_a, session_id=session_a, page_number=2,
-        canvas_json={"type": "math_page_2"}, recognized_latex="\\Delta = b^2 - 4ac"
-    ))
-    snap_a = await save_snapshot(SnapshotSaveRequest(
-        session_id=session_a, room_id=room_a, teacher_name="Thầy Toán 10A1",
-        class_name="10A1", subject="TOAN", period_number=1, page_number=1,
-        image_base64=SAMPLE_IMAGE, recognized_latex="y = ax^2 + bx + c", trigger_type="SAVE_BOARD"
-    ))
-    await award_bonus_points(BonusPointAwardRequest(
-        student_id=f"stu_10a1_{uid}", student_name="Học sinh 10A1", class_name="10A1",
-        session_id=session_a, room_id=room_a, teacher_name="Thầy Toán 10A1",
-        subject="TOAN", points_added=2.0, reason="Giải phương trình chuẩn xác"
-    ))
-    await submit_circled_answer(CircleAnswerSubmitRequest(
-        question_id=f"q_toan_{uid}", session_id=session_a, room_id=room_a,
-        student_id=f"stu_10a1_{uid}", selected_label="A", correct_label="A",
-        stroke_bbox=StrokeBoundingBox(x=100.0, y=100.0, width=50.0, height=40.0),
-        option_regions=[QuizOptionRegion(label="A", x=95.0, y=95.0, width=60.0, height=50.0)],
-        selection_method="CIRCLE"
-    ))
+    try:
+        # Phòng A lưu 2 trang bảng, 1 snapshot, 1 điểm, 1 bài khoanh
+        await save_board_page(PageSaveRequest(
+            room_id=room_a, session_id=session_a, page_number=1,
+            canvas_json={"type": "math_page_1"}, recognized_latex="y = ax^2 + bx + c"
+        ))
+        await save_board_page(PageSaveRequest(
+            room_id=room_a, session_id=session_a, page_number=2,
+            canvas_json={"type": "math_page_2"}, recognized_latex="\\Delta = b^2 - 4ac"
+        ))
+        snap_a = await save_snapshot(SnapshotSaveRequest(
+            session_id=session_a, room_id=room_a, teacher_name="Thầy Toán Bench A",
+            class_name=class_a, subject="TOAN", period_number=1, page_number=1,
+            image_base64=SAMPLE_IMAGE, recognized_latex="y = ax^2 + bx + c", trigger_type="SAVE_BOARD"
+        ))
+        await award_bonus_points(BonusPointAwardRequest(
+            student_id=f"stu_bench_a_{uid}", student_name="Học sinh Bench A", class_name=class_a,
+            session_id=session_a, room_id=room_a, teacher_name="Thầy Toán Bench A",
+            subject="TOAN", points_added=2.0, reason="Giải phương trình chuẩn xác"
+        ))
+        await submit_circled_answer(CircleAnswerSubmitRequest(
+            question_id=f"q_toan_{uid}", session_id=session_a, room_id=room_a,
+            student_id=f"stu_bench_a_{uid}", selected_label="A", correct_label="A",
+            stroke_bbox=StrokeBoundingBox(x=100.0, y=100.0, width=50.0, height=40.0),
+            option_regions=[QuizOptionRegion(label="A", x=95.0, y=95.0, width=60.0, height=50.0)],
+            selection_method="CIRCLE"
+        ))
 
-    # Phòng B lưu 1 trang bảng, 1 snapshot, 1 điểm, 1 bài khoanh
-    await save_board_page(PageSaveRequest(
-        room_id=room_b, session_id=session_b, page_number=1,
-        canvas_json={"type": "phys_page_1"}, recognized_latex="F = m * a"
-    ))
-    snap_b = await save_snapshot(SnapshotSaveRequest(
-        session_id=session_b, room_id=room_b, teacher_name="Cô Lý 10A2",
-        class_name="10A2", subject="VAT_LY", period_number=2, page_number=1,
-        image_base64=SAMPLE_IMAGE, recognized_latex="F = m * a", trigger_type="SAVE_BOARD"
-    ))
-    await award_bonus_points(BonusPointAwardRequest(
-        student_id=f"stu_10a2_{uid}", student_name="Học sinh 10A2", class_name="10A2",
-        session_id=session_b, room_id=room_b, teacher_name="Cô Lý 10A2",
-        subject="VAT_LY", points_added=1.5, reason="Phát biểu định luật II Newton"
-    ))
-    await submit_circled_answer(CircleAnswerSubmitRequest(
-        question_id=f"q_phys_{uid}", session_id=session_b, room_id=room_b,
-        student_id=f"stu_10a2_{uid}", selected_label="B", correct_label="B",
-        stroke_bbox=StrokeBoundingBox(x=150.0, y=150.0, width=50.0, height=40.0),
-        option_regions=[QuizOptionRegion(label="B", x=145.0, y=145.0, width=60.0, height=50.0)],
-        selection_method="CIRCLE"
-    ))
+        # Phòng B lưu 1 trang bảng, 1 snapshot, 1 điểm, 1 bài khoanh
+        await save_board_page(PageSaveRequest(
+            room_id=room_b, session_id=session_b, page_number=1,
+            canvas_json={"type": "phys_page_1"}, recognized_latex="F = m * a"
+        ))
+        snap_b = await save_snapshot(SnapshotSaveRequest(
+            session_id=session_b, room_id=room_b, teacher_name="Cô Lý Bench B",
+            class_name=class_b, subject="VAT_LY", period_number=2, page_number=1,
+            image_base64=SAMPLE_IMAGE, recognized_latex="F = m * a", trigger_type="SAVE_BOARD"
+        ))
+        await award_bonus_points(BonusPointAwardRequest(
+            student_id=f"stu_bench_b_{uid}", student_name="Học sinh Bench B", class_name=class_b,
+            session_id=session_b, room_id=room_b, teacher_name="Cô Lý Bench B",
+            subject="VAT_LY", points_added=1.5, reason="Phát biểu định luật II Newton"
+        ))
+        await submit_circled_answer(CircleAnswerSubmitRequest(
+            question_id=f"q_phys_{uid}", session_id=session_b, room_id=room_b,
+            student_id=f"stu_bench_b_{uid}", selected_label="B", correct_label="B",
+            stroke_bbox=StrokeBoundingBox(x=150.0, y=150.0, width=50.0, height=40.0),
+            option_regions=[QuizOptionRegion(label="B", x=145.0, y=145.0, width=60.0, height=50.0)],
+            selection_method="CIRCLE"
+        ))
 
-    # Kiểm tra cô lập
-    pages_a = (await get_board_pages(room_id=room_a, session_id=session_a))["pages"]
-    pages_b = (await get_board_pages(room_id=room_b, session_id=session_b))["pages"]
-    snaps_a_res = (await list_snapshots(room_id=room_a))["items"]
-    snaps_b_res = (await list_snapshots(room_id=room_b))["items"]
-    scores_a_res = (await get_bonus_score_history(room_id=room_a))["items"]
-    scores_b_res = (await get_bonus_score_history(room_id=room_b))["items"]
-    circles_a_res = (await list_circle_submissions(room_id=room_a))["items"]
-    circles_b_res = (await list_circle_submissions(room_id=room_b))["items"]
+        # Kiểm tra cô lập
+        pages_a = (await get_board_pages(room_id=room_a, session_id=session_a))["pages"]
+        pages_b = (await get_board_pages(room_id=room_b, session_id=session_b))["pages"]
+        snaps_a_res = (await list_snapshots(room_id=room_a))["items"]
+        snaps_b_res = (await list_snapshots(room_id=room_b))["items"]
+        scores_a_res = (await get_bonus_score_history(room_id=room_a))["items"]
+        scores_b_res = (await get_bonus_score_history(room_id=room_b))["items"]
+        circles_a_res = (await list_circle_submissions(room_id=room_a))["items"]
+        circles_b_res = (await list_circle_submissions(room_id=room_b))["items"]
+    finally:
+        bench_rooms = {room_a, room_b}
+        bench_classes = {class_a, class_b}
+        in_memory_pages.pop(f"{room_a}:{session_a}", None)
+        in_memory_pages.pop(f"{room_b}:{session_b}", None)
+        removed_ids = {
+            s.get("id")
+            for s in in_memory_snapshots
+            if s.get("room_id") in bench_rooms or (s.get("tags") or {}).get("class_name") in bench_classes
+        }
+        in_memory_snapshots[:] = [
+            s
+            for s in in_memory_snapshots
+            if s.get("room_id") not in bench_rooms and (s.get("tags") or {}).get("class_name") not in bench_classes
+        ]
+        for sid in removed_ids:
+            if sid:
+                in_memory_snapshot_blobs.pop(sid, None)
+        in_memory_score_logs[:] = [
+            log
+            for log in in_memory_score_logs
+            if log.get("room_id") not in bench_rooms and log.get("class_name") not in bench_classes
+        ]
+        in_memory_circle_submissions[:] = [
+            sub for sub in in_memory_circle_submissions if sub.get("room_id") not in bench_rooms
+        ]
+        for cls_key in bench_classes:
+            in_memory_class_rosters.pop(cls_key, None)
 
     p_iso = (len(pages_a) == 2) and (len(pages_b) == 1)
     s_iso = all(s.get("room_id") == room_a for s in snaps_a_res) and all(s.get("room_id") == room_b for s in snaps_b_res)

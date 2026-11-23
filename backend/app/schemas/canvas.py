@@ -41,6 +41,7 @@ class RecognizeCanvasResponse(BaseModel):
     latency_ms: Optional[int] = None
     provider: Optional[str] = None
     debounce_ms: Optional[int] = 800
+    degraded_reason: Optional[str] = None
 
 
 class ChalkIllustrationData(BaseModel):
@@ -79,6 +80,8 @@ class CorrectTokenRequest(BaseModel):
     original_text: str
     corrected_text: str
     context_latex: Optional[str] = None
+    room_id: Optional[str] = None
+    page_number: Optional[int] = None
 
 
 class PreprocessCanvasRequest(BaseModel):

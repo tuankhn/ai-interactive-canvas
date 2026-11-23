@@ -3,6 +3,7 @@
 # (TASK TF28508) - Phụ trách: Nguyễn Ngọc Gia Bảo (AI / Backend)
 # ==============================================================================
 
+import asyncio
 import base64
 import json
 import logging
@@ -32,7 +33,7 @@ class GeminiAIService:
 
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
-        self.model_name = settings.GEMINI_MODEL or "gemini-2.5-flash"
+        self.model_name = settings.GEMINI_MODEL or "gemini-3.5-flash"
         self.is_configured = False
         self._client_type = None
         self._init_client()
@@ -49,7 +50,7 @@ class GeminiAIService:
             self.client = genai.Client(api_key=self.api_key.strip())
             self._client_type = "google-genai"
             self.is_configured = True
-            logger.info("Gemini 2.5 Flash khởi tạo thành công với google-genai SDK.")
+            logger.info(f"Gemini ({self.model_name}) khởi tạo thành công với google-genai SDK.")
             return
         except Exception as e:
             logger.debug(f"Không thể nạp google-genai: {e}, thử google-generativeai...")
@@ -106,18 +107,29 @@ class GeminiAIService:
             )
 
             raw_text = ""
+            total_budget = max(0.5, float(timeout or 4.0))
+            deadline = time.perf_counter() + total_budget
             if self._client_type == "google-genai":
                 candidate_models = [self.model_name]
-                for fallback in ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.7-flash"]:
+                for fallback in settings.GEMINI_FALLBACK_MODELS:
                     if fallback not in candidate_models:
                         candidate_models.append(fallback)
 
                 last_err = None
                 for mod in candidate_models:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0.05:
+                        last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
+                        break
+                    per_attempt_timeout = min(remaining, max(0.8, total_budget / max(1, len(candidate_models)) * 1.5))
                     try:
-                        response = self.client.models.generate_content(
-                            model=mod,
-                            contents=[pil_image, prompt]
+                        response = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self.client.models.generate_content,
+                                model=mod,
+                                contents=[pil_image, prompt],
+                            ),
+                            timeout=per_attempt_timeout,
                         )
                         raw_text = response.text or ""
                         if raw_text:
@@ -129,7 +141,10 @@ class GeminiAIService:
                 if not raw_text and last_err:
                     raise last_err
             else:
-                response = self.model.generate_content([prompt, pil_image])
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(self.model.generate_content, [prompt, pil_image]),
+                    timeout=total_budget,
+                )
                 raw_text = response.text or ""
 
             raw_text = raw_text.strip()
@@ -201,10 +216,18 @@ class GeminiAIService:
                 )
 
         except Exception as err:
-            logger.error(f"Lỗi gọi Gemini 2.5 Flash Vision: {err}")
-            return self._mock_result(subject, clean_b64)
+            logger.error(f"Lỗi gọi Gemini ({self.model_name}) Vision: {err}")
+            reason = f"{type(err).__name__}: {err}"
+            fallback_res = self._mock_result(subject, clean_b64, degraded_reason=reason)
+            fallback_res.degraded_reason = reason
+            return fallback_res
 
-    def _mock_result(self, subject: str, clean_b64: str = "") -> RecognizeCanvasResponse:
+    def _mock_result(
+        self,
+        subject: str,
+        clean_b64: str = "",
+        degraded_reason: Optional[str] = None,
+    ) -> RecognizeCanvasResponse:
         """
         Dữ liệu mẫu phản hồi tức thì khi CHƯA cấu hình GEMINI_API_KEY.
         Cung cấp các kịch bản mẫu phong phú theo đặc thù môn học (Task TF2850B):
@@ -226,7 +249,13 @@ class GeminiAIService:
         elif any(k in subj for k in [":0", "#0", ":EQUATION", ":BAC_HAI", ":FORCE", ":LUC", ":WATER", ":NUOC", ":VOCAB"]):
             scenario_idx = 0
 
-        mock_notice = "⚠️ Đang ở chế độ Mock dự phòng (chưa cấu hình GEMINI_API_KEY). Thêm key vào file backend/.env để nhận diện AI thực tế bằng Gemini 2.5 Flash."
+        if degraded_reason:
+            mock_notice = (
+                f"⚠️ Dịch vụ Gemini ({self.model_name}) tạm thời gián đoạn ({degraded_reason[:120]}). "
+                f"Đang hiển thị kết quả dự phòng nội bộ."
+            )
+        else:
+            mock_notice = f"⚠️ Đang ở chế độ Mock dự phòng (chưa cấu hình GEMINI_API_KEY). Thêm key vào file backend/.env để nhận diện AI thực tế bằng Gemini ({self.model_name})."
 
         # ----------------------------------------------------------------------
         # MÔN TOÁN HỌC (MATH / TOAN)

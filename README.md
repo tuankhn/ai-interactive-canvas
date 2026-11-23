@@ -2,6 +2,8 @@
 
 Dự án thực tập: Hệ thống bảng vẽ tương tác thông minh tích hợp AI đa phương thức hỗ trợ giảng dạy tại lớp học (Smartboard) và cổng ôn tập xem lại bài giảng tại nhà cho học sinh/phụ huynh.
 
+> **Cấu hình biến môi trường trước khi chạy:** Tạo file cấu hình từ mẫu bằng lệnh `cp backend/.env.example backend/.env` và cập nhật `GEMINI_API_KEY` nếu cần (xem chi tiết tại `docs/HUONG_DAN_CAI_DAT_VA_CHAY_THU.md`).
+
 ---
 
 ## 1. Phân Vùng Code Theo Thành Viên (Chống Conflict 100%)

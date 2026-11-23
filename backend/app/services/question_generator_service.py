@@ -36,7 +36,7 @@ class QuestionVariantService:
     """
 
     def __init__(self):
-        self.gemini_model = settings.GEMINI_MODEL or "gemini-2.5-flash"
+        self.gemini_model = settings.GEMINI_MODEL or "gemini-3.5-flash"
 
     # --------------------------------------------------------------------------
     # PUBLIC API
@@ -199,16 +199,19 @@ class QuestionVariantService:
         delta = b * b - 4 * a * c
         question_content = f"Giải phương trình bậc hai sau trên tập số thực: {eq_str}"
 
+        sqrt_delta = int(math.isqrt(delta))
+        x1_formula_val = (-b + sqrt_delta) // (2 * a)
+        x2_formula_val = (-b - sqrt_delta) // (2 * a)
         steps = [
             f"Bước 1: Xác định các hệ số: a = {a}, b = {b}, c = {c}.",
             f"Bước 2: Tính biệt thức Delta: Delta = b^2 - 4ac = ({b})^2 - 4*({a})*({c}) = {delta}.",
             f"Bước 3: Vì Delta = {delta} > 0 nên phương trình có hai nghiệm phân biệt:",
-            f"  x_1 = (-b + sqrt(Delta)) / (2a) = ({-b} + {int(math.isqrt(delta))}) / {2*a} = {r1}.",
-            f"  x_2 = (-b - sqrt(Delta)) / (2a) = ({-b} - {int(math.isqrt(delta))}) / {2*a} = {r2}.",
-            f"Bước 4: Kết luận tập nghiệm S = {{{min(r1, r2)}; {max(r1, r2)}}}."
+            f"  x_1 = (-b + sqrt(Delta)) / (2a) = ({-b} + {sqrt_delta}) / {2*a} = {x1_formula_val}.",
+            f"  x_2 = (-b - sqrt(Delta)) / (2a) = ({-b} - {sqrt_delta}) / {2*a} = {x2_formula_val}.",
+            f"Bước 4: Kết luận tập nghiệm S = {{{min(x1_formula_val, x2_formula_val)}; {max(x1_formula_val, x2_formula_val)}}}."
         ]
         solution_guide = "\n".join(steps)
-        correct_answer = f"x_1 = {min(r1, r2)}, x_2 = {max(r1, r2)}"
+        correct_answer = f"x_1 = {x1_formula_val}, x_2 = {x2_formula_val}"
         changed_params = f"Đổi hệ số phương trình thành: a = {a}, b = {b}, c = {c} (Delta = {delta} là số chính phương, nghiệm nguyên đẹp)."
 
         card_text = f"【BÀI TẬP TƯƠNG TỰ - ĐỔI SỐ LIỆU】\n{question_content}\n• Lưu ý: Biệt thức Delta > 0, giải bằng công thức nghiệm chuẩn."
@@ -237,14 +240,14 @@ class QuestionVariantService:
             {
                 "eq": "x^2 - 2(m + 1)x + m^2 + 2m - 3 = 0",
                 "condition": "x_1^2 + x_2^2 - 3x_1 x_2 = 13",
-                "ans": "m = 0 hoặc m = -2",
+                "ans": "m = -1 + sqrt(7) hoặc m = -1 - sqrt(7)",
                 "guide": (
                     "1) Điều kiện để phương trình có hai nghiệm phân biệt: Delta' = (m+1)^2 - (m^2+2m-3) = 4 > 0 (luôn đúng với mọi m).\n"
                     "2) Theo hệ thức Vi-et: x_1 + x_2 = 2(m + 1) và x_1*x_2 = m^2 + 2m - 3.\n"
                     "3) Biến đổi điều kiện đề bài: (x_1 + x_2)^2 - 5x_1*x_2 = 13.\n"
                     "   <=> 4(m+1)^2 - 5(m^2+2m-3) = 13\n"
                     "   <=> 4m^2 + 8m + 4 - 5m^2 - 10m + 15 = 13\n"
-                    "   <=> -m^2 - 2m + 6 = 0 ... Giải ra m."
+                    "   <=> -m^2 - 2m + 6 = 0 <=> m^2 + 2m - 6 = 0 <=> m = -1 + sqrt(7) hoặc m = -1 - sqrt(7)."
                 ),
                 "param_desc": "Thêm tham số m vào hệ số b và c; bổ sung điều kiện đẳng thức nghiệm đối xứng x_1^2 + x_2^2 - 3x_1 x_2 = 13.",
             },

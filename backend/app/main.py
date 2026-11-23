@@ -1,18 +1,23 @@
 from contextlib import asynccontextmanager
 import json
+import logging
 import os
+from pathlib import Path
 from typing import Dict, List
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from app.core.config import settings
+from app.core.config import settings, validate_production_secrets
 from app.core.database import check_db_status, record_ai_usage_event
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Tự động nạp sẵn tài khoản lớp học & bộ đề mẫu Demo khi khởi chạy máy chủ / Docker (TF28524)."""
+    """Kiểm tra khóa bảo mật production (N12) & nạp dữ liệu mẫu Demo khi khởi chạy máy chủ / Docker (TF28524)."""
+    validate_production_secrets(settings)
     if settings.SEED_DEMO_ON_STARTUP:
         try:
             from app.core.demo_seed import seed_demo_environment
@@ -29,70 +34,71 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = settings.CORS_ALLOW_ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=("*" not in _cors_origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Tự động gắn các router nghiệp vụ khi các module tương ứng được thêm vào
+# Tự động gắn các router nghiệp vụ khi các module tương ứng được thêm vào (N13: ghi log nếu lỗi import)
 try:
     from app.api.recognize_router import router as recognize_router
     app.include_router(recognize_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp recognize_router: %s", exc)
 
 try:
     from app.api.session_router import router as session_router, alias_router as session_alias_router
     app.include_router(session_router)
     app.include_router(session_alias_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp session_router: %s", exc)
 
 try:
     from app.api.auth_router import router as auth_router
     app.include_router(auth_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp auth_router: %s", exc)
 
 try:
     from app.api.offline_sync_router import router as offline_sync_router
     app.include_router(offline_sync_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp offline_sync_router: %s", exc)
 
 try:
     from app.api.admin_router import router as admin_router
     app.include_router(admin_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp admin_router: %s", exc)
 
 try:
     from app.api.exam_router import router as exam_router, alias_router as exam_alias_router
     app.include_router(exam_router)
     app.include_router(exam_alias_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp exam_router: %s", exc)
 
 try:
     from app.api.score_router import router as score_router
     app.include_router(score_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp score_router: %s", exc)
 
 try:
     from app.api.benchmark_router import router as benchmark_router
     app.include_router(benchmark_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp benchmark_router: %s", exc)
 
 try:
     from app.api.demo_router import router as demo_router
     app.include_router(demo_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    logger.warning("Không thể nạp demo_router: %s", exc)
 
 
 _AI_TRACKED_PATHS = {
@@ -198,18 +204,25 @@ async def board_websocket(websocket: WebSocket, room_id: str, session_id: str):
 FRONTEND_DIR = os.path.abspath(
     os.getenv("FRONTEND_DIR") or os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
 )
-if os.path.isdir(FRONTEND_DIR) and os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+FRONTEND_ROOT = Path(FRONTEND_DIR).resolve()
+if FRONTEND_ROOT.is_dir() and (FRONTEND_ROOT / "index.html").is_file():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_ROOT)), name="static")
 
     @app.get("/{file_name:path}", include_in_schema=False)
     async def serve_frontend(file_name: str = ""):
         clean_path = file_name.strip("/")
         if clean_path.startswith("api") or clean_path.startswith("ws"):
-            from fastapi import HTTPException
             raise HTTPException(status_code=404, detail=f"API endpoint '/{clean_path}' không tồn tại.")
 
-        target_path = os.path.join(FRONTEND_DIR, file_name) if file_name else os.path.join(FRONTEND_DIR, "index.html")
-        if os.path.isfile(target_path):
-            return FileResponse(target_path)
-        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+        normalized_parts = file_name.replace("\\", "/").split("/")
+        if ".." in normalized_parts:
+            raise HTTPException(status_code=404, detail="Đường dẫn tệp không hợp lệ.")
+
+        target_path = (FRONTEND_ROOT / file_name).resolve() if file_name else (FRONTEND_ROOT / "index.html")
+        if not target_path.is_relative_to(FRONTEND_ROOT):
+            raise HTTPException(status_code=404, detail="Đường dẫn tệp không hợp lệ.")
+
+        if target_path.is_file():
+            return FileResponse(str(target_path))
+        return FileResponse(str(FRONTEND_ROOT / "index.html"))
 

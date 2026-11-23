@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from app.api.auth_router import (
     _detect_hash_scheme,
@@ -12,7 +12,11 @@ from app.api.auth_router import (
     _normalize_class_name,
     _normalize_phone,
     _revoke_all_user_sessions,
+    check_auth_rate_limit,
+    clear_auth_failures,
+    get_client_ip,
     get_current_user_from_header,
+    record_auth_failure,
 )
 from app.core.config import settings
 from app.core.database import (
@@ -102,6 +106,31 @@ def _sync_teacher_class_assignment(teacher_id: Optional[str], class_name: str) -
         classes.append(norm_cls)
         teacher["allowed_classes"] = classes
         teacher["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _revoke_orphan_class_permissions(removed_class_names: List[str]) -> None:
+    """H11: Thu hồi tên lớp khỏi allowed_classes của giáo viên chỉ khi không còn lớp nào cùng tên chuẩn hóa."""
+    active_names = {
+        _normalize_class_name(cls.get("name") or "")
+        for cls in in_memory_classes.values()
+        if cls.get("name")
+    }
+    orphaned = {
+        _normalize_class_name(name)
+        for name in removed_class_names
+        if name and _normalize_class_name(name) not in active_names
+    }
+    if not orphaned:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    for user in in_memory_users.values():
+        if user.get("role") != "TEACHER":
+            continue
+        current = list(user.get("allowed_classes") or [])
+        filtered = [c for c in current if _normalize_class_name(c) not in orphaned]
+        if len(filtered) != len(current):
+            user["allowed_classes"] = filtered
+            user["updated_at"] = now
 
 
 def _serialize_school(school: Dict[str, Any]) -> Dict[str, Any]:
@@ -254,9 +283,12 @@ def _compute_minio_storage_stats(limit_mb: float) -> Dict[str, Any]:
 
 
 @router.post("/login", response_model=TokenResponse, summary="TF28528: Đăng nhập Quản trị viên (Admin Portal)")
-async def admin_login(payload: AdminLoginRequest):
+async def admin_login(payload: AdminLoginRequest, request: Request):
     _ensure_default_admin()
     norm_email = payload.email.strip().lower()
+    client_ip = get_client_ip(request)
+    check_auth_rate_limit("admin_pw", norm_email, client_ip)
+
     matched = None
     for user in in_memory_users.values():
         if user.get("role") == "ADMIN" and (user.get("email") or "").lower() == norm_email:
@@ -264,6 +296,7 @@ async def admin_login(payload: AdminLoginRequest):
             break
 
     if not matched or not verify_password(payload.password, matched.get("password_hash") or ""):
+        record_auth_failure("admin_pw", norm_email, client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email hoặc mật khẩu Quản trị viên không đúng.",
@@ -275,6 +308,7 @@ async def admin_login(payload: AdminLoginRequest):
             detail="Tài khoản Quản trị viên đang bị tạm khóa.",
         )
 
+    clear_auth_failures("admin_pw", norm_email, client_ip)
     return _issue_session_tokens(
         matched,
         remember_me=False,
@@ -351,8 +385,12 @@ async def delete_school(school_id: str, authorization: Optional[str] = Header(de
     removed_classes = [
         cid for cid, cls in list(in_memory_classes.items()) if cls.get("school_id") == school_id
     ]
+    removed_names = [
+        in_memory_classes[cid].get("name", "") for cid in removed_classes if cid in in_memory_classes
+    ]
     for cid in removed_classes:
         in_memory_classes.pop(cid, None)
+    _revoke_orphan_class_permissions(removed_names)
 
     return {"status": "deleted", "school_id": school_id, "removed_classes": len(removed_classes)}
 
@@ -445,6 +483,7 @@ async def delete_class(class_id: str, authorization: Optional[str] = Header(defa
     classroom = in_memory_classes.pop(class_id, None)
     if not classroom:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học.")
+    _revoke_orphan_class_permissions([classroom.get("name", "")])
     return {"status": "deleted", "class_id": class_id}
 
 

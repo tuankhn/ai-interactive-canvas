@@ -4,6 +4,7 @@
 # ==============================================================================
 
 import base64
+import html
 import logging
 import re
 from typing import Dict, Any, Optional, List
@@ -457,6 +458,8 @@ class IllustrationService:
         display_name = concept.strip()
         if len(display_name) > 22:
             display_name = display_name[:20] + "..."
+        safe_display_name = html.escape(display_name, quote=True)
+        safe_subject = html.escape((subject or "").strip(), quote=True)
 
         inner = f"""
             <!-- Khung vẽ phấn bảng đen -->
@@ -470,10 +473,10 @@ class IllustrationService:
             <line x1="215" y1="70" x2="225" y2="62" stroke="#fef08a" />
             <line x1="105" y1="70" x2="95" y2="62" stroke="#fef08a" />
             <!-- Nhãn khái niệm viết tay phấn trắng -->
-            <text x="160" y="175" fill="#f8fafc" stroke="none" font-size="14" font-family="Arial, sans-serif" font-weight="bold" text-anchor="middle">{display_name}</text>
-            <text x="160" y="196" fill="#94a3b8" stroke="none" font-size="11" font-family="Arial, sans-serif" text-anchor="middle">Chalk Sketch · {subject}</text>
+            <text x="160" y="175" fill="#f8fafc" stroke="none" font-size="14" font-family="Arial, sans-serif" font-weight="bold" text-anchor="middle">{safe_display_name}</text>
+            <text x="160" y="196" fill="#94a3b8" stroke="none" font-size="11" font-family="Arial, sans-serif" text-anchor="middle">Chalk Sketch · {safe_subject}</text>
         """
-        return _svg_wrap(inner, width=320, height=240, title=f"Minh họa {concept}")
+        return _svg_wrap(inner, width=320, height=240, title=f"Minh họa {html.escape(concept.strip(), quote=True)}")
 
 
 illustration_service = IllustrationService()

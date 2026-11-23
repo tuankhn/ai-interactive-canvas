@@ -1,5 +1,10 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
+
+from app.api.auth_router import assert_user_can_access_class, get_current_user_from_header
+from app.api.session_router import save_snapshot_core
+from app.core.config import settings
+from app.schemas.canvas_schema import SnapshotSaveRequest
 
 from app.core.database import (
     in_memory_classes,
@@ -112,8 +117,25 @@ async def get_demo_exam_by_subject(
 
 @router.post("/reseed", summary="TF28524: Khôi phục nhanh toàn bộ dữ liệu mẫu Demo trước giờ thuyết trình")
 async def reseed_demo_data():
+    if settings.APP_ENV != "development":
+        raise HTTPException(status_code=403, detail="Chỉ cho phép khôi phục dữ liệu mẫu ở môi trường development.")
     summary = seed_demo_environment(force=True)
     return {
         "status": "reseeded",
         **summary,
     }
+
+
+@router.post("/portal-sample-snapshot", summary="N7: Tạo bài giảng mẫu thử nghiệm ở cổng học sinh (chỉ môi trường development)")
+async def create_portal_sample_snapshot(
+    payload: SnapshotSaveRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    if settings.APP_ENV != "development":
+        raise HTTPException(
+            status_code=403,
+            detail="Tính năng tạo bài giảng mẫu chỉ khả dụng trong môi trường development.",
+        )
+    user = get_current_user_from_header(authorization, required=settings.AUTH_ENFORCE)
+    assert_user_can_access_class(user, requested_class_name=payload.class_name, requested_room_id=payload.room_id)
+    return await save_snapshot_core(payload)

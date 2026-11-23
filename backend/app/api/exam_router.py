@@ -3,7 +3,8 @@ import math
 import os
 from typing import List, Optional, Tuple
 import uuid
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile, status
+from app.api.auth_router import require_role
 from app.core.database import in_memory_circle_submissions, in_memory_exam_answer_keys
 from app.schemas.quiz import (
     CircleAnswerSubmitRequest,
@@ -42,7 +43,10 @@ async def upload_exam_file(
     file: UploadFile = File(...),
     mode: str = Query("STUDENT", description="Chế độ xem: 'STUDENT' (ẩn đáp án) hoặc 'TEACHER' (hiện đáp án đầy đủ)"),
     title: Optional[str] = Query(None, description="Tiêu đề bài thi tùy chỉnh"),
+    authorization: Optional[str] = Header(default=None),
 ):
+    if (mode or "STUDENT").strip().upper() == "TEACHER":
+        require_role(authorization, "TEACHER", "ADMIN")
     filename = file.filename or "de_thi"
     ext = os.path.splitext(filename)[1].lower()
 
@@ -79,7 +83,12 @@ async def upload_exam_file(
     summary="Bóc tách câu hỏi từ văn bản giáo viên nhập trực tiếp",
     description="Cho phép giáo viên gõ hoặc dán nội dung đề thi trực tiếp. Tự động nhận diện MCQ/Tự luận và ẩn đáp án đúng trong chế độ Học sinh.",
 )
-async def parse_direct_text(payload: ExamParseTextRequest):
+async def parse_direct_text(
+    payload: ExamParseTextRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    if (payload.mode or "STUDENT").strip().upper() == "TEACHER":
+        require_role(authorization, "TEACHER", "ADMIN")
     if not payload.raw_text or not payload.raw_text.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -97,7 +106,12 @@ async def parse_direct_text(payload: ExamParseTextRequest):
     summary="Chuyển đổi danh sách câu hỏi thành đối tượng vẽ Fabric.js dàn lên mặt bảng",
     description="Tạo cấu trúc JSON Fabric.js tương thích với bảng vẽ, phân bổ câu hỏi theo trang (2 câu/trang).",
 )
-async def layout_questions_on_canvas(payload: ExamCanvasLayoutRequest):
+async def layout_questions_on_canvas(
+    payload: ExamCanvasLayoutRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    if (payload.mode or "STUDENT").strip().upper() == "TEACHER":
+        require_role(authorization, "TEACHER", "ADMIN")
     questions = payload.questions
     mode = payload.mode or "STUDENT"
     per_page = payload.questions_per_page or 2
@@ -119,7 +133,10 @@ async def layout_questions_on_canvas(payload: ExamCanvasLayoutRequest):
 async def get_sample_exam(
     subject: str = Query("TOAN", description="Môn học: TOAN, VAT_LY, TIENG_ANH"),
     mode: str = Query("STUDENT", description="Chế độ xem: 'STUDENT' hoặc 'TEACHER'"),
+    authorization: Optional[str] = Header(default=None),
 ):
+    if (mode or "STUDENT").strip().upper() == "TEACHER":
+        require_role(authorization, "TEACHER", "ADMIN")
     sample_text = exam_service.get_sample_exam(subject)
     raw_parsed = exam_service.parse_text(sample_text, title=f"Đề mẫu môn {subject}")
     filtered_result = exam_service.filter_by_mode(raw_parsed, mode=mode)
@@ -140,10 +157,10 @@ async def grade_mcq_choice(payload: GradeMCQRequest):
         )
 
     stored_key = in_memory_exam_answer_keys.get(payload.question_id, {})
-    resolved_correct = payload.correct_label or stored_key.get("correct_option") or "A"
+    resolved_correct = stored_key.get("correct_option") or payload.correct_label or "A"
     resolved_explanation = (
-        payload.explanation
-        or stored_key.get("explanation")
+        stored_key.get("explanation")
+        or payload.explanation
         or "Phương án chính xác theo định luật và số liệu bài toán."
     )
 
@@ -269,13 +286,8 @@ def _match_stroke_to_option(
     return None, 0.0
 
 
-@router.post(
-    "/circle-answer",
-    response_model=CircleAnswerSubmitResponse,
-    summary="TF28518: Nhận vùng tọa độ nét khoanh tròn đáp án A/B/C/D từ bảng và chấm bài",
-    description="Tiếp nhận tọa độ nét khoanh của học sinh, đối chiếu với vị trí các phương án trên Canvas, lưu log vùng khoanh và trả kết quả chấm bài.",
-)
-async def submit_circled_answer(payload: CircleAnswerSubmitRequest):
+async def submit_circled_answer_core(payload: CircleAnswerSubmitRequest) -> CircleAnswerSubmitResponse:
+    """Logic lõi nhận diện vùng khoanh đáp án A/B/C/D và chấm bài (dùng chung cho router & benchmark)."""
     matched_label, overlap_score = _match_stroke_to_option(
         stroke=payload.stroke_bbox,
         option_regions=payload.option_regions,
@@ -288,10 +300,10 @@ async def submit_circled_answer(payload: CircleAnswerSubmitRequest):
         )
 
     stored_key = in_memory_exam_answer_keys.get(payload.question_id, {})
-    resolved_correct = payload.correct_label or stored_key.get("correct_option") or "A"
+    resolved_correct = stored_key.get("correct_option") or payload.correct_label or "A"
     resolved_explanation = (
-        payload.explanation
-        or stored_key.get("explanation")
+        stored_key.get("explanation")
+        or payload.explanation
         or "Phương án chính xác theo định luật và số liệu bài toán."
     )
 
@@ -337,15 +349,22 @@ async def submit_circled_answer(payload: CircleAnswerSubmitRequest):
     )
 
 
-@router.get(
-    "/circle-submissions",
-    summary="TF28518: Danh sách các lượt khoanh đáp án trắc nghiệm đã gửi về Backend",
+@router.post(
+    "/circle-answer",
+    response_model=CircleAnswerSubmitResponse,
+    summary="TF28518: Nhận vùng tọa độ nét khoanh tròn đáp án A/B/C/D từ bảng và chấm bài",
+    description="Tiếp nhận tọa độ nét khoanh của học sinh, đối chiếu với vị trí các phương án trên Canvas, lưu log vùng khoanh và trả kết quả chấm bài.",
 )
-async def list_circle_submissions(
-    session_id: Optional[str] = Query(default=None),
-    question_id: Optional[str] = Query(default=None),
-    room_id: Optional[str] = Query(default=None),
-):
+async def submit_circled_answer(payload: CircleAnswerSubmitRequest):
+    return await submit_circled_answer_core(payload)
+
+
+async def list_circle_submissions_core(
+    session_id: Optional[str] = None,
+    question_id: Optional[str] = None,
+    room_id: Optional[str] = None,
+) -> dict:
+    """Logic lõi truy vấn các lượt khoanh đáp án."""
     sess_str = session_id if isinstance(session_id, str) else None
     q_str = question_id if isinstance(question_id, str) else None
     room_str = room_id if isinstance(room_id, str) else None
@@ -357,6 +376,22 @@ async def list_circle_submissions(
         and (not room_str or item.get("room_id") == room_str)
     ]
     return {"count": len(items), "items": items}
+
+
+@router.get(
+    "/circle-submissions",
+    summary="TF28518: Danh sách các lượt khoanh đáp án trắc nghiệm đã gửi về Backend",
+)
+async def list_circle_submissions(
+    session_id: Optional[str] = Query(default=None),
+    question_id: Optional[str] = Query(default=None),
+    room_id: Optional[str] = Query(default=None),
+):
+    return await list_circle_submissions_core(
+        session_id=session_id,
+        question_id=question_id,
+        room_id=room_id,
+    )
 
 
 # =========================================================================
