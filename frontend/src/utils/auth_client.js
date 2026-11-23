@@ -56,6 +56,9 @@ export function readStoredTeacherSession() {
 function saveTeacherSession(tokenData) {
   const now = Date.now();
   const refreshExpiresMs = (tokenData.refresh_expires_in || 14 * 86400) * 1000;
+  const allowedClasses = Array.isArray(tokenData.allowed_classes)
+    ? tokenData.allowed_classes.filter(Boolean)
+    : [];
   const session = {
     access_token: tokenData.access_token,
     refresh_token: tokenData.refresh_token,
@@ -64,17 +67,66 @@ function saveTeacherSession(tokenData) {
     full_name: tokenData.full_name,
     email: tokenData.email,
     phone_number: tokenData.phone_number,
+    class_name: tokenData.class_name || null,
+    allowed_classes: allowedClasses,
     device_id: tokenData.device_id || getOrCreateDeviceId(),
     remember_days: tokenData.remember_days || 14,
     password_hash_scheme: tokenData.password_hash_scheme || 'bcrypt',
     expires_at: now + refreshExpiresMs,
   };
   localStorage.setItem(TEACHER_SESSION_KEY, JSON.stringify(session));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('app:teacher-authenticated', {
+        detail: { role: session.role, allowed_classes: allowedClasses },
+      })
+    );
+  }
   return session;
+}
+
+export function getTeacherAuthHeaders() {
+  const session = readStoredTeacherSession();
+  if (session?.access_token && (!session.expires_at || session.expires_at > Date.now())) {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+  return {};
+}
+
+export function promptTeacherLogin(reasonMessage = '') {
+  if (reasonMessage) setStatus(reasonMessage);
+  const { dialog, requestError } = getAuthEls();
+  if (!dialog) return;
+  if (requestError && reasonMessage) {
+    requestError.textContent = reasonMessage;
+    requestError.hidden = false;
+  }
+  if (!dialog.open && typeof dialog.showModal === 'function') {
+    showOtpRequestStep();
+    try {
+      dialog.showModal();
+    } catch {
+      // Bỏ qua nếu một modal khác đang mở
+    }
+  }
+}
+
+export function authFetch(url, options = {}) {
+  const mergedHeaders = {
+    ...getTeacherAuthHeaders(),
+    ...(options.headers || {}),
+  };
+  return fetch(url, {
+    ...options,
+    headers: mergedHeaders,
+  });
 }
 
 function clearStoredTeacherSession() {
   localStorage.removeItem(TEACHER_SESSION_KEY);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app:teacher-logged-out'));
+  }
 }
 
 function renderAuthState(session) {

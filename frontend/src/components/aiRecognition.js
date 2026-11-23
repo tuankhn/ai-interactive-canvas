@@ -2,6 +2,8 @@ import { Text, FabricImage } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+es
 import { $, fabricCanvas, state, ui, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
+import { escapeHtml } from '../utils/escape.js';
+import { authFetch } from '../utils/auth_client.js';
 import {
   isOfflineMode,
   markNetworkOffline,
@@ -9,12 +11,16 @@ import {
   showCornerNotification,
 } from '../utils/offline_sync.js';
 
-let isAutoAiEnabled = true;
+const AUTO_AI_IDLE_MS = 1800;
+
+let isAutoAiEnabled = false;
 let isRecognizing = false;
 let aiDebounceTimer = null;
 let currentAiResult = null;
 let aiRequestId = 0;
 let boardSocket = null;
+let wsRetryCount = 0;
+let wsRetryTimer = null;
 
 const getAiElements = () => ({
   overlay: $('aiOverlayPanel'),
@@ -60,11 +66,14 @@ export function cancelAIDebounce() {
 }
 
 export function scheduleAIDebounce() {
-  if (!isAutoAiEnabled || state.ended || isOfflineMode()) return;
+  if (!isAutoAiEnabled || state.ended || isOfflineMode() || state.stroke) return;
+  if (!fabricCanvas.getObjects().length) return;
   cancelAIDebounce();
   aiDebounceTimer = setTimeout(() => {
+    aiDebounceTimer = null;
+    if (!isAutoAiEnabled || state.ended || state.stroke || !fabricCanvas.getObjects().length) return;
     performAIRecognition({ isDebounced: true });
-  }, 800);
+  }, AUTO_AI_IDLE_MS);
 }
 
 export async function performAIRecognition({ isDebounced = false } = {}) {
@@ -90,7 +99,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
 
   isRecognizing = true;
   if (aiElements.statusIndicator) {
-    aiElements.statusIndicator.textContent = isDebounced ? 'AI: Đang xử lý (800ms)...' : 'AI: Đang nhận diện...';
+    aiElements.statusIndicator.textContent = isDebounced ? 'AI: Tự động nhận diện...' : 'AI: Đang nhận diện...';
     aiElements.statusIndicator.classList.add('is-analyzing');
   }
 
@@ -98,7 +107,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
   if (aiElements.overlay) aiElements.overlay.hidden = false;
   if (aiElements.loading) aiElements.loading.hidden = false;
   if (aiElements.content) aiElements.content.hidden = true;
-  setStatus('Đang gửi nét vẽ lên AI (Gemini 2.5 Flash / Mathpix)...');
+  setStatus('Đang gửi nét vẽ lên AI (Gemini / Mathpix)...');
 
   try {
     const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
@@ -115,7 +124,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
     };
 
     const startTime = performance.now();
-    const response = await fetch('/api/v1/recognize', {
+    const response = await authFetch('/api/v1/recognize', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -143,8 +152,8 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
 
     // Hiển thị Provider & Badges
     if (aiElements.providerBadge) {
-      aiElements.providerBadge.textContent = data.provider || 'Gemini 2.5 Flash';
-      aiElements.providerBadge.classList.toggle('is-mock', data.provider?.includes('MOCK'));
+      aiElements.providerBadge.textContent = data.provider || 'Gemini AI';
+      aiElements.providerBadge.classList.toggle('is-mock', (data.provider || '').toUpperCase().includes('MOCK'));
     }
     if (aiElements.confidenceBadge) {
       const conf = Math.round((data.confidence || 0.95) * 100);
@@ -174,12 +183,12 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
         if (details.grammar_structure) {
           const headLine = document.createElement('div');
           headLine.className = 'ai-eng-head';
-          headLine.innerHTML = `<strong class="ai-eng-word">${details.grammar_structure}</strong>`;
+          headLine.innerHTML = `<strong class="ai-eng-word">${escapeHtml(details.grammar_structure)}</strong>`;
           engContainer.appendChild(headLine);
 
           const sentenceLine = document.createElement('div');
           sentenceLine.className = 'ai-eng-example';
-          sentenceLine.innerHTML = `<strong>Câu:</strong> ${data.recognized_text}`;
+          sentenceLine.innerHTML = `<strong>Câu:</strong> ${escapeHtml(data.recognized_text)}`;
           engContainer.appendChild(sentenceLine);
 
           if (details.usage) {
@@ -191,7 +200,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
         } else {
           const headLine = document.createElement('div');
           headLine.className = 'ai-eng-head';
-          headLine.innerHTML = `<strong class="ai-eng-word">${details.word || data.recognized_text}</strong> <span class="ai-eng-type">[${details.word_type || 'Word'}]</span> <span class="ai-eng-ipa">${details.ipa || ''}</span>`;
+          headLine.innerHTML = `<strong class="ai-eng-word">${escapeHtml(details.word || data.recognized_text)}</strong> <span class="ai-eng-type">[${escapeHtml(details.word_type || 'Word')}]</span> <span class="ai-eng-ipa">${escapeHtml(details.ipa || '')}</span>`;
           engContainer.appendChild(headLine);
 
           if (details.vietnamese_meaning) {
@@ -204,7 +213,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
           if (details.example_sentence) {
             const exLine = document.createElement('div');
             exLine.className = 'ai-eng-example';
-            exLine.innerHTML = `<em>Ex:</em> ${details.example_sentence} <br><span class="ai-eng-trans">(${details.example_translation || ''})</span>`;
+            exLine.innerHTML = `<em>Ex:</em> ${escapeHtml(details.example_sentence)} <br><span class="ai-eng-trans">(${escapeHtml(details.example_translation || '')})</span>`;
             engContainer.appendChild(exLine);
           }
         }
@@ -233,7 +242,20 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
           aiElements.illustrationTitle.textContent = data.illustration.caption || `Minh họa: ${data.illustration.concept}`;
         }
         if (aiElements.illustrationPreview) {
-          aiElements.illustrationPreview.innerHTML = data.illustration.svg_content || '';
+          aiElements.illustrationPreview.textContent = '';
+          const previewSrc = data.illustration.image_data_url || (
+            data.illustration.svg_content
+              ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(data.illustration.svg_content)}`
+              : ''
+          );
+          if (previewSrc) {
+            const previewImg = document.createElement('img');
+            previewImg.src = previewSrc;
+            previewImg.alt = data.illustration.caption || data.illustration.concept || 'Minh họa AI';
+            previewImg.style.maxWidth = '100%';
+            previewImg.style.height = 'auto';
+            aiElements.illustrationPreview.appendChild(previewImg);
+          }
         }
         if (aiElements.illustrationDesc) {
           aiElements.illustrationDesc.textContent = data.illustration.description || '';
@@ -274,7 +296,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
       aiElements.statusIndicator.classList.remove('is-analyzing');
     }
 
-    ui.footer.textContent = `Đã kết nối máy chủ · Nhận diện AI (${data.subject || 'Đa môn'}) thành công (${data.latency_ms || elapsed} ms) · Debounce 800ms`;
+    ui.footer.textContent = `Đã kết nối máy chủ · Nhận diện AI (${data.subject || 'Đa môn'}) thành công (${data.latency_ms || elapsed} ms)`;
     setStatus(`AI nhận diện: ${data.recognized_text || displayFormula}`);
 
   } catch (error) {
@@ -384,19 +406,46 @@ export async function insertAiResultToBoard() {
   let textWidth = 260;
 
   if (textToInsert) {
-    const textObj = new Text(textToInsert, {
-      left: 40,
-      top: 40,
-      fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
-      fontSize: 22,
-      fontFamily: 'Arial, sans-serif',
-      selectable: false,
-      evented: false
-    });
-    textObj._hitPoints = [{ x: 40, y: 40 }, { x: 250, y: 40 }];
-    textObj._hitWidth = 30;
-    fabricCanvas.add(textObj);
-    textWidth = Math.max(220, textObj.width || 260);
+    let insertedFormulaImage = false;
+    const shouldRenderLatex = !isEng && !isBio && !isGeo && Boolean(currentAiResult.latex);
+    if (shouldRenderLatex) {
+      try {
+        const { createFormulaImage } = await import('../extensions/handwriting.js');
+        const formulaImg = await createFormulaImage(currentAiResult.latex, {
+          left: 40,
+          top: 40,
+          width: 320,
+          height: 54,
+        });
+        const bounds = formulaImg.getBoundingRect();
+        formulaImg._hitPoints = [
+          { x: 40, y: 40 + (bounds.height || 40) / 2 },
+          { x: 40 + (bounds.width || 220), y: 40 + (bounds.height || 40) / 2 },
+        ];
+        formulaImg._hitWidth = Math.max(28, bounds.height || 36);
+        fabricCanvas.add(formulaImg);
+        textWidth = Math.max(220, bounds.width || 260);
+        insertedFormulaImage = true;
+      } catch {
+        insertedFormulaImage = false;
+      }
+    }
+
+    if (!insertedFormulaImage) {
+      const textObj = new Text(textToInsert, {
+        left: 40,
+        top: 40,
+        fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
+        fontSize: 22,
+        fontFamily: 'Arial, sans-serif',
+        selectable: false,
+        evented: false
+      });
+      textObj._hitPoints = [{ x: 40, y: 40 }, { x: 250, y: 40 }];
+      textObj._hitWidth = 30;
+      fabricCanvas.add(textObj);
+      textWidth = Math.max(220, textObj.width || 260);
+    }
   }
 
   // Task TF2850F: Tự động đặt hình minh họa nét phấn trắng bên cạnh từ vựng
@@ -428,8 +477,13 @@ export function initBoardWebSocket() {
     const session = $('sessionId')?.textContent?.trim() || 'session-10a1';
     boardSocket = new WebSocket(`${protocol}//${host}/ws/board/${room}/${session}`);
     boardSocket.onopen = () => {
+      wsRetryCount = 0;
+      if (wsRetryTimer) {
+        clearTimeout(wsRetryTimer);
+        wsRetryTimer = null;
+      }
       if (!isOfflineMode()) {
-        ui.footer.textContent = 'Đã kết nối máy chủ · Đồng bộ phòng học thời gian thực (WSS) · Debounce 800ms';
+        ui.footer.textContent = 'Đã kết nối máy chủ · Kênh tín hiệu phòng học sẵn sàng';
       }
     };
     boardSocket.onmessage = () => {
@@ -440,7 +494,15 @@ export function initBoardWebSocket() {
     };
     boardSocket.onclose = () => {
       boardSocket = null;
-      if (!state.ended && !isOfflineMode()) setTimeout(initBoardWebSocket, 5000);
+      if (!state.ended && !isOfflineMode()) {
+        if (wsRetryTimer) clearTimeout(wsRetryTimer);
+        const delayMs = Math.min(60000, 2000 * (2 ** Math.min(wsRetryCount, 5)));
+        wsRetryCount += 1;
+        wsRetryTimer = setTimeout(() => {
+          wsRetryTimer = null;
+          initBoardWebSocket();
+        }, delayMs);
+      }
     };
   } catch {
     // Graceful fallback
@@ -456,12 +518,25 @@ export function setupAIRecognition() {
     });
   }
   if (aiElements.autoToggle) {
+    isAutoAiEnabled = aiElements.autoToggle.dataset.auto === 'true';
+    aiElements.autoToggle.setAttribute('aria-pressed', String(isAutoAiEnabled));
+    aiElements.autoToggle.classList.toggle('is-active', isAutoAiEnabled);
+    aiElements.autoToggle.textContent = isAutoAiEnabled ? 'Tự động: BẬT' : 'Tự động: TẮT';
+
     aiElements.autoToggle.addEventListener('click', () => {
       isAutoAiEnabled = !isAutoAiEnabled;
+      if (!isAutoAiEnabled) {
+        cancelAIDebounce();
+      }
       aiElements.autoToggle.dataset.auto = String(isAutoAiEnabled);
+      aiElements.autoToggle.setAttribute('aria-pressed', String(isAutoAiEnabled));
       aiElements.autoToggle.classList.toggle('is-active', isAutoAiEnabled);
       aiElements.autoToggle.textContent = isAutoAiEnabled ? 'Tự động: BẬT' : 'Tự động: TẮT';
-      setStatus(`Tự động nhận diện AI (800ms): ${isAutoAiEnabled ? 'BẬT' : 'TẮT'}`);
+      setStatus(
+        isAutoAiEnabled
+          ? 'Đã BẬT tự động nhận diện AI (chờ 1.8s sau khi ngừng viết bút)'
+          : 'Đã TẮT tự động nhận diện AI — bấm "Nhận diện AI" khi cần dịch'
+      );
     });
   }
   if (aiElements.closeBtn) {
@@ -536,7 +611,7 @@ export function setupAIRecognition() {
 
       try {
         const subject = aiElements.subjectSelect?.value || 'TIENG_ANH';
-        const response = await fetch('/api/v1/illustrate', {
+        const response = await authFetch('/api/v1/illustrate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -613,6 +688,31 @@ export function setupAIRecognition() {
     cancelAIDebounce();
   });
   window.addEventListener('app:network-online', () => {
+    wsRetryCount = 0;
+    if (wsRetryTimer) {
+      clearTimeout(wsRetryTimer);
+      wsRetryTimer = null;
+    }
+    initBoardWebSocket();
+  });
+
+  window.addEventListener('app:class-changed', () => {
+    cancelAIDebounce();
+    if (wsRetryTimer) {
+      clearTimeout(wsRetryTimer);
+      wsRetryTimer = null;
+    }
+    if (boardSocket) {
+      const oldSocket = boardSocket;
+      boardSocket = null;
+      try {
+        oldSocket.onclose = null;
+        oldSocket.close();
+      } catch {
+        // Ignore close errors
+      }
+    }
+    wsRetryCount = 0;
     initBoardWebSocket();
   });
 

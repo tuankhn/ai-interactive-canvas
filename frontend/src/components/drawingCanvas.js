@@ -4,7 +4,82 @@ import { isPalmTouch, getPoint } from '../utils/pointer.js';
 import { createPath, drawRuler, previewShape, isNearObject, intersects, makeShape, makeRuler } from '../utils/geometry.js';
 import { snapshot, restore, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
-import { scheduleAIDebounce } from './aiRecognition.js';
+import { scheduleAIDebounce, cancelAIDebounce } from './aiRecognition.js';
+
+let activeInlineTextInput = null;
+
+function openInlineTextEditor(point) {
+  if (activeInlineTextInput) {
+    activeInlineTextInput.blur();
+  }
+  const fontSize = Math.max(18, Number(ui.width.value) * 5);
+  const strokeColor = ui.color.value;
+  const isDarkBoard = fabricCanvas.backgroundColor === '#111827';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Nhập chữ lên bảng (Enter để chèn, Esc để hủy)...';
+  input.setAttribute('aria-label', 'Nhập nội dung chữ lên bảng');
+  Object.assign(input.style, {
+    position: 'absolute',
+    left: `${Math.max(8, Math.min(point.x, Math.max(8, stage.clientWidth - 260)))}px`,
+    top: `${Math.max(8, Math.min(point.y - 6, Math.max(8, stage.clientHeight - 48)))}px`,
+    minWidth: '240px',
+    maxWidth: `${Math.max(160, stage.clientWidth - 24)}px`,
+    padding: '6px 10px',
+    fontSize: `${Math.min(28, fontSize)}px`,
+    fontFamily: 'inherit',
+    color: strokeColor,
+    background: isDarkBoard ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.96)',
+    border: '2px solid #2563eb',
+    borderRadius: '8px',
+    boxShadow: '0 6px 18px rgba(15, 23, 42, 0.16)',
+    outline: 'none',
+    zIndex: '25',
+  });
+
+  let finalized = false;
+  const finalize = (commitText) => {
+    if (finalized) return;
+    finalized = true;
+    if (activeInlineTextInput === input) activeInlineTextInput = null;
+    const val = input.value.trim();
+    input.remove();
+    if (!commitText || !val || state.ended) return;
+    const before = snapshot();
+    const textObj = new Text(val, {
+      left: point.x,
+      top: point.y,
+      fill: strokeColor,
+      fontSize,
+      selectable: false,
+      evented: false,
+    });
+    textObj._hitPoints = [{ x: point.x, y: point.y }, { x: point.x + Math.max(60, textObj.width || 100), y: point.y }];
+    textObj._hitWidth = Math.max(24, fontSize);
+    fabricCanvas.add(textObj);
+    fabricCanvas.requestRenderAll();
+    remember(before);
+    updateHint();
+    setStatus('Đã thêm chữ');
+  };
+
+  input.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      finalize(true);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      finalize(false);
+      setStatus('Đã hủy nhập chữ');
+    }
+  });
+  input.addEventListener('blur', () => finalize(true));
+
+  stage.appendChild(input);
+  activeInlineTextInput = input;
+  requestAnimationFrame(() => input.focus());
+}
 
 function resizeCanvas() {
   // clientWidth/clientHeight không tính viền đứt nét của canvas-stage.
@@ -191,7 +266,13 @@ export function finishStroke(commit) {
   if (remember(finished.before)) {
     ui.input.textContent = `Đã hoàn thành: ${toolNames[state.tool]}`;
     setStatus('Đã cập nhật bảng');
-    scheduleAIDebounce();
+    const strokeSpan = points.length >= 4 ? Math.hypot(last.x - first.x, last.y - first.y) : 0;
+    const isMeaningfulPenStroke = state.tool === 'pen' && createdObject && (points.length >= 6 || strokeSpan >= 8);
+    if (isMeaningfulPenStroke && fabricCanvas.getObjects().length > 0) {
+      scheduleAIDebounce();
+    } else {
+      cancelAIDebounce();
+    }
     if (createdObject) {
       window.dispatchEvent(new CustomEvent('app:stroke-finished', {
         detail: {
@@ -228,22 +309,16 @@ function pointerDown(event) {
     }
   }
   event.preventDefault();
+  cancelAIDebounce();
   closePanels();
+  const aiOverlay = $('aiOverlayPanel');
+  if (aiOverlay && !aiOverlay.hidden) {
+    aiOverlay.hidden = true;
+  }
 
   if (state.tool === 'text') {
     const p = getPoint(event);
-    const text = window.prompt('Nhập nội dung chữ cần thêm vào bảng:');
-    if (!text || !text.trim()) return;
-    const before = snapshot();
-    fabricCanvas.add(new Text(text.trim(), {
-      left: p.x, top: p.y, fill: ui.color.value,
-      fontSize: Math.max(18, Number(ui.width.value) * 5),
-      selectable: false, evented: false
-    }));
-    fabricCanvas.requestRenderAll();
-    remember(before);
-    updateHint();
-    setStatus('Đã thêm chữ');
+    openInlineTextEditor(p);
     return;
   }
 

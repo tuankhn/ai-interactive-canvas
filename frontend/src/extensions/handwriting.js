@@ -14,24 +14,50 @@ const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 let tesseractWorkerPromise = null;
 let onOCRProgress = null;
 let mathJaxPromise = null;
+const scriptLoadPromises = new Map();
 
 function loadScript(src, id) {
-  return new Promise((resolve, reject) => {
-    if (document.getElementById(id)) {
-      reject(new Error(`Thư viện ${id} chưa khởi tạo thành công. Hãy tải lại trang.`));
-      return;
+  if (scriptLoadPromises.has(id)) {
+    return scriptLoadPromises.get(id);
+  }
+  const existing = document.getElementById(id);
+  if (existing) {
+    if (existing.dataset.loaded === 'true') {
+      return Promise.resolve();
     }
+    const pending = new Promise((resolve, reject) => {
+      existing.addEventListener('load', () => {
+        existing.dataset.loaded = 'true';
+        resolve();
+      }, { once: true });
+      existing.addEventListener('error', () => {
+        scriptLoadPromises.delete(id);
+        existing.remove();
+        reject(new Error(`Không thể tải thư viện từ Internet: ${src}`));
+      }, { once: true });
+    });
+    scriptLoadPromises.set(id, pending);
+    return pending;
+  }
+
+  const promise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.id = id;
     script.src = src;
     script.async = true;
-    script.onload = resolve;
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      resolve();
+    };
     script.onerror = () => {
+      scriptLoadPromises.delete(id);
       script.remove();
       reject(new Error(`Không thể tải thư viện từ Internet: ${src}`));
     };
     document.head.append(script);
   });
+  scriptLoadPromises.set(id, promise);
+  return promise;
 }
 
 async function getOCRWorker(progressCallback) {
@@ -166,7 +192,7 @@ async function mathSVG(tex, color) {
   return svg;
 }
 
-async function createFormulaImage(tex, region) {
+export async function createFormulaImage(tex, region) {
   const svg = await mathSVG(tex, textColor());
   const dimensions = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
   if (dimensions.length !== 4 || !dimensions[2] || !dimensions[3]) {

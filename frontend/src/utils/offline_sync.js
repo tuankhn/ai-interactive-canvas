@@ -1,4 +1,5 @@
 import { $, fabricCanvas, state, ui, setStatus } from './context.js';
+import { authFetch, promptTeacherLogin, readStoredTeacherSession } from './auth_client.js';
 
 const OFFLINE_DB_NAME = 'ai-canvas-offline-db';
 const OFFLINE_DB_VERSION = 1;
@@ -36,11 +37,12 @@ function createSyncId() {
 
 function getSessionMeta() {
   const aiSubject = getOfflineElements().subjectSelect;
+  const teacherSess = readStoredTeacherSession();
   return {
     session_id: $('sessionId')?.textContent?.trim() || 'session-10a1',
     room_id: $('roomId')?.textContent?.trim() || 'room-10a1',
     class_name: $('className')?.textContent?.trim() || '10A1',
-    teacher_name: 'Nguyễn Tuấn Khang',
+    teacher_name: teacherSess?.full_name || 'Nguyễn Tuấn Khang',
     subject: aiSubject ? aiSubject.value : 'TOAN',
     period_number: 1,
   };
@@ -309,27 +311,43 @@ export async function syncPendingSnapshots({ silentIfEmpty = true } = {}) {
   await refreshOfflineUI();
 
   try {
-    const response = await fetch('/api/v1/offline-sync/snapshots', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
-    });
+    const SYNC_CHUNK_SIZE = 10;
+    let syncedTotal = 0;
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+    for (let offset = 0; offset < items.length; offset += SYNC_CHUNK_SIZE) {
+      const chunk = items.slice(offset, offset + SYNC_CHUNK_SIZE);
+      const response = await authFetch('/api/v1/offline-sync/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: chunk }),
+      });
 
-    const result = await response.json();
-    const completedIds = (result.results || [])
-      .filter((entry) => entry.status === 'synced' || entry.status === 'duplicate')
-      .map((entry) => entry.client_sync_id);
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          setStatus('Cần đăng nhập Giáo viên để đồng bộ ảnh chờ trong IndexedDB');
+          promptTeacherLogin('Vui lòng đăng nhập Giáo viên để đồng bộ các ảnh bài giảng đang chờ.');
+          return { synced: syncedTotal, remaining: await countPendingSnapshots(), authRequired: true };
+        }
+        if (response.status >= 400 && response.status < 500) {
+          const left = await countPendingSnapshots();
+          setStatus(`Đồng bộ tạm hoãn (HTTP ${response.status}) · Đã giữ nguyên ${left} ảnh trong IndexedDB`);
+          return { synced: syncedTotal, remaining: left, clientError: response.status };
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-    if (completedIds.length > 0) {
-      await deletePendingSnapshots(completedIds);
+      const result = await response.json();
+      const completedIds = (result.results || [])
+        .filter((entry) => entry.status === 'synced' || entry.status === 'duplicate')
+        .map((entry) => entry.client_sync_id);
+
+      if (completedIds.length > 0) {
+        await deletePendingSnapshots(completedIds);
+      }
+      syncedTotal += (result.synced_count || 0) + (result.duplicate_count || 0);
     }
 
     const remaining = await countPendingSnapshots();
-    const syncedTotal = (result.synced_count || 0) + (result.duplicate_count || 0);
     if (syncedTotal > 0) {
       setStatus(`Đã tự động đồng bộ ${syncedTotal} ảnh snapshot lên máy chủ`);
       if (ui.footer) {
@@ -445,12 +463,33 @@ export async function captureAndSaveSnapshot({ triggerType = 'MANUAL', pageNumbe
   }
 
   try {
-    const response = await fetch('/api/v1/sessions/snapshots', {
+    const response = await authFetch('/api/v1/sessions/snapshots', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
+      if (response.status >= 400 && response.status < 500) {
+        await saveSnapshotToIndexedDB(payload);
+        const pendingCount = await refreshOfflineUI();
+        if (response.status === 401 || response.status === 403) {
+          promptTeacherLogin('Vui lòng đăng nhập Giáo viên để lưu Snapshot lên máy chủ.');
+          showCornerNotification({
+            title: 'Cần đăng nhập GV — Đã giữ Snapshot an toàn',
+            body: `Ảnh trang ${pageNumber} đã xếp hàng vào IndexedDB (${pendingCount} ảnh chờ) và sẽ tự đồng bộ ngay sau khi đăng nhập.`,
+            variant: 'offline',
+            autoDismissMs: 5000,
+          });
+        } else {
+          showCornerNotification({
+            title: 'Đã giữ tạm Snapshot trong IndexedDB',
+            body: `Máy chủ phản hồi HTTP ${response.status}; ảnh trang ${pageNumber} vẫn được bảo toàn cục bộ (${pendingCount} ảnh chờ).`,
+            variant: 'offline',
+            autoDismissMs: 5000,
+          });
+        }
+        return { mode: 'queued_http_4xx', status: response.status, pendingCount };
+      }
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
@@ -496,6 +535,10 @@ export function setupOfflineSync() {
 
   window.addEventListener('online', () => {
     checkServerConnectivity();
+  });
+
+  window.addEventListener('app:teacher-authenticated', () => {
+    syncPendingSnapshots({ silentIfEmpty: true });
   });
 
   // Kiểm tra trạng thái mạng & đẩy các ảnh còn tồn trong IndexedDB lúc khởi động.

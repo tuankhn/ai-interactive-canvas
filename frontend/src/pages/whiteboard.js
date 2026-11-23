@@ -1,4 +1,4 @@
-import { $, surface, toolbar, ui, state, setStatus } from '../utils/context.js';
+import { $, surface, toolbar, ui, state, fabricCanvas, blankPage, setStatus } from '../utils/context.js';
 import { setTool, closePanels, syncColorSelection, syncWidthSelection, setupToolbar } from '../components/toolbar.js';
 import { syncBackgroundButtons, updateHint, setupHistoryShortcuts } from '../components/history.js';
 import { refreshPages, restoreSavedPages, persistPages, setupPageControls } from '../components/pageManager.js';
@@ -6,14 +6,155 @@ import { finishStroke, setupDrawingCanvas } from '../components/drawingCanvas.js
 import { setupBoardDialogs } from '../components/boardDialogs.js';
 import { setupAIRecognition } from '../components/aiRecognition.js';
 import { setupOfflineSync } from '../utils/offline_sync.js';
-import { setupTeacherAuth } from '../utils/auth_client.js';
+import { setupTeacherAuth, readStoredTeacherSession } from '../utils/auth_client.js';
 import { setupExamManager } from '../components/examManager.js';
 import { setupQuizBoard } from '../components/quiz_board.js';
 import { setupStudentScoreSidebar } from '../components/student_score_sidebar.js';
 import { setupEssayGradingManager } from '../components/essayGradingManager.js';
 import { setupQuestionVariantManager } from '../components/questionVariantManager.js';
 
+const SELECTED_CLASS_KEY = 'ai-canvas:selected-class:v1';
+const DEFAULT_CLASSES = ['10A1', '10A2', '12A1', '8A2', '4A1'];
+
+function sanitizeClassToken(raw) {
+  const cleaned = String(raw || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase();
+  return cleaned || '';
+}
+
+function getTodayCompact() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+function buildRoomAndSession(className, urlParams = null) {
+  const slug = className.toLowerCase().replace(/[^a-z0-9]+/g, '-') || '10a1';
+  const customRoom = urlParams ? (urlParams.get('room') || urlParams.get('room_id') || '').trim() : '';
+  const customSession = urlParams ? (urlParams.get('session') || urlParams.get('session_id') || '').trim() : '';
+  return {
+    roomId: customRoom || `room-${slug}`,
+    sessionId: customSession || `session-${slug}-${getTodayCompact()}`,
+  };
+}
+
+function getRestrictedTeacherClasses(session) {
+  if (!session || (session.expires_at && session.expires_at <= Date.now())) return null;
+  const list = Array.isArray(session.allowed_classes)
+    ? session.allowed_classes.map(sanitizeClassToken).filter(Boolean)
+    : [];
+  if (!list.length || list.includes('*')) return null;
+  return Array.from(new Set(list));
+}
+
+function populateClassSelectOptions(allowedList, activeClass) {
+  const selectEl = $('classSelect');
+  if (!selectEl) return;
+  const baseOptions = allowedList && allowedList.length ? allowedList : DEFAULT_CLASSES;
+  const finalOptions = baseOptions.includes(activeClass) ? baseOptions : [activeClass, ...baseOptions];
+  selectEl.textContent = '';
+  for (const cls of finalOptions) {
+    const opt = document.createElement('option');
+    opt.value = cls;
+    opt.textContent = cls;
+    opt.selected = cls === activeClass;
+    selectEl.appendChild(opt);
+  }
+}
+
+function applyClassroomSpans(className, roomId, sessionId) {
+  const classEl = $('className');
+  const roomEl = $('roomId');
+  const sessionEl = $('sessionId');
+  if (classEl) classEl.textContent = className;
+  if (roomEl) roomEl.textContent = roomId;
+  if (sessionEl) sessionEl.textContent = sessionId;
+}
+
+function initClassroomContext() {
+  const params = new URLSearchParams(window.location.search || '');
+  const urlClass = sanitizeClassToken(params.get('class') || params.get('class_name'));
+  const storedClass = sanitizeClassToken(localStorage.getItem(SELECTED_CLASS_KEY));
+  const teacherSession = readStoredTeacherSession();
+  const restricted = getRestrictedTeacherClasses(teacherSession);
+
+  let activeClass = urlClass || storedClass || (restricted ? restricted[0] : '10A1') || '10A1';
+  if (restricted && !restricted.includes(activeClass)) {
+    activeClass = restricted[0];
+  }
+
+  const { roomId, sessionId } = buildRoomAndSession(activeClass, params);
+  applyClassroomSpans(activeClass, roomId, sessionId);
+  populateClassSelectOptions(restricted, activeClass);
+  localStorage.setItem(SELECTED_CLASS_KEY, activeClass);
+
+  async function switchClassroom(nextRawClass) {
+    const nextClass = sanitizeClassToken(nextRawClass);
+    const currentClass = ($('className')?.textContent || '10A1').trim();
+    if (!nextClass || nextClass === currentClass || state.ended || state.pageBusy) return;
+
+    persistPages();
+    const nextMeta = buildRoomAndSession(nextClass, null);
+    applyClassroomSpans(nextClass, nextMeta.roomId, nextMeta.sessionId);
+    localStorage.setItem(SELECTED_CLASS_KEY, nextClass);
+
+    try {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('class', nextClass);
+      nextUrl.searchParams.delete('room');
+      nextUrl.searchParams.delete('session');
+      window.history.replaceState({}, '', nextUrl);
+    } catch {
+      // Bỏ qua nếu môi trường file:// không hỗ trợ replaceState
+    }
+
+    state.pages = [blankPage()];
+    state.pageIndex = 0;
+    state.undoStack = [];
+    state.redoStack = [];
+    fabricCanvas.clear();
+    fabricCanvas.backgroundColor = '#ffffff';
+    syncBackgroundButtons();
+    updateHint();
+    refreshPages();
+    await restoreSavedPages();
+
+    window.dispatchEvent(
+      new CustomEvent('app:class-changed', {
+        detail: { className: nextClass, roomId: nextMeta.roomId, sessionId: nextMeta.sessionId },
+      })
+    );
+    setStatus(`Đã chuyển sang Lớp ${nextClass} (${nextMeta.roomId})`);
+  }
+
+  const selectEl = $('classSelect');
+  if (selectEl) {
+    selectEl.addEventListener('change', () => {
+      void switchClassroom(selectEl.value);
+    });
+  }
+
+  window.addEventListener('app:teacher-authenticated', () => {
+    const latest = readStoredTeacherSession();
+    const nextRestricted = getRestrictedTeacherClasses(latest);
+    const current = ($('className')?.textContent || '10A1').trim();
+    if (nextRestricted && !nextRestricted.includes(current)) {
+      populateClassSelectOptions(nextRestricted, nextRestricted[0]);
+      void switchClassroom(nextRestricted[0]);
+    } else {
+      populateClassSelectOptions(nextRestricted, current);
+    }
+  });
+
+  window.addEventListener('app:teacher-logged-out', () => {
+    const current = ($('className')?.textContent || '10A1').trim();
+    populateClassSelectOptions(null, current);
+  });
+}
+
 export async function initWhiteboard() {
+  initClassroomContext();
   setupToolbar();
   setupHistoryShortcuts();
   setupPageControls();

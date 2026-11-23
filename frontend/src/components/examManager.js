@@ -1,5 +1,7 @@
 import { $, fabricCanvas, state, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
+import { escapeHtml } from '../utils/escape.js';
+import { authFetch } from '../utils/auth_client.js';
 import { FabricText, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 let currentExamData = null;
@@ -167,7 +169,7 @@ export function setupExamManager() {
       const subject = btn.dataset.subject || 'TOAN';
       try {
         showStatus('Đang tải đề mẫu...');
-        const res = await fetch(`/api/v1/exam/sample?subject=${subject}&mode=${getSelectedMode()}`);
+        const res = await authFetch(`/api/v1/exam/sample?subject=${subject}&mode=${getSelectedMode()}`);
         if (!res.ok) throw new Error('Không thể tải đề mẫu');
         const data = await res.json();
         renderExamPreview(data);
@@ -196,7 +198,7 @@ export function setupExamManager() {
       showStatus('Đang tải và bóc tách câu hỏi từ tệp...');
 
       try {
-        const res = await fetch(`/api/v1/exam/upload?mode=${mode}`, {
+        const res = await authFetch(`/api/v1/exam/upload?mode=${mode}`, {
           method: 'POST',
           body: formData,
         });
@@ -233,7 +235,7 @@ export function setupExamManager() {
       showStatus('Đang bóc tách câu hỏi...');
 
       try {
-        const res = await fetch('/api/v1/exam/parse-text', {
+        const res = await authFetch('/api/v1/exam/parse-text', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -298,7 +300,7 @@ export function setupExamManager() {
         subject: subject,
       };
 
-      const res = await fetch('/api/v1/exam/grade-mcq', {
+      const res = await authFetch('/api/v1/exam/grade-mcq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -422,10 +424,11 @@ export function setupExamManager() {
             ${q.options
               .map((opt) => {
                 const isCorrect = !isStudent && (opt.is_correct || opt.label === q.correct_option);
+                const safeLabel = escapeHtml(opt.label);
                 return `
-                <div class="exam-q-opt ${isCorrect ? 'opt-correct' : ''} ${isStudent ? 'opt-clickable' : ''}" data-label="${opt.label}">
-                  <span class="opt-badge">${opt.label}</span>
-                  <span class="opt-text">${opt.content}</span>
+                <div class="exam-q-opt ${isCorrect ? 'opt-correct' : ''} ${isStudent ? 'opt-clickable' : ''}" data-label="${safeLabel}">
+                  <span class="opt-badge">${safeLabel}</span>
+                  <span class="opt-text">${escapeHtml(opt.content)}</span>
                   ${isCorrect ? '<span class="opt-correct-tag">✓ Đáp án đúng</span>' : ''}
                   ${isStudent ? '<span class="opt-select-btn">Chọn đáp án</span>' : ''}
                 </div>
@@ -442,14 +445,14 @@ export function setupExamManager() {
       if (!isStudent && q.explanation) {
         explanationHtml = `
           <div class="exam-q-explanation">
-            <strong>💡 Hướng dẫn giải:</strong> ${q.explanation}
+            <strong>💡 Hướng dẫn giải:</strong> ${escapeHtml(q.explanation)}
           </div>
         `;
       }
 
       qCard.innerHTML = `
         <div class="exam-q-header">
-          <strong>Câu ${q.number}:</strong> ${q.content}
+          <strong>Câu ${escapeHtml(q.number)}:</strong> ${escapeHtml(q.content)}
         </div>
         ${optionsHtml}
         ${explanationHtml}
@@ -481,7 +484,7 @@ export function setupExamManager() {
     layoutToBoardBtn.textContent = 'Đang dàn lên bảng...';
 
     try {
-      const res = await fetch('/api/v1/exam/layout-canvas', {
+      const res = await authFetch('/api/v1/exam/layout-canvas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -537,20 +540,55 @@ export function setupExamManager() {
     remember(before);
   }
 
-  // Lắng nghe sự kiện click đối tượng trên bảng Fabric.js
+  // C12: Hit-test thủ công theo tọa độ chạm ngắn (Fabric v6 getScenePoint) để không bật skipTargetFind=false
+  // và không chấm trùng với cử chỉ khoanh tròn đáp án trong quiz_board.js.
+  let answerTapStart = null;
   fabricCanvas.on('mouse:down', (e) => {
-    if (e.target && e.target.meta && e.target.meta.type === 'answer_option') {
-      const meta = e.target.meta;
-      const questionId = meta.question_id;
-      const label = meta.label;
+    if (!e || !e.e) return;
+    const pt = typeof fabricCanvas.getScenePoint === 'function'
+      ? fabricCanvas.getScenePoint(e.e)
+      : (e.scenePoint || null);
+    if (!pt) return;
+    answerTapStart = { x: pt.x, y: pt.y, t: performance.now() };
+  });
 
-      let questionObj = null;
-      if (currentExamData && currentExamData.questions) {
-        questionObj = currentExamData.questions.find((q) => q.id === questionId) || currentExamData.questions[0];
-      }
+  fabricCanvas.on('mouse:up', (e) => {
+    if (!answerTapStart || !e || !e.e) {
+      answerTapStart = null;
+      return;
+    }
+    const start = answerTapStart;
+    answerTapStart = null;
 
-      if (questionObj) {
-        gradeStudentChoice(questionObj, label);
+    const pt = typeof fabricCanvas.getScenePoint === 'function'
+      ? fabricCanvas.getScenePoint(e.e)
+      : (e.scenePoint || null);
+    if (!pt) return;
+
+    const elapsedMs = performance.now() - start.t;
+    const movedPx = Math.hypot(pt.x - start.x, pt.y - start.y);
+    if (elapsedMs > 350 || movedPx > 10) return;
+
+    const objects = fabricCanvas.getObjects();
+    for (let i = objects.length - 1; i >= 0; i -= 1) {
+      const obj = objects[i];
+      if (!obj?.meta || obj.meta.type !== 'answer_option') continue;
+      const bounds = obj.getBoundingRect();
+      if (
+        pt.x >= bounds.left &&
+        pt.x <= bounds.left + bounds.width &&
+        pt.y >= bounds.top &&
+        pt.y <= bounds.top + bounds.height
+      ) {
+        const { question_id: questionId, label } = obj.meta;
+        let questionObj = null;
+        if (currentExamData && currentExamData.questions) {
+          questionObj = currentExamData.questions.find((q) => q.id === questionId) || currentExamData.questions[0];
+        }
+        if (questionObj) {
+          gradeStudentChoice(questionObj, label);
+        }
+        break;
       }
     }
   });
