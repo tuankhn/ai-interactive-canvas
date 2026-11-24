@@ -230,3 +230,55 @@ def test_frontend_essay_grading_ui_served():
     assert "evaluateEssayStepsBtn" in html
     assert "annotateEssayToCanvasBtn" in html
     assert "essayStepsList" in html
+
+
+def test_chaining_quadratic_expansion_correct_and_incorrect():
+    """Kiểm tra chaining: Dòng 1 là (x+3)^2, dòng 2 là = x^2+6x+9 (Đúng) hoặc = x^2+9 (Sai)."""
+    # Đúng
+    res_correct = grading_service.evaluate_essay_solution(
+        question_id="quad_chain_1",
+        steps=["(x + 3)^2", "= x^2 + 6x + 9"],
+        subject="TOAN",
+    )
+    assert res_correct.has_any_error is False
+    assert res_correct.correct_steps == 1  # Đã tự động bóc tách dòng 1 thành đề và dòng 2 là bước giải
+
+    # Sai hằng đẳng thức (thiếu 2ab = 6x)
+    res_wrong = grading_service.evaluate_essay_solution(
+        question_id="quad_chain_2",
+        steps=["(x + 3)^2", "= x^2 + 9"],
+        subject="TOAN",
+    )
+    assert res_wrong.has_any_error is True
+    assert res_wrong.first_error_step == 1
+    assert "hằng đẳng thức" in res_wrong.steps_evaluation[0].feedback.lower()
+
+
+def test_english_dash_solution_grading():
+    """Kiểm tra Tiếng Anh với dấu gạch đầu dòng '-': Chia đúng went vs chia sai goed."""
+    res_en_ok = grading_service.evaluate_essay_solution(
+        question_id="en_1",
+        steps=["She (go) to school yesterday.", "- went"],
+        subject="TIENG_ANH",
+    )
+    assert res_en_ok.has_any_error is False
+
+    res_en_err = grading_service.evaluate_essay_solution(
+        question_id="en_2",
+        steps=["She (go) to school yesterday.", "- goed"],
+        subject="TIENG_ANH",
+    )
+    assert res_en_err.has_any_error is True
+    assert res_en_err.steps_evaluation[0].error_type == "GRAMMAR_ERROR"
+
+
+def test_biology_dash_solution_grading():
+    """Kiểm tra Sinh học với dấu '-': Tỉ lệ F1 phép lai Aa x Aa."""
+    res_bio_err = grading_service.evaluate_essay_solution(
+        question_id="bio_1",
+        steps=["P: Aa x Aa", "- F1: 1 AA : 1 aa"],
+        subject="SINH_HOC",
+    )
+    assert res_bio_err.has_any_error is True
+    assert res_bio_err.steps_evaluation[0].error_type == "CONCEPTUAL_ERROR"
+

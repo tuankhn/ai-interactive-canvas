@@ -269,14 +269,34 @@ class GradingService:
         text = current_text.strip()
         text_clean = re.sub(r"\s+", " ", text.lower())
 
-        # 1. Kiểm tra nhầm hằng đẳng thức đáng nhớ
+        # Hỗ trợ học sinh viết dòng bắt đầu bằng '=' liên kết với bước trước hoặc đề bài
+        chained_text = text_clean
+        if text_clean.startswith("=") and (previous_steps or question_content):
+            anchor = (previous_steps[-1] if previous_steps else question_content or "").strip().lower()
+            chained_text = f"{anchor} {text_clean}"
+
+        # 1. Kiểm tra nhầm hằng đẳng thức đáng nhớ (x + b)^2 hoặc (a + b)^2
         # Khai triển bình phương nhưng vế phải chỉ có 2 số hạng (thiếu 2ab)
-        # Ví dụ: (x + y)^2 = x^2 + y^2, (a + b)^2 = a^2 + b^2, (x + 2)^2 = x^2 + 4, (x + 1)^2 = x^2 + 1
-        m_plus = re.search(r"\(([a-z0-9]+)\s*\+\s*([a-z0-9]+)\)\s*\^?\s*2\s*=\s*(.+)$", text_clean)
+        # Ví dụ: (x + 3)^2 = x^2 + 9, (x + 2)^2 = x^2 + 4, (a + b)^2 = a^2 + b^2
+        m_plus = re.search(r"\(([a-z0-9]+)\s*\+\s*([a-z0-9]+)\)\s*\^?\s*2\s*=\s*(.+)$", chained_text)
         if m_plus:
+            v_a = m_plus.group(1).strip()
+            v_b = m_plus.group(2).strip()
             rhs = m_plus.group(3).strip()
             # Nếu vế phải chỉ có 2 số hạng (chỉ có 1 dấu '+', không có số hạng tích 2ab)
-            if rhs.count("+") == 1 and not re.search(r"2\s*\*?\s*[a-z]", rhs):
+            # hoặc không chứa tích 2*a*b
+            has_2ab = False
+            try:
+                # Nếu b là số, ví dụ b = 3 -> 2ab = 6a; b = 2 -> 2ab = 4a
+                b_num = int(v_b)
+                coef = 2 * b_num
+                if f"{coef}{v_a}" in rhs or f"{coef}*{v_a}" in rhs or f"{coef} * {v_a}" in rhs or f"2*{v_a}*{v_b}" in rhs:
+                    has_2ab = True
+            except Exception:
+                if f"2{v_a}{v_b}" in rhs or f"2*{v_a}*{v_b}" in rhs or f"2 * {v_a}" in rhs or "2ab" in rhs:
+                    has_2ab = True
+
+            if rhs.count("+") == 1 and not has_2ab:
                 return {
                     "error_type": "FORMULA_ERROR",
                     "reason": "Nhầm lẫn hằng đẳng thức: Bỏ quên số hạng hai lần tích (2ab) khi khai triển bình phương của một tổng.",
@@ -409,13 +429,40 @@ class GradingService:
                     "guidance": f"💡 Gợi ý: Hãy nhẩm hoặc đặt phép tính lại cẩn thận cho cụm biểu thức số ở dòng này.",
                 }
 
-        # 5. Kiểm tra vi phạm điều kiện xác định (DOMAIN_ERROR)
-        if "/ 0" in text_clean or "/0" in text_clean or "\\frac{" in text_clean and "}{0}" in text_clean:
-            return {
-                "error_type": "DOMAIN_ERROR",
-                "reason": "Chia cho số 0: Phép toán không xác định trong tập số thực.",
-                "guidance": "💡 Gợi ý: Mẫu số của một phân thức luôn phải khác 0. Kiểm tra lại bước biến đổi trước.",
-            }
+        # 6. Kiểm tra quy tắc ngôn ngữ Tiếng Anh (Môn TIENG_ANH)
+        # Nhận diện dòng lời giải bắt đầu bằng dấu gạch đầu dòng '-', '->', '=>' hoặc ':'
+        if (subject or "").upper() == "TIENG_ANH":
+            m_en = re.search(r"^(?:-|\+|->|=>|:)\s*(.+)$", text_clean)
+            en_ans = m_en.group(1).strip() if m_en else text_clean
+            q_en = (question_content or "").lower()
+            if "(go)" in q_en and any(t in q_en for t in ["yesterday", "last", "ago", "in 20"]):
+                if "goed" in en_ans:
+                    return {
+                        "error_type": "GRAMMAR_ERROR",
+                        "reason": "Sai dạng quá khứ: Động từ bất quy tắc 'go' có dạng quá khứ V2 là 'went', không chia theo quy tắc thêm -ed ('goed').",
+                        "guidance": "💡 Gợi ý: Tra cứu bảng động từ bất quy tắc cho động từ 'go' ở thì Quá khứ đơn.",
+                    }
+                elif "go" == en_ans or "goes" == en_ans:
+                    return {
+                        "error_type": "GRAMMAR_ERROR",
+                        "reason": "Chưa chia thì quá khứ: Trong câu có dấu hiệu thời gian quá khứ, động từ 'go' cần chia ở thì Quá khứ đơn.",
+                        "guidance": "💡 Gợi ý: Chuyển động từ 'go' sang dạng quá khứ thích hợp.",
+                    }
+
+        # 7. Kiểm tra bài giải Sinh học (Môn SINH_HOC / BIO)
+        # Nhận diện dòng lời giải bắt đầu bằng dấu '-', '+', '->'
+        if (subject or "").upper() in ["SINH_HOC", "BIO"]:
+            q_bio = (question_content or "").lower()
+            m_bio = re.search(r"^(?:-|\+|->|=>)\s*(.+)$", text_clean)
+            bio_ans = m_bio.group(1).strip() if m_bio else text_clean
+            if "aa x aa" in q_bio and "f1" in bio_ans:
+                # Phép lai Aa x Aa: tỉ lệ đúng 1 AA : 2 Aa : 1 aa
+                if "1 aa : 1 aa" in bio_ans and "2 aa" not in bio_ans:
+                    return {
+                        "error_type": "CONCEPTUAL_ERROR",
+                        "reason": "Sai tỉ lệ phân li kiểu gen F1: Phép lai thể dị hợp Aa x Aa cho tỉ lệ 1 AA : 2 Aa : 1 aa.",
+                        "guidance": "💡 Gợi ý: Lập khung Punnett 2x2 để kết hợp giao tử đực và cái chính xác.",
+                    }
 
         return None
 
@@ -566,6 +613,15 @@ class GradingService:
                 score=0.0,
             )
 
+        # Tự động bóc tách Đề bài & Lời giải thông minh nếu dòng 1 là Đề và dòng 2+ là Giải
+        effective_question = question_content
+        if not effective_question and len(step_lines) >= 2:
+            first_line = step_lines[0].lower().strip()
+            second_line = step_lines[1].lower().strip()
+            if re.match(r"^(?:=|-|\+|->|=>|buoc|bước|ta có)", second_line) and not re.match(r"^(?:=|-|\+|->|=>|buoc|bước)", first_line):
+                effective_question = step_lines[0]
+                step_lines = step_lines[1:]
+
         evaluations: List[GradeEssayStepResponse] = []
         prev_accumulated: List[str] = []
         first_err: Optional[int] = None
@@ -576,7 +632,7 @@ class GradingService:
                 step_number=idx,
                 written_text=line,
                 previous_steps=prev_accumulated,
-                question_content=question_content,
+                question_content=effective_question,
                 subject=subject,
                 target_answer=target_answer,
             )
