@@ -12,6 +12,8 @@ import {
 } from '../utils/offline_sync.js';
 
 const AUTO_AI_IDLE_MS = 1800;
+const AI_FETCH_TIMEOUT_MS = 24000;
+const MAX_RETRY_BACKOFF_MS = 3200;
 
 let isAutoAiEnabled = false;
 let isRecognizing = false;
@@ -21,6 +23,9 @@ let aiRequestId = 0;
 let boardSocket = null;
 let wsRetryCount = 0;
 let wsRetryTimer = null;
+let lastCapturedImageBase64 = null;
+let lastRecognizeMeta = null;
+let consecutiveRetryCount = 0;
 
 const getAiElements = () => ({
   overlay: $('aiOverlayPanel'),
@@ -35,6 +40,11 @@ const getAiElements = () => ({
   statusIndicator: $('aiStatusIndicator'),
   autoToggle: $('autoAiToggle'),
   recognizeBtn: $('aiRecognizeBtn'),
+  reanalyzeBoardBtn: $('btnReanalyzeBoard'),
+  errorBanner: $('aiErrorBanner'),
+  errorMessage: $('aiErrorMessage'),
+  retryErrorBtn: $('retryAiErrorBtn'),
+  rescanBoardErrorBtn: $('rescanBoardErrorBtn'),
   closeBtn: $('closeAiPanelBtn'),
   insertBtn: $('insertToBoardBtn'),
   retryBtn: $('reRecognizeBtn'),
@@ -57,6 +67,28 @@ const getAiElements = () => ({
   openGraphBtn: $('openGraphBtn'),
 });
 
+function showAiErrorState(message) {
+  const aiElements = getAiElements();
+  currentAiResult = null;
+  if (aiElements.overlay) aiElements.overlay.hidden = false;
+  if (aiElements.loading) aiElements.loading.hidden = true;
+  if (aiElements.content) aiElements.content.hidden = true;
+  if (aiElements.errorBanner) aiElements.errorBanner.hidden = false;
+  if (aiElements.errorMessage) aiElements.errorMessage.textContent = message;
+  if (aiElements.insertBtn) aiElements.insertBtn.disabled = true;
+  if (aiElements.statusIndicator) {
+    aiElements.statusIndicator.textContent = 'AI: Gián đoạn (Bấm thử lại)';
+    aiElements.statusIndicator.classList.remove('is-analyzing');
+  }
+  setStatus('AI tạm thời gián đoạn — nét vẽ vẫn được giữ nguyên');
+}
+
+function clearAiErrorState() {
+  const aiElements = getAiElements();
+  if (aiElements.errorBanner) aiElements.errorBanner.hidden = true;
+  if (aiElements.insertBtn) aiElements.insertBtn.disabled = false;
+}
+
 
 export function cancelAIDebounce() {
   if (aiDebounceTimer) {
@@ -76,7 +108,11 @@ export function scheduleAIDebounce() {
   }, AUTO_AI_IDLE_MS);
 }
 
-export async function performAIRecognition({ isDebounced = false } = {}) {
+export async function performAIRecognition({
+  isDebounced = false,
+  cachedImageBase64 = null,
+  cachedMeta = null,
+} = {}) {
   if (state.ended || isRecognizing) return;
   if (isOfflineMode()) {
     if (!isDebounced) {
@@ -86,7 +122,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
     return;
   }
   const objects = fabricCanvas.getObjects();
-  if (!objects || objects.length === 0) {
+  if (!cachedImageBase64 && (!objects || objects.length === 0)) {
     if (!isDebounced) {
       alert('Chưa có nét vẽ nào trên bảng để nhận diện.');
     }
@@ -105,29 +141,41 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
 
   // Mở overlay panel và hiển thị trạng thái loading
   if (aiElements.overlay) aiElements.overlay.hidden = false;
+  if (aiElements.errorBanner) aiElements.errorBanner.hidden = true;
   if (aiElements.loading) aiElements.loading.hidden = false;
   if (aiElements.content) aiElements.content.hidden = true;
   setStatus('Đang gửi nét vẽ lên AI (Gemini / Mathpix)...');
 
   const abortCtrl = new AbortController();
-  const reqTimeout = setTimeout(() => abortCtrl.abort(), 20000);
+  const reqTimeout = setTimeout(() => abortCtrl.abort(), AI_FETCH_TIMEOUT_MS);
 
   try {
-    const prevBg = fabricCanvas.backgroundColor;
-    if (!prevBg) {
-      fabricCanvas.backgroundColor = '#ffffff';
+    let imageBase64 = cachedImageBase64;
+    if (!imageBase64) {
+      const prevBg = fabricCanvas.backgroundColor;
+      if (!prevBg) {
+        fabricCanvas.backgroundColor = '#ffffff';
+      }
+      imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 });
+      if (!prevBg) {
+        fabricCanvas.backgroundColor = prevBg;
+      }
     }
-    const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 });
-    if (!prevBg) {
-      fabricCanvas.backgroundColor = prevBg;
-    }
-    const subject = aiElements.subjectSelect ? aiElements.subjectSelect.value : 'TOAN';
+    const subject = cachedMeta?.subject || (aiElements.subjectSelect ? aiElements.subjectSelect.value : 'TOAN');
+
+    lastCapturedImageBase64 = imageBase64;
+    lastRecognizeMeta = {
+      session_id: cachedMeta?.session_id || $('sessionId')?.textContent?.trim() || 'session-10a1',
+      room_id: cachedMeta?.room_id || $('roomId')?.textContent?.trim() || 'room-10a1',
+      subject,
+      page_number: cachedMeta?.page_number || (state.pageIndex + 1),
+    };
 
     const payload = {
-      session_id: $('sessionId')?.textContent?.trim() || 'session-10a1',
-      room_id: $('roomId')?.textContent?.trim() || 'room-10a1',
-      subject: subject,
-      page_number: state.pageIndex + 1,
+      session_id: lastRecognizeMeta.session_id,
+      room_id: lastRecognizeMeta.room_id,
+      subject: lastRecognizeMeta.subject,
+      page_number: lastRecognizeMeta.page_number,
       image_base64: imageBase64,
       debounce_ms: 800,
       provider: 'auto'
@@ -156,6 +204,22 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
       return;
     }
 
+    const isBackendError =
+      data?.subject_details?.status === 'error' ||
+      (Boolean(data?.degraded_reason) &&
+        !String(data?.recognized_text || '').trim() &&
+        !String(data?.latex || '').trim());
+
+    if (isBackendError) {
+      showAiErrorState(
+        data.explanation ||
+          `Dịch vụ AI tạm thời gián đoạn (${data.degraded_reason || 'Timeout'}). Nét vẽ của bạn vẫn được giữ nguyên.`
+      );
+      return;
+    }
+
+    consecutiveRetryCount = 0;
+    clearAiErrorState();
     currentAiResult = data;
 
     if (aiElements.loading) aiElements.loading.hidden = true;
@@ -314,26 +378,57 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
     console.error('Lỗi nhận diện AI:', error);
     const wentOffline = await handlePossibleNetworkError(error);
     if (aiElements.loading) aiElements.loading.hidden = true;
-    if (aiElements.content) aiElements.content.hidden = false;
     if (wentOffline) {
       if (aiElements.overlay) aiElements.overlay.hidden = true;
       setStatus('Đã tạm dừng AI do mất mạng; nét vẽ vẫn được giữ');
+    } else if (error?.name === 'AbortError') {
+      showAiErrorState(
+        'Kết nối AI quá thời gian chờ (24s). Nét vẽ của bạn vẫn được giữ nguyên — hãy bấm "Thử lại nhận diện".'
+      );
     } else {
-      if (aiElements.renderedBox) aiElements.renderedBox.textContent = 'Lỗi kết nối API';
-      if (aiElements.explanationBox) {
-        aiElements.explanationBox.textContent = `Không thể kết nối Backend API (/api/v1/recognize): ${error.message}`;
-        aiElements.explanationBox.hidden = false;
-      }
-      if (aiElements.statusIndicator) {
-        aiElements.statusIndicator.textContent = 'AI: Lỗi kết nối';
-        aiElements.statusIndicator.classList.remove('is-analyzing');
-      }
-      setStatus('Lỗi nhận diện AI');
+      showAiErrorState(
+        `Không thể kết nối tới máy chủ AI (${error.message}). Nét vẽ của bạn vẫn được giữ nguyên.`
+      );
     }
   } finally {
     clearTimeout(reqTimeout);
     isRecognizing = false;
   }
+}
+
+export async function retryAIRecognition() {
+  if (state.ended || isRecognizing) return;
+  if (!lastCapturedImageBase64) {
+    return reanalyzeCurrentCanvas();
+  }
+
+  const delayMs =
+    consecutiveRetryCount === 0
+      ? 0
+      : Math.min(MAX_RETRY_BACKOFF_MS, 400 * (2 ** (consecutiveRetryCount - 1)));
+  consecutiveRetryCount += 1;
+
+  if (delayMs > 0) {
+    const aiElements = getAiElements();
+    if (aiElements.errorBanner) aiElements.errorBanner.hidden = true;
+    if (aiElements.loading) aiElements.loading.hidden = false;
+    setStatus(`Đang thử kết nối lại AI sau ${(delayMs / 1000).toFixed(1)}s...`);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return performAIRecognition({
+    isDebounced: false,
+    cachedImageBase64: lastCapturedImageBase64,
+    cachedMeta: lastRecognizeMeta,
+  });
+}
+
+export async function reanalyzeCurrentCanvas() {
+  if (state.ended || isRecognizing) return;
+  closePanels();
+  consecutiveRetryCount = 0;
+  lastCapturedImageBase64 = null;
+  return performAIRecognition({ isDebounced: false });
 }
 
 /**
@@ -527,6 +622,21 @@ export function setupAIRecognition() {
     aiElements.recognizeBtn.addEventListener('click', () => {
       closePanels();
       performAIRecognition({ isDebounced: false });
+    });
+  }
+  if (aiElements.reanalyzeBoardBtn) {
+    aiElements.reanalyzeBoardBtn.addEventListener('click', () => {
+      reanalyzeCurrentCanvas();
+    });
+  }
+  if (aiElements.retryErrorBtn) {
+    aiElements.retryErrorBtn.addEventListener('click', () => {
+      retryAIRecognition();
+    });
+  }
+  if (aiElements.rescanBoardErrorBtn) {
+    aiElements.rescanBoardErrorBtn.addEventListener('click', () => {
+      reanalyzeCurrentCanvas();
     });
   }
   if (aiElements.autoToggle) {

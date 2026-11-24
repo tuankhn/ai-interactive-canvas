@@ -7,6 +7,7 @@ import asyncio
 import base64
 import json
 import logging
+import random
 import sys
 import time
 from io import BytesIO
@@ -35,6 +36,8 @@ class GeminiAIService:
         self.api_key = (settings.GEMINI_API_KEY or "").strip().strip('"').strip("'")
         self.model_name = (settings.GEMINI_MODEL or "gemini-3.5-flash").strip()
         self._preferred_model: Optional[str] = None
+        self.client = None
+        self.model = None
         self.is_configured = False
         self._client_type = None
         self._init_client()
@@ -118,17 +121,17 @@ class GeminiAIService:
         image_base64: str,
         subject: str = "MATH",
         grade_level: Optional[str] = "THPT",
-        timeout: float = 20.0
+        timeout: float = 18.0,
     ) -> RecognizeCanvasResponse:
         """
-        Phân tích ảnh vùng nét vẽ bằng Gemini 2.5 Flash / 3.5 Flash Lite.
+        Phân tích ảnh vùng nét vẽ bằng Gemini Vision:
+        - Nếu chưa cấu hình GEMINI_API_KEY: dùng _mock_result() cho chế độ Demo/Test.
+        - Nếu đã cấu hình key nhưng gặp Timeout / 503 / 429 / lỗi mạng:
+          + Retry có Exponential Backoff + Jitter.
+          + Chuyển nhanh sang model fallback (gemini-3.5-flash-lite -> gemini-3.1-flash-lite).
+          + Nếu vẫn lỗi: trả về _error_result() minh bạch, KHÔNG trả công thức giả.
         """
-        start_time = time.perf_counter()
-
-        # Tiền xử lý chuỗi Base64
-        clean_b64 = image_base64
-        if "," in clean_b64:
-            clean_b64 = clean_b64.split(",", 1)[1]
+        clean_b64 = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
 
         if not self.is_configured:
             self.ensure_configured()
@@ -140,43 +143,43 @@ class GeminiAIService:
         try:
             raw_bytes = base64.b64decode(clean_b64)
             pil_image = Image.open(BytesIO(raw_bytes))
-
-            prompt = get_prompt_for_subject(
-                subject=subject,
-                grade_level=grade_level or "THPT"
-            )
+            prompt = get_prompt_for_subject(subject=subject, grade_level=grade_level or "THPT")
 
             raw_text = ""
-            total_budget = max(5.0, float(timeout or 20.0))
+            total_budget = max(6.0, float(timeout or 18.0))
             deadline = time.perf_counter() + total_budget
+
             candidate_models: list[str] = []
             for m in [
                 self._preferred_model,
                 self.model_name,
-                *settings.GEMINI_FALLBACK_MODELS,
+                "gemini-3.5-flash-lite",
                 "gemini-3.1-flash-lite",
-                "gemini-2.5-flash",
-                "gemini-2.5-flash-lite",
-                "gemini-2.0-flash",
+                *settings.GEMINI_FALLBACK_MODELS,
             ]:
                 if m and m not in candidate_models:
                     candidate_models.append(m)
 
             if self._client_type == "google-genai":
-                last_err = None
+                last_err: Optional[Exception] = None
                 use_native_aio = (
                     type(self.client).__module__.startswith("google")
                     and hasattr(self.client, "aio")
                     and hasattr(self.client.aio, "models")
                 )
-                for mod in candidate_models:
-                    max_attempts = 2 if mod == candidate_models[0] else 1
+
+                for mod_idx, mod in enumerate(candidate_models[:4]):
+                    max_attempts = 2 if mod_idx == 0 else 1
                     for attempt in range(max_attempts):
                         remaining = deadline - time.perf_counter()
-                        if remaining <= 0.5:
-                            last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
+                        if remaining <= 0.8:
+                            last_err = last_err or asyncio.TimeoutError(
+                                f"Hết thời gian chờ tổng ({total_budget:.0f}s) khi gọi Gemini API"
+                            )
                             break
-                        per_attempt_timeout = min(remaining, 8.5)
+
+                        per_attempt_timeout = min(remaining, 7.5 if mod_idx == 0 else 6.0)
+
                         try:
                             gen_config = None
                             try:
@@ -222,100 +225,161 @@ class GeminiAIService:
                                     ),
                                     timeout=per_attempt_timeout,
                                 )
-                            raw_text = response.text or ""
+
+                            raw_text = (response.text or "").strip()
                             if raw_text:
                                 self._preferred_model = mod
                                 break
+
+                        except asyncio.TimeoutError:
+                            last_err = asyncio.TimeoutError(
+                                f"Model {mod} phản hồi quá {per_attempt_timeout:.1f}s"
+                            )
+                            logger.warning(f"[Gemini Timeout] {last_err} (lần {attempt + 1}/{max_attempts})")
+                            if attempt < max_attempts - 1 and (deadline - time.perf_counter()) > 2.5:
+                                backoff = (0.4 * (2 ** attempt)) + random.uniform(0.05, 0.25)
+                                await asyncio.sleep(backoff)
+                                continue
+                            if self._preferred_model == mod:
+                                self._preferred_model = None
+                            break
+
                         except Exception as mod_err:
                             last_err = mod_err
                             err_str = str(mod_err)
                             is_transient = any(
                                 kw in err_str
-                                for kw in ["503", "429", "UNAVAILABLE", "high demand", "temporarily unavailable"]
+                                for kw in [
+                                    "503",
+                                    "429",
+                                    "UNAVAILABLE",
+                                    "high demand",
+                                    "temporarily unavailable",
+                                    "Connection",
+                                    "Timeout",
+                                ]
                             )
-                            if is_transient and attempt < max_attempts - 1 and (deadline - time.perf_counter()) > 2.0:
-                                logger.warning(f"Model {mod} quá tải tạm thời (503/429), chờ 0.5s và thử lại lần {attempt + 2}...")
-                                await asyncio.sleep(0.5)
+                            if is_transient and attempt < max_attempts - 1 and (deadline - time.perf_counter()) > 2.5:
+                                backoff = (0.5 * (2 ** attempt)) + random.uniform(0.1, 0.3)
+                                logger.warning(
+                                    f"[Gemini Transient] {mod} lỗi ({err_str[:90]}), thử lại sau {backoff:.2f}s..."
+                                )
+                                await asyncio.sleep(backoff)
                                 continue
-                            else:
-                                if self._preferred_model == mod:
-                                    self._preferred_model = None
-                                logger.warning(f"Lỗi gọi model {mod}: {mod_err}, thử model tiếp theo...")
-                                break
+                            if self._preferred_model == mod:
+                                self._preferred_model = None
+                            logger.warning(f"[Gemini Fallback] Bỏ qua model {mod}: {err_str[:120]}")
+                            break
 
                     if raw_text:
                         break
 
-                if not raw_text and last_err:
-                    raise last_err
+                if not raw_text:
+                    raise last_err or RuntimeError("Không nhận được phản hồi hợp lệ từ Gemini API.")
             else:
                 response = await asyncio.wait_for(
                     asyncio.to_thread(self.model.generate_content, [prompt, pil_image]),
                     timeout=total_budget,
                 )
-                raw_text = response.text or ""
+                raw_text = (response.text or "").strip()
 
             parsed_data = self._parse_json_robust(raw_text, subject=subject)
+            return self._build_validated_response(parsed_data, subject=subject)
 
-            # Chuẩn hóa ambiguous_tokens để tương thích với Pydantic schema
-            raw_tokens = parsed_data.get("ambiguous_tokens", [])
-            normalized_tokens = []
-            if isinstance(raw_tokens, list):
-                for item in raw_tokens:
-                    if isinstance(item, str):
-                        normalized_tokens.append(AmbiguousToken(
-                            detected_text=item,
-                            confidence=0.8,
-                            suggestions=[]
-                        ))
-                    elif isinstance(item, dict):
-                        detected = item.get("detected_text") or item.get("token") or item.get("text") or ""
-                        conf = float(item.get("confidence", 0.8))
-                        suggs = item.get("suggestions") or item.get("possible_readings") or item.get("possible_interpretations") or []
-                        bbox = item.get("bbox") or [0, 0, 0, 0]
-                        normalized_tokens.append(AmbiguousToken(
+        except Exception as err:
+            err_msg = str(err).strip() or "Kết nối tới máy chủ AI vượt quá thời gian cho phép"
+            reason = f"{type(err).__name__}: {err_msg}"
+            logger.error(f"Lỗi gọi Gemini ({self.active_model_name}) Vision: {reason}")
+            return self._error_result(subject=subject, reason=reason)
+
+    def _build_validated_response(
+        self, parsed_data: Dict[str, Any], subject: str
+    ) -> RecognizeCanvasResponse:
+        """Chuẩn hóa dữ liệu JSON từ Gemini về RecognizeCanvasResponse."""
+        raw_tokens = parsed_data.get("ambiguous_tokens", [])
+        normalized_tokens = []
+        if isinstance(raw_tokens, list):
+            for item in raw_tokens:
+                if isinstance(item, str):
+                    normalized_tokens.append(
+                        AmbiguousToken(detected_text=item, confidence=0.8, suggestions=[])
+                    )
+                elif isinstance(item, dict):
+                    detected = item.get("detected_text") or item.get("token") or item.get("text") or ""
+                    conf = float(item.get("confidence", 0.8))
+                    suggs = (
+                        item.get("suggestions")
+                        or item.get("possible_readings")
+                        or item.get("possible_interpretations")
+                        or []
+                    )
+                    bbox = item.get("bbox") or [0, 0, 0, 0]
+                    normalized_tokens.append(
+                        AmbiguousToken(
                             bbox=bbox,
                             detected_text=str(detected),
                             confidence=conf,
-                            suggestions=[str(s) for s in suggs]
-                        ))
-            parsed_data["ambiguous_tokens"] = normalized_tokens
+                            suggestions=[str(s) for s in suggs],
+                        )
+                    )
+        parsed_data["ambiguous_tokens"] = normalized_tokens
 
-            # Chuẩn hóa visualization nếu có
-            vis = parsed_data.get("visualization")
-            if isinstance(vis, dict):
-                if not vis.get("type"):
-                    vis["type"] = "NONE"
-                if not vis.get("engine"):
-                    vis["engine"] = "image"
-                try:
-                    parsed_data["visualization"] = VisualizationData(**vis)
-                except Exception:
-                    parsed_data["visualization"] = None
-
+        vis = parsed_data.get("visualization")
+        if isinstance(vis, dict):
+            if not vis.get("type"):
+                vis["type"] = "NONE"
+            if not vis.get("engine"):
+                vis["engine"] = "image"
             try:
-                return RecognizeCanvasResponse(**parsed_data)
-            except Exception as schema_err:
-                logger.warning(f"Cảnh báo schema validation từ Gemini: {schema_err}, phục hồi kết quả trực tiếp từ parsed_data")
-                return RecognizeCanvasResponse(
-                    recognized_text=str(parsed_data.get("recognized_text", "")),
-                    latex=str(parsed_data.get("latex") or parsed_data.get("recognized_text", "")),
-                    subject=str(parsed_data.get("subject", subject)),
-                    confidence=float(parsed_data.get("confidence", 0.95)),
-                    has_ambiguity=bool(parsed_data.get("has_ambiguity", False)),
-                    ambiguous_tokens=normalized_tokens,
-                    visualization=parsed_data.get("visualization") if isinstance(parsed_data.get("visualization"), VisualizationData) else None,
-                    explanation=parsed_data.get("explanation"),
-                    subject_details=parsed_data.get("subject_details")
-                )
+                parsed_data["visualization"] = VisualizationData(**vis)
+            except Exception:
+                parsed_data["visualization"] = None
 
-        except Exception as err:
-            logger.error(f"Lỗi gọi Gemini ({self.model_name}) Vision: {err}")
-            err_msg = str(err).strip() or "Hết thời gian chờ kết nối (Timeout)"
-            reason = f"{type(err).__name__}: {err_msg}"
-            fallback_res = self._mock_result(subject, clean_b64, degraded_reason=reason)
-            fallback_res.degraded_reason = reason
-            return fallback_res
+        try:
+            return RecognizeCanvasResponse(**parsed_data)
+        except Exception as schema_err:
+            logger.warning(f"Cảnh báo schema validation từ Gemini: {schema_err}, phục hồi trực tiếp.")
+            return RecognizeCanvasResponse(
+                recognized_text=str(parsed_data.get("recognized_text", "")),
+                latex=str(parsed_data.get("latex") or parsed_data.get("recognized_text", "")),
+                subject=str(parsed_data.get("subject", subject)),
+                confidence=float(parsed_data.get("confidence", 0.95)),
+                has_ambiguity=bool(parsed_data.get("has_ambiguity", False)),
+                ambiguous_tokens=normalized_tokens,
+                visualization=(
+                    parsed_data.get("visualization")
+                    if isinstance(parsed_data.get("visualization"), VisualizationData)
+                    else None
+                ),
+                explanation=parsed_data.get("explanation"),
+                subject_details=parsed_data.get("subject_details"),
+            )
+
+    def _error_result(self, subject: str, reason: str) -> RecognizeCanvasResponse:
+        """
+        Trả về trạng thái lỗi minh bạch khi AI timeout/gián đoạn.
+        TUYỆT ĐỐI không sinh công thức giả (như y = x^2 - 4x + 3) gây hiểu lầm cho giáo viên.
+        """
+        norm_subj = (subject or "TOAN").strip().upper()
+        return RecognizeCanvasResponse(
+            recognized_text="",
+            latex="",
+            subject=norm_subj,
+            confidence=0.0,
+            has_ambiguity=False,
+            ambiguous_tokens=[],
+            visualization=None,
+            explanation=(
+                f"Dịch vụ AI ({self.active_model_name}) tạm thời gián đoạn ({reason[:160]}). "
+                "Nét vẽ trên bảng vẫn được giữ nguyên — vui lòng bấm 'Thử lại nhận diện' để quét lại."
+            ),
+            subject_details={
+                "status": "error",
+                "retryable": True,
+                "error_reason": reason,
+            },
+            degraded_reason=reason,
+        )
 
     def _parse_json_robust(self, raw_text: str, subject: str = "TOAN") -> Dict[str, Any]:
         """Phân tích JSON chống dị tật, tự động sửa escape backslash trong LaTeX và unescaped quotes."""
