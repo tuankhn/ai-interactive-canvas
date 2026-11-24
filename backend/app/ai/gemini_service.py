@@ -118,7 +118,7 @@ class GeminiAIService:
         image_base64: str,
         subject: str = "MATH",
         grade_level: Optional[str] = "THPT",
-        timeout: float = 15.0
+        timeout: float = 20.0
     ) -> RecognizeCanvasResponse:
         """
         Phân tích ảnh vùng nét vẽ bằng Gemini 2.5 Flash / 3.5 Flash Lite.
@@ -147,14 +147,14 @@ class GeminiAIService:
             )
 
             raw_text = ""
-            total_budget = max(1.0, float(timeout or 15.0))
+            total_budget = max(5.0, float(timeout or 20.0))
             deadline = time.perf_counter() + total_budget
-
             candidate_models: list[str] = []
             for m in [
                 self._preferred_model,
                 self.model_name,
                 *settings.GEMINI_FALLBACK_MODELS,
+                "gemini-3.1-flash-lite",
                 "gemini-2.5-flash",
                 "gemini-2.5-flash-lite",
                 "gemini-2.0-flash",
@@ -164,42 +164,87 @@ class GeminiAIService:
 
             if self._client_type == "google-genai":
                 last_err = None
-                for idx, mod in enumerate(candidate_models):
-                    remaining = deadline - time.perf_counter()
-                    if remaining <= 0.2:
-                        last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
-                        break
-                    is_last_model = idx == len(candidate_models) - 1
-                    per_attempt_timeout = remaining if is_last_model else min(remaining, max(3.5, total_budget * 0.45))
-                    try:
-                        gen_config = None
-                        try:
-                            from google.genai import types
-                            gen_config = types.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                temperature=0.1,
-                            )
-                        except Exception:
-                            pass
-
-                        response = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.client.models.generate_content,
-                                model=mod,
-                                contents=[pil_image, prompt],
-                                config=gen_config,
-                            ),
-                            timeout=per_attempt_timeout,
-                        )
-                        raw_text = response.text or ""
-                        if raw_text:
-                            self._preferred_model = mod
+                use_native_aio = (
+                    type(self.client).__module__.startswith("google")
+                    and hasattr(self.client, "aio")
+                    and hasattr(self.client.aio, "models")
+                )
+                for mod in candidate_models:
+                    max_attempts = 2 if mod == candidate_models[0] else 1
+                    for attempt in range(max_attempts):
+                        remaining = deadline - time.perf_counter()
+                        if remaining <= 0.5:
+                            last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
                             break
-                    except Exception as mod_err:
-                        last_err = mod_err
-                        if self._preferred_model == mod:
-                            self._preferred_model = None
-                        logger.warning(f"Lỗi gọi model {mod}: {mod_err}, thử model tiếp theo...")
+                        per_attempt_timeout = min(remaining, 8.5)
+                        try:
+                            gen_config = None
+                            try:
+                                from google.genai import types
+                                gen_config = types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    temperature=0.1,
+                                )
+                            except Exception:
+                                pass
+
+                            if use_native_aio:
+                                try:
+                                    response = await asyncio.wait_for(
+                                        self.client.aio.models.generate_content(
+                                            model=mod,
+                                            contents=[pil_image, prompt],
+                                            config=gen_config,
+                                        ),
+                                        timeout=per_attempt_timeout,
+                                    )
+                                except RuntimeError as loop_err:
+                                    if "Event loop is closed" in str(loop_err):
+                                        self._init_client()
+                                        response = await asyncio.wait_for(
+                                            asyncio.to_thread(
+                                                self.client.models.generate_content,
+                                                model=mod,
+                                                contents=[pil_image, prompt],
+                                                config=gen_config,
+                                            ),
+                                            timeout=per_attempt_timeout,
+                                        )
+                                    else:
+                                        raise
+                            else:
+                                response = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        self.client.models.generate_content,
+                                        model=mod,
+                                        contents=[pil_image, prompt],
+                                        config=gen_config,
+                                    ),
+                                    timeout=per_attempt_timeout,
+                                )
+                            raw_text = response.text or ""
+                            if raw_text:
+                                self._preferred_model = mod
+                                break
+                        except Exception as mod_err:
+                            last_err = mod_err
+                            err_str = str(mod_err)
+                            is_transient = any(
+                                kw in err_str
+                                for kw in ["503", "429", "UNAVAILABLE", "high demand", "temporarily unavailable"]
+                            )
+                            if is_transient and attempt < max_attempts - 1 and (deadline - time.perf_counter()) > 2.0:
+                                logger.warning(f"Model {mod} quá tải tạm thời (503/429), chờ 0.5s và thử lại lần {attempt + 2}...")
+                                await asyncio.sleep(0.5)
+                                continue
+                            else:
+                                if self._preferred_model == mod:
+                                    self._preferred_model = None
+                                logger.warning(f"Lỗi gọi model {mod}: {mod_err}, thử model tiếp theo...")
+                                break
+
+                    if raw_text:
+                        break
 
                 if not raw_text and last_err:
                     raise last_err
@@ -266,7 +311,8 @@ class GeminiAIService:
 
         except Exception as err:
             logger.error(f"Lỗi gọi Gemini ({self.model_name}) Vision: {err}")
-            reason = f"{type(err).__name__}: {err}"
+            err_msg = str(err).strip() or "Hết thời gian chờ kết nối (Timeout)"
+            reason = f"{type(err).__name__}: {err_msg}"
             fallback_res = self._mock_result(subject, clean_b64, degraded_reason=reason)
             fallback_res.degraded_reason = reason
             return fallback_res
