@@ -1,66 +1,120 @@
-/* Tiện ích phân tử 3D bổ sung. Không chỉnh sửa CSS của bảng vẽ. */
+/* Tiện ích Phân tử 3D — Hệ thiết kế Studio Giấy Ấm / Viridian */
 .mol3d-panel {
   position: fixed;
-  top: 74px;
-  right: 18px;
-  z-index: 45;
-  width: min(410px, calc(100vw - 24px));
-  max-height: calc(100dvh - 88px);
+  top: 68px;
+  right: 16px;
+  z-index: 85;
+  width: min(400px, calc(100vw - 24px));
+  max-height: calc(100dvh - 136px);
   overflow: auto;
-  border: 2px solid #303a4b;
-  border-radius: 12px;
-  padding: 12px;
-  background: #fff;
-  color: #303a4b;
-  box-shadow: 0 12px 32px #1e293b30;
-  font: 13px Arial, sans-serif;
+  border: 1px solid var(--border-strong, #c8c2b6);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--bg-surface, #ffffff);
+  color: var(--ink, #18181b);
+  box-shadow: var(--shadow-dialog, 0 18px 40px rgba(24, 24, 27, 0.18));
+  font: 13.5px/1.55 var(--font-sans, 'Be Vietnam Pro', system-ui, sans-serif);
 }
 .mol3d-panel[hidden] { display: none !important; }
-.mol3d-heading, .mol3d-form, .mol3d-examples {
+.mol3d-heading,
+.mol3d-form,
+.mol3d-examples {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.mol3d-heading { justify-content: space-between; margin-bottom: 10px; font-size: 15px; }
-.mol3d-heading button { font-size: 26px; padding: 0; line-height: 1; }
+.mol3d-heading {
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.mol3d-heading button {
+  font-size: 20px;
+  padding: 0;
+  line-height: 1;
+  min-width: 36px;
+  min-height: 36px;
+}
 .mol3d-panel button {
-  border: 1px solid #9ca3af;
-  border-radius: 8px;
-  background: white;
-  color: #303a4b;
+  border: 1px solid var(--border-strong, #c8c2b6);
+  border-radius: 6px;
+  background: var(--bg-surface, #ffffff);
+  color: var(--ink, #18181b);
   cursor: pointer;
-  min-width: 48px;
-  min-height: 48px;
+  min-width: 44px;
+  min-height: 42px;
+  font: inherit;
+  font-weight: 600;
+}
+.mol3d-panel button:hover {
+  background: var(--bg-hover, #ece7de);
 }
 .mol3d-form { flex-wrap: wrap; }
-.mol3d-form label { font-weight: bold; }
+.mol3d-form label { font-weight: 600; font-size: 13px; }
 .mol3d-form input {
   flex: 1;
-  min-width: 100px;
-  height: 48px;
-  padding: 8px;
-  border: 1px solid #94a3b8;
-  border-radius: 8px;
+  min-width: 110px;
+  height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong, #c8c2b6);
+  border-radius: 6px;
+  background: var(--bg-surface, #ffffff);
+  color: var(--ink, #18181b);
   font: inherit;
 }
-.mol3d-form button { background: #222f71; color: #fff; font-weight: bold; padding: 0 10px; }
-.mol3d-examples { margin: 10px 0; }
-.mol3d-examples button { padding: 0 12px; font-weight: bold; }
-.mol3d-examples button:hover { background: #e8eefb; }
+.mol3d-form button {
+  background: var(--primary, #14532d);
+  border-color: var(--primary, #14532d);
+  color: var(--primary-ink, #ffffff);
+  font-weight: 600;
+  padding: 0 12px;
+}
+.mol3d-form button:hover {
+  background: var(--primary-hover, #166534);
+}
+.mol3d-examples {
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+.mol3d-examples button {
+  padding: 0 12px;
+  min-height: 36px;
+  background: var(--bg-subtle, #f3efe8);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 12.5px;
+}
 .mol3d-viewer {
   position: relative;
   width: 100%;
-  height: 270px;
-  border: 1px solid #dbe2ed;
-  border-radius: 8px;
+  height: 260px;
+  border: 1px solid var(--border, #e2ddd3);
+  border-radius: 6px;
   overflow: hidden;
-  background: #f8fafc;
+  background: #ffffff;
 }
-.mol3d-information { margin: 10px 0 0; font-weight: bold; line-height: 1.5; }
-.mol3d-status { margin: 8px 0 0; color: #a16207; }
+.mol3d-information {
+  margin: 10px 0 0;
+  font-weight: 600;
+  line-height: 1.55;
+}
+.mol3d-status {
+  margin: 8px 0 0;
+  color: var(--accent-warm, #9a3412);
+  font-size: 12.5px;
+}
 .mol3d-status:empty { display: none; }
-.mol3d-help { margin: 8px 0 0; color: #64748b; font-size: 12px; }
-@media (max-width: 600px) {
-  .mol3d-panel { top: 58px; right: 8px; max-height: calc(100dvh - 65px); }
-  .mol3d-viewer { height: 220px; }
+.mol3d-help {
+  margin: 8px 0 0;
+  color: var(--ink-muted, #63636e);
+  font-size: 12px;
+  line-height: 1.5;
+}
+@media (max-width: 768px) {
+  .mol3d-panel {
+    top: 58px;
+    right: 8px;
+    max-height: calc(100dvh - 124px);
+  }
+  .mol3d-viewer { height: 215px; }
 }

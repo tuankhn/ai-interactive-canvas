@@ -1,4 +1,4 @@
-import { $, surface, toolbar, ui, state, fabricCanvas, blankPage, setStatus } from '../utils/context.js';
+import { $, stage, surface, toolbar, ui, state, fabricCanvas, blankPage, setStatus } from '../utils/context.js';
 import { setTool, closePanels, syncColorSelection, syncWidthSelection, setupToolbar } from '../components/toolbar.js';
 import { syncBackgroundButtons, updateHint, setupHistoryShortcuts } from '../components/history.js';
 import { refreshPages, restoreSavedPages, persistPages, setupPageControls } from '../components/pageManager.js';
@@ -12,6 +12,7 @@ import { setupQuizBoard } from '../components/quiz_board.js';
 import { setupStudentScoreSidebar } from '../components/student_score_sidebar.js';
 import { setupEssayGradingManager } from '../components/essayGradingManager.js';
 import { setupQuestionVariantManager } from '../components/questionVariantManager.js';
+import { showAppConfirm, showAppToast } from '../utils/ui_feedback.js';
 
 const SELECTED_CLASS_KEY = 'ai-canvas:selected-class:v1';
 const DEFAULT_CLASSES = ['10A1', '10A2', '12A1', '8A2', '4A1'];
@@ -114,7 +115,9 @@ function initClassroomContext() {
     state.undoStack = [];
     state.redoStack = [];
     fabricCanvas.clear();
-    fabricCanvas.backgroundColor = '#ffffff';
+    fabricCanvas.backgroundColor = '';
+    stage.style.removeProperty('background-color');
+    stage.classList.toggle('is-dark-board', document.documentElement.dataset.theme === 'dark');
     syncBackgroundButtons();
     updateHint();
     refreshPages();
@@ -153,7 +156,28 @@ function initClassroomContext() {
   });
 }
 
+function setupStudioIntroSplash() {
+  const splash = $('studioIntroOverlay');
+  if (!splash) return;
+  const running = typeof splash.getAnimations === 'function' ? splash.getAnimations() : [];
+  if (running.length === 0) {
+    splash.hidden = true;
+    return;
+  }
+  const dismiss = () => {
+    splash.hidden = true;
+  };
+  splash.addEventListener('animationend', (event) => {
+    const anim = 'animation' in event ? event.animation : null;
+    if (event.target === splash && (!anim || anim.effect?.pseudoElement == null)) {
+      dismiss();
+    }
+  });
+  setTimeout(dismiss, 1600);
+}
+
 export async function initWhiteboard() {
+  setupStudioIntroSplash();
   initClassroomContext();
   setupToolbar();
   setupHistoryShortcuts();
@@ -176,11 +200,19 @@ export async function initWhiteboard() {
     const seconds = Math.floor((Date.now() - startedAt) / 1000);
     const min = String(Math.floor(seconds / 60)).padStart(2, '0');
     const sec = String(seconds % 60).padStart(2, '0');
-    $('sessionTimer').textContent = `Đang diễn ra ${min}:${sec}`;
+    $('sessionTimer').textContent = `${min}:${sec}`;
   }, 1000);
 
-  $('endSession').addEventListener('click', () => {
-    if (state.pageBusy || state.ended || !window.confirm('Kết thúc phiên vẽ trên trình duyệt này?')) return;
+  $('endSession').addEventListener('click', async () => {
+    if (state.pageBusy || state.ended) return;
+    const confirmed = await showAppConfirm({
+      title: 'Kết thúc phiên giảng dạy này?',
+      message: 'Toàn bộ trang bảng đang vẽ sẽ được tự động lưu trên trình duyệt, sau đó mặt bảng sẽ chuyển sang chế độ chỉ xem.',
+      confirmText: 'Kết thúc phiên',
+      cancelText: 'Tiếp tục giảng',
+      variant: 'danger',
+    });
+    if (!confirmed || state.pageBusy || state.ended) return;
     persistPages();
     state.ended = true;
     clearInterval(clock);
@@ -196,8 +228,13 @@ export async function initWhiteboard() {
     $('nextPage').disabled = true;
     $('addPageButton').disabled = true;
     $('deletePageButton').disabled = true;
-    ui.footer.textContent = 'Phiên đã kết thúc · Chưa đồng bộ máy chủ';
+    ui.footer.textContent = 'Phiên đã kết thúc · Đã lưu trang trên trình duyệt';
     setStatus('Đã kết thúc phiên');
+    showAppToast({
+      title: 'Đã kết thúc tiết học',
+      message: 'Bạn vẫn có thể bấm "Chụp bảng" để tải ảnh PNG bài giảng về máy.',
+      variant: 'info',
+    });
   });
 
   window.addEventListener('pagehide', () => {

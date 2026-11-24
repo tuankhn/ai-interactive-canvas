@@ -1,12 +1,161 @@
 import { Path, Text } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
-import { $, stage, surface, previewCanvas, previewContext, fabricCanvas, ui, state, toolNames, shapeTools, setStatus } from '../utils/context.js';
-import { isPalmTouch, getPoint } from '../utils/pointer.js';
+import { $, stage, surface, previewCanvas, previewContext, fabricCanvas, ui, state, toolNames, shapeTools, setStatus, isDarkBoardActive } from '../utils/context.js';
+import { isPalmTouch, getPoint, getScreenPoint, screenToWorld } from '../utils/pointer.js';
 import { createPath, drawRuler, previewShape, isNearObject, intersects, makeShape, makeRuler } from '../utils/geometry.js';
 import { snapshot, restore, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
 import { scheduleAIDebounce, cancelAIDebounce } from './aiRecognition.js';
+import { snapPointToRuler } from './rulerOverlay.js';
+
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 5.0;
 
 let activeInlineTextInput = null;
+let isSpacePressed = false;
+let panDragState = null; // { pointerId, lastX, lastY }
+const activeTouches = new Map(); // pointerId -> { x, y }
+let pinchState = null; // { dist, midX, midY }
+
+function applyPreviewTransform() {
+  const ratio = window.devicePixelRatio || 1;
+  const vpt = fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+  previewContext.setTransform(
+    ratio * vpt[0],
+    0,
+    0,
+    ratio * vpt[3],
+    ratio * vpt[4],
+    ratio * vpt[5]
+  );
+}
+
+function wipePreviewBuffer() {
+  previewContext.save();
+  previewContext.setTransform(1, 0, 0, 1, 0, 0);
+  previewContext.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  previewContext.restore();
+}
+
+export function syncInfiniteViewportUI() {
+  const vpt = fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+  const zoom = vpt[0] || 1;
+  const panX = vpt[4] || 0;
+  const panY = vpt[5] || 0;
+
+  // Đồng bộ lưới chấm mảnh / ô vuông chạy mượt theo thế giới vô hạn
+  let worldStep = 20;
+  if (zoom < 0.45) worldStep = 40;
+  else if (zoom > 2.4) worldStep = 10;
+  const screenStep = Math.max(8, worldStep * zoom);
+  const offsetX = ((panX % screenStep) + screenStep) % screenStep;
+  const offsetY = ((panY % screenStep) + screenStep) % screenStep;
+
+  stage.style.setProperty('--grid-step', `${screenStep.toFixed(2)}px`);
+  stage.style.setProperty('--grid-offset-x', `${offsetX.toFixed(2)}px`);
+  stage.style.setProperty('--grid-offset-y', `${offsetY.toFixed(2)}px`);
+
+  const zoomResetBtn = $('zoomResetBtn');
+  if (zoomResetBtn) {
+    zoomResetBtn.textContent = `${Math.round(zoom * 100)}%`;
+  }
+
+  applyPreviewTransform();
+
+  // Hiện nút "Quay về nội dung" kiểu Excalidraw khi kéo bảng rời xa hoàn toàn các nét đã vẽ
+  const scrollBackBtn = $('scrollBackToContentBtn');
+  if (scrollBackBtn) {
+    const objects = fabricCanvas.getObjects();
+    const cw = stage.clientWidth || 1280;
+    const ch = stage.clientHeight || 720;
+    if (!objects.length) {
+      scrollBackBtn.hidden = true;
+    } else {
+      const viewRect = {
+        left: -panX / zoom,
+        top: -panY / zoom,
+        width: cw / zoom,
+        height: ch / zoom,
+      };
+      const anyVisible = objects.some((obj) => {
+        const b = obj.getBoundingRect();
+        return b && intersects(b, viewRect);
+      });
+      scrollBackBtn.hidden = anyVisible;
+    }
+  }
+}
+
+export function setViewportTransformClean(nextVpt) {
+  fabricCanvas.setViewportTransform(nextVpt);
+  syncInfiniteViewportUI();
+  fabricCanvas.requestRenderAll();
+}
+
+export function panBy(dx, dy) {
+  const vpt = (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice();
+  vpt[4] += dx;
+  vpt[5] += dy;
+  setViewportTransformClean(vpt);
+}
+
+export function zoomAt(targetZoom, anchorScreenX, anchorScreenY) {
+  const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetZoom));
+  const vpt = (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice();
+  const oldZoom = vpt[0] || 1;
+  const sx = Number.isFinite(anchorScreenX) ? anchorScreenX : (stage.clientWidth || 800) / 2;
+  const sy = Number.isFinite(anchorScreenY) ? anchorScreenY : (stage.clientHeight || 600) / 2;
+
+  const wx = (sx - vpt[4]) / oldZoom;
+  const wy = (sy - vpt[5]) / oldZoom;
+  const nextPanX = sx - wx * clampedZoom;
+  const nextPanY = sy - wy * clampedZoom;
+
+  setViewportTransformClean([clampedZoom, 0, 0, clampedZoom, nextPanX, nextPanY]);
+}
+
+export function resetViewport() {
+  setViewportTransformClean([1, 0, 0, 1, 0, 0]);
+  setStatus('Đã đặt lại góc nhìn 100%');
+}
+
+export function scrollBackToContent() {
+  const objects = fabricCanvas.getObjects();
+  if (!objects.length) {
+    resetViewport();
+    return;
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  objects.forEach((o) => {
+    const b = o.getBoundingRect();
+    if (!b) return;
+    minX = Math.min(minX, b.left);
+    minY = Math.min(minY, b.top);
+    maxX = Math.max(maxX, b.left + b.width);
+    maxY = Math.max(maxY, b.top + b.height);
+  });
+  if (!Number.isFinite(minX)) {
+    resetViewport();
+    return;
+  }
+  const cw = stage.clientWidth || 1280;
+  const ch = stage.clientHeight || 720;
+  const pad = 80;
+  const fitZoom = Math.min(
+    1,
+    Math.max(0.2, Math.min(cw / Math.max(240, maxX - minX + pad * 2), ch / Math.max(180, maxY - minY + pad * 2)))
+  );
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  setViewportTransformClean([
+    fitZoom,
+    0,
+    0,
+    fitZoom,
+    cw / 2 - cx * fitZoom,
+    ch / 2 - cy * fitZoom,
+  ]);
+  setStatus('Đã đưa nội dung về giữa bảng');
+}
 
 function openInlineTextEditor(point) {
   if (activeInlineTextInput) {
@@ -14,25 +163,27 @@ function openInlineTextEditor(point) {
   }
   const fontSize = Math.max(18, Number(ui.width.value) * 5);
   const strokeColor = ui.color.value;
-  const isDarkBoard = fabricCanvas.backgroundColor === '#111827';
+  const isDarkBoard = isDarkBoardActive();
+  const sx = Number.isFinite(point.screenX) ? point.screenX : point.x;
+  const sy = Number.isFinite(point.screenY) ? point.screenY : point.y;
   const input = document.createElement('input');
   input.type = 'text';
   input.placeholder = 'Nhập chữ lên bảng (Enter để chèn, Esc để hủy)...';
   input.setAttribute('aria-label', 'Nhập nội dung chữ lên bảng');
   Object.assign(input.style, {
     position: 'absolute',
-    left: `${Math.max(8, Math.min(point.x, Math.max(8, stage.clientWidth - 260)))}px`,
-    top: `${Math.max(8, Math.min(point.y - 6, Math.max(8, stage.clientHeight - 48)))}px`,
+    left: `${Math.max(8, Math.min(sx, Math.max(8, stage.clientWidth - 260)))}px`,
+    top: `${Math.max(8, Math.min(sy - 6, Math.max(8, stage.clientHeight - 48)))}px`,
     minWidth: '240px',
     maxWidth: `${Math.max(160, stage.clientWidth - 24)}px`,
     padding: '6px 10px',
     fontSize: `${Math.min(28, fontSize)}px`,
-    fontFamily: 'inherit',
+    fontFamily: "'Be Vietnam Pro', system-ui, -apple-system, sans-serif",
     color: strokeColor,
-    background: isDarkBoard ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.96)',
-    border: '2px solid #2563eb',
-    borderRadius: '8px',
-    boxShadow: '0 6px 18px rgba(15, 23, 42, 0.16)',
+    background: isDarkBoard ? 'rgba(35, 33, 30, 0.96)' : 'rgba(250, 248, 244, 0.98)',
+    border: '1.5px solid var(--accent-primary)',
+    borderRadius: '6px',
+    boxShadow: '0 8px 20px rgba(38, 35, 31, 0.14)',
     outline: 'none',
     zIndex: '25',
   });
@@ -51,6 +202,7 @@ function openInlineTextEditor(point) {
       top: point.y,
       fill: strokeColor,
       fontSize,
+      fontFamily: 'Be Vietnam Pro, sans-serif',
       selectable: false,
       evented: false,
     });
@@ -102,7 +254,7 @@ function resizeCanvas() {
   }
   previewCanvas.style.width = `${width}px`;
   previewCanvas.style.height = `${height}px`;
-  previewContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+  syncInfiniteViewportUI();
   fabricCanvas.requestRenderAll();
   if (state.stroke) schedulePreview();
 }
@@ -110,7 +262,7 @@ function resizeCanvas() {
 function clearPreview() {
   if (state.previewFrame) cancelAnimationFrame(state.previewFrame);
   state.previewFrame = 0;
-  previewContext.clearRect(0, 0, previewCanvas.clientWidth, previewCanvas.clientHeight);
+  wipePreviewBuffer();
 }
 
 function renderPreview() {
@@ -119,6 +271,7 @@ function renderPreview() {
   const points = state.stroke.points;
   if (!points.length) return;
   const end = points.at(-1);
+  applyPreviewTransform();
 
   if (state.tool === 'pen' || state.tool === 'highlighter') {
     // Chỉ vẽ các điểm mới trong mỗi frame để tránh tính lại toàn bộ nét dài.
@@ -149,17 +302,17 @@ function renderPreview() {
     state.stroke.renderedPoints = points.length;
     previewContext.restore();
   } else {
-    previewContext.clearRect(0, 0, previewCanvas.clientWidth, previewCanvas.clientHeight);
+    wipePreviewBuffer();
     if (state.tool === 'eraser') {
       previewContext.beginPath();
       previewContext.arc(end.x, end.y, state.stroke.width / 2, 0, Math.PI * 2);
-      previewContext.strokeStyle = '#ef4444';
-      previewContext.lineWidth = 1.5;
+      previewContext.strokeStyle = '#C96442';
+      previewContext.lineWidth = 1.5 / (fabricCanvas.getZoom() || 1);
       previewContext.stroke();
     } else if (points.length > 1) {
       previewContext.save();
-      previewContext.strokeStyle = state.tool === 'areaEraser' ? '#ef4444' : state.stroke.color;
-      previewContext.lineWidth = state.tool === 'areaEraser' ? 1.5 : state.stroke.width;
+      previewContext.strokeStyle = state.tool === 'areaEraser' ? '#C96442' : state.stroke.color;
+      previewContext.lineWidth = state.tool === 'areaEraser' ? 1.5 / (fabricCanvas.getZoom() || 1) : state.stroke.width;
       previewContext.setLineDash(state.tool === 'areaEraser' ? [6, 5] : []);
       if (state.tool === 'ruler') drawRuler(previewContext, points[0], end, state.stroke.color);
       else previewShape(previewContext, points[0], end, state.tool);
@@ -191,10 +344,15 @@ function eraseAt(point, radius) {
 
 function addPoint(event) {
   if (!state.stroke) return;
-  const point = getPoint(event);
+  let sp = getScreenPoint(event);
+  if (state.tool === 'pen' || state.tool === 'highlighter') {
+    sp = snapPointToRuler(sp, state.stroke);
+  }
+  const point = screenToWorld(sp.x, sp.y, sp.pressure);
+  const minDelta = 0.35 / (fabricCanvas.getZoom() || 1);
   const previous = state.stroke.points.at(-1);
   // Loại các điểm trùng nhau để giảm lượng tính toán và nét không bị răng cưa.
-  if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 0.35) return;
+  if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < minDelta) return;
   state.stroke.points.push(point);
   if (state.tool === 'eraser') {
     state.stroke.modified = eraseAt(point, state.stroke.width / 2) || state.stroke.modified;
@@ -288,10 +446,49 @@ export function finishStroke(commit) {
   }
 }
 
+function shouldStartPan(event) {
+  if (state.tool === 'hand') return true;
+  if (isSpacePressed) return true;
+  if (event.pointerType === 'mouse' && event.button === 1) return true;
+  return false;
+}
+
 function pointerDown(event) {
   if (state.ended || state.pageBusy) return;
   const pointerType = event.pointerType;
   if (pointerType === 'pen') state.lastPenSeenAt = performance.now();
+
+  // Theo dõi chụm 2 ngón tay trên Tablet / màn hình cảm ứng để kéo & thu phóng bảng vô hạn
+  if (pointerType === 'touch' && !state.penInUse) {
+    const sp = getScreenPoint(event);
+    activeTouches.set(event.pointerId, { x: sp.x, y: sp.y });
+    if (activeTouches.size === 2) {
+      if (state.stroke) finishStroke(false);
+      panDragState = null;
+      const pts = Array.from(activeTouches.values());
+      pinchState = {
+        dist: Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)),
+        midX: (pts[0].x + pts[1].x) / 2,
+        midY: (pts[0].y + pts[1].y) / 2,
+      };
+      event.preventDefault();
+      return;
+    }
+  }
+
+  // Kéo di chuyển bảng vô hạn (công cụ Kéo bảng V, giữ phím Space, hoặc nhấn chuột giữa)
+  if (shouldStartPan(event)) {
+    event.preventDefault();
+    closePanels();
+    panDragState = {
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
+    };
+    stage.classList.add('is-panning-active');
+    try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    return;
+  }
 
   // Palm Rejection: lọc tiếp xúc lớn, ngón thứ hai và touch gần lần bút Stylus.
   if (pointerType === 'touch' && (
@@ -340,6 +537,36 @@ function pointerDown(event) {
 
 function pointerMove(event) {
   if (event.pointerType === 'pen') state.lastPenSeenAt = performance.now();
+
+  if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
+    const sp = getScreenPoint(event);
+    activeTouches.set(event.pointerId, { x: sp.x, y: sp.y });
+    if (activeTouches.size === 2 && pinchState) {
+      event.preventDefault();
+      const pts = Array.from(activeTouches.values());
+      const nextDist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+      const nextMidX = (pts[0].x + pts[1].x) / 2;
+      const nextMidY = (pts[0].y + pts[1].y) / 2;
+
+      panBy(nextMidX - pinchState.midX, nextMidY - pinchState.midY);
+      const currentZoom = fabricCanvas.getZoom() || 1;
+      zoomAt(currentZoom * (nextDist / pinchState.dist), nextMidX, nextMidY);
+
+      pinchState = { dist: nextDist, midX: nextMidX, midY: nextMidY };
+      return;
+    }
+  }
+
+  if (panDragState && event.pointerId === panDragState.pointerId) {
+    event.preventDefault();
+    const dx = event.clientX - panDragState.lastX;
+    const dy = event.clientY - panDragState.lastY;
+    panDragState.lastX = event.clientX;
+    panDragState.lastY = event.clientY;
+    panBy(dx, dy);
+    return;
+  }
+
   if (state.ended || event.pointerId !== state.activePointer || !state.stroke) return;
   event.preventDefault();
   const events = event.getCoalescedEvents?.();
@@ -350,23 +577,124 @@ function pointerMove(event) {
   }
 }
 
+function endTouchOrPan(event) {
+  if (event.pointerType === 'touch') {
+    activeTouches.delete(event.pointerId);
+    if (activeTouches.size < 2) pinchState = null;
+  }
+  if (panDragState && event.pointerId === panDragState.pointerId) {
+    panDragState = null;
+    stage.classList.remove('is-panning-active');
+    return true;
+  }
+  return false;
+}
+
 function pointerUp(event) {
+  if (endTouchOrPan(event)) return;
   if (event.pointerId !== state.activePointer || !state.stroke) return;
   event.preventDefault();
   if (event.pointerType === 'pen') state.lastPenSeenAt = performance.now();
   addPoint(event);
   finishStroke(true);
+  syncInfiniteViewportUI();
 }
 
 function pointerCancel(event) {
+  if (endTouchOrPan(event)) return;
   if (event.pointerId !== state.activePointer || !state.stroke) return;
   finishStroke(false);
+  syncInfiniteViewportUI();
+}
+
+function onStageWheel(event) {
+  if (state.ended) return;
+  // Không chặn cuộn bên trong các khung cuộn con như AI overlay
+  if (event.target.closest('.ai-overlay-panel, .tool-popover')) return;
+  event.preventDefault();
+
+  const rect = surface.getBoundingClientRect();
+  const sx = event.clientX - rect.left;
+  const sy = event.clientY - rect.top;
+
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    const currentZoom = fabricCanvas.getZoom() || 1;
+    const delta = -event.deltaY;
+    const factor = Math.exp(delta * 0.0045);
+    zoomAt(currentZoom * factor, sx, sy);
+  } else {
+    const dx = event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX;
+    const dy = event.shiftKey && event.deltaX === 0 ? 0 : event.deltaY;
+    panBy(-dx, -dy);
+  }
+}
+
+function setupInfiniteViewportControls() {
+  stage.addEventListener('wheel', onStageWheel, { passive: false });
+
+  $('zoomInBtn')?.addEventListener('click', () => {
+    zoomAt((fabricCanvas.getZoom() || 1) * 1.2);
+  });
+  $('zoomOutBtn')?.addEventListener('click', () => {
+    zoomAt((fabricCanvas.getZoom() || 1) / 1.2);
+  });
+  $('zoomResetBtn')?.addEventListener('click', () => {
+    resetViewport();
+  });
+  $('scrollBackToContentBtn')?.addEventListener('click', () => {
+    scrollBackToContent();
+  });
+
+  window.addEventListener('app:reset-viewport', () => {
+    resetViewport();
+  });
+  window.addEventListener('app:sync-viewport', () => {
+    syncInfiniteViewportUI();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    const active = document.activeElement;
+    const inField =
+      active &&
+      (active.matches('input,textarea,select') || active.isContentEditable);
+    if (inField || document.querySelector('dialog[open]:not([popover])')) return;
+
+    if (event.code === 'Space' && !event.repeat && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      isSpacePressed = true;
+      stage.classList.add('is-panning');
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      if (event.key === '0') {
+        event.preventDefault();
+        resetViewport();
+      } else if (event.key === '=' || event.key === '+') {
+        event.preventDefault();
+        zoomAt((fabricCanvas.getZoom() || 1) * 1.2);
+      } else if (event.key === '-') {
+        event.preventDefault();
+        zoomAt((fabricCanvas.getZoom() || 1) / 1.2);
+      }
+    }
+  });
+
+  document.addEventListener('keyup', (event) => {
+    if (event.code === 'Space') {
+      isSpacePressed = false;
+      if (state.tool !== 'hand') {
+        stage.classList.remove('is-panning');
+      }
+    }
+  });
 }
 
 export function setupDrawingCanvas() {
   new ResizeObserver(resizeCanvas).observe(stage);
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
+  setupInfiniteViewportControls();
 
   surface.addEventListener('pointerdown', pointerDown, { passive: false });
   surface.addEventListener('pointermove', pointerMove, { passive: false });
@@ -375,6 +703,12 @@ export function setupDrawingCanvas() {
   surface.addEventListener('lostpointercapture', pointerCancel);
   stage.addEventListener('contextmenu', (event) => event.preventDefault());
   window.addEventListener('blur', () => {
+    isSpacePressed = false;
+    activeTouches.clear();
+    pinchState = null;
+    panDragState = null;
+    stage.classList.remove('is-panning-active');
+    if (state.tool !== 'hand') stage.classList.remove('is-panning');
     if (state.stroke) finishStroke(false);
     closePanels();
   });

@@ -3,10 +3,11 @@
 // Phụ trách: Nguyễn Ngọc Gia Bảo 2 (N25DTCN121) - Sprint 3 (16/11 - 20/11/2026)
 // ==============================================================================
 
-import { $, fabricCanvas, setStatus } from '../utils/context.js';
+import { $, fabricCanvas, setStatus, isDarkBoardActive } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
+import { showAppToast } from '../utils/ui_feedback.js';
 import { Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 const VARIANT_ENDPOINT = '/api/v1/exam/generate-variant';
@@ -89,8 +90,17 @@ export function setupQuestionVariantManager() {
       if (extracted) {
         inputEl.value = extracted;
         setStatus('Đã trích xuất đề bài đang chiếu trên bảng');
+        showAppToast({
+          title: 'Đã lấy đề từ bảng',
+          message: 'Nội dung đề bài trên mặt bảng đã được điền vào khung.',
+          variant: 'success',
+        });
       } else {
-        alert('Không tìm thấy khối đề bài nào trên bảng. Bạn có thể tự gõ đề hoặc chọn nút đề mẫu nhanh.');
+        showAppToast({
+          title: 'Chưa có khối đề bài trên bảng',
+          message: 'Bạn có thể tự gõ đề hoặc chọn một nút đề mẫu nhanh bên dưới.',
+          variant: 'warning',
+        });
       }
     });
   }
@@ -109,7 +119,11 @@ export function setupQuestionVariantManager() {
   async function requestVariants(variantType, customSeed = null) {
     const originalText = (inputEl.value || '').trim();
     if (!originalText) {
-      alert('Vui lòng nhập đề bài hoặc bấm nút lấy đề bài từ bảng.');
+      showAppToast({
+        title: 'Chưa có đề bài gốc',
+        message: 'Vui lòng nhập đề bài hoặc chọn một đề mẫu nhanh.',
+        variant: 'warning',
+      });
       inputEl.focus();
       return;
     }
@@ -145,13 +159,17 @@ export function setupQuestionVariantManager() {
       loadingIndicator.hidden = true;
       resultsContainer.hidden = false;
       countEl.textContent = currentVariants.length;
-      sourceBadge.textContent = data.generation_source === 'AI_GEMINI' ? '✨ Gemini 2.5 Flash' : '⚡ Math Perturbation Engine';
+      sourceBadge.textContent = data.generation_source === 'AI_GEMINI' ? 'Gemini AI' : 'Math Perturbation Engine';
 
       renderVariantCards(currentVariants, cardsList, variantType);
       setStatus(`AI đã tạo thành công ${currentVariants.length} bài tập biến thể`);
     } catch (err) {
       loadingIndicator.hidden = true;
-      alert(`Không thể sinh câu hỏi: ${err.message}`);
+      showAppToast({
+        title: 'Không thể sinh biến thể câu hỏi',
+        message: err.message || 'Vui lòng kiểm tra kết nối máy chủ.',
+        variant: 'error',
+      });
       setStatus(`Lỗi sinh câu hỏi: ${err.message}`);
     }
   }
@@ -172,10 +190,10 @@ export function setupQuestionVariantManager() {
       card.innerHTML = `
         <div class="variant-card-top">
           <div class="variant-card-badges">
-            <span class="variant-badge ${badgeClass}">${item.icon} ${item.type_display}</span>
-            <span class="variant-diff-badge">${item.difficulty_level}</span>
+            <span class="variant-badge ${badgeClass}">${escapeHtml(item.type_display)}</span>
+            <span class="variant-diff-badge">${escapeHtml(item.difficulty_level)}</span>
           </div>
-          <strong class="variant-card-title">${item.title}</strong>
+          <strong class="variant-card-title">${escapeHtml(item.title)}</strong>
         </div>
 
         <div class="variant-question-box">
@@ -183,15 +201,15 @@ export function setupQuestionVariantManager() {
         </div>
 
         <div class="variant-meta-box">
-          ${item.changed_parameters ? `<div class="meta-row"><strong>🔄 Số liệu đổi:</strong> <span>${escapeHtml(item.changed_parameters)}</span></div>` : ''}
-          ${item.added_conditions ? `<div class="meta-row"><strong>🎯 Điều kiện nâng cao:</strong> <span>${escapeHtml(item.added_conditions)}</span></div>` : ''}
-          ${item.advanced_hint ? `<div class="meta-row hint-row"><strong>💡 Gợi ý tư duy:</strong> <span>${escapeHtml(item.advanced_hint)}</span></div>` : ''}
+          ${item.changed_parameters ? `<div class="meta-row"><strong>Số liệu đổi:</strong> <span>${escapeHtml(item.changed_parameters)}</span></div>` : ''}
+          ${item.added_conditions ? `<div class="meta-row"><strong>Điều kiện nâng cao:</strong> <span>${escapeHtml(item.added_conditions)}</span></div>` : ''}
+          ${item.advanced_hint ? `<div class="meta-row hint-row"><strong>Gợi ý tư duy:</strong> <span>${escapeHtml(item.advanced_hint)}</span></div>` : ''}
         </div>
 
         <!-- Khối Đáp án & Hướng dẫn giải (Mặc định ẩn để không lộ đáp án khi chiếu cho học sinh) -->
         <div class="variant-solution-container">
           <button type="button" class="btn-toggle-solution" aria-expanded="false">
-            👁️ <span class="toggle-text">Hiện đáp án &amp; lời giải</span>
+            <span class="toggle-text">Hiện đáp án &amp; lời giải</span>
           </button>
           <div class="variant-solution-content" hidden>
             <div class="solution-answer-row">
@@ -206,13 +224,13 @@ export function setupQuestionVariantManager() {
 
         <div class="variant-card-actions">
           <button type="button" class="btn-action-insert" title="Chèn đề bài này trực tiếp lên mặt bảng vẽ Fabric.js">
-            📌 Chiếu lên bảng vẽ
+            Chiếu lên bảng vẽ
           </button>
           <button type="button" class="btn-action-copy" title="Sao chép nội dung câu hỏi">
-            📋 Sao chép đề bài
+            Sao chép đề bài
           </button>
           <button type="button" class="btn-action-rerun" title="AI sinh một bộ số liệu khác cho dạng bài này">
-            🔄 Đổi số liệu khác
+            Đổi số liệu khác
           </button>
         </div>
       `;
@@ -239,12 +257,17 @@ export function setupQuestionVariantManager() {
       copyBtn.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(item.question_content);
-          copyBtn.textContent = '✓ Đã chép!';
+          copyBtn.textContent = '✓ Đã sao chép';
           setTimeout(() => {
-            copyBtn.textContent = '📋 Sao chép đề bài';
+            copyBtn.textContent = 'Sao chép đề bài';
           }, 2000);
         } catch {
-          alert(item.question_content);
+          showAppToast({
+            title: 'Không truy cập được Clipboard',
+            message: item.question_content,
+            variant: 'info',
+            durationMs: 6000,
+          });
         }
       });
 
@@ -303,7 +326,7 @@ export function insertVariantCardToCanvas(variantItem) {
   if (!fabricCanvas || !variantItem) return;
   const before = snapshot();
 
-  const isDark = fabricCanvas.backgroundColor === '#111827';
+  const isDark = isDarkBoardActive();
   const isAdv = variantItem.variant_type === 'ADVANCED';
 
   const cardWidth = Math.min(680, Math.max(420, fabricCanvas.getWidth() - 120));

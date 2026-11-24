@@ -3,17 +3,50 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#1e3a5f">
+  <meta name="theme-color" content="#F4F0E8">
   <meta name="description" content="Bảng vẽ tương tác thông minh hỗ trợ giảng dạy với bút Stylus, hình học, quản lý trang và AI nhận diện công thức.">
   <title>Bảng vẽ thông minh tích hợp AI | AI Interactive Canvas</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231e3a5f'/%3E%3Cpath d='M8 22L14 10l4 7 3-4 3 9' stroke='%23ffffff' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20261125r6">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./style.css">
-  <link rel="stylesheet" href="./src/extensions/handwriting.css">
-  <link rel="stylesheet" href="./src/extensions/molecule3d.css">
-  <link rel="stylesheet" href="./src/components/geometry_3d_three.css">
+  <link rel="stylesheet" href="./style.css?v=20261125r6">
+  <link rel="stylesheet" href="./src/extensions/handwriting.css?v=20261125r5">
+  <link rel="stylesheet" href="./src/extensions/molecule3d.css?v=20261125r5">
+  <link rel="stylesheet" href="./src/components/geometry_3d_three.css?v=20261125r5">
+  <script>
+    try {
+      const m = localStorage.getItem('ai-canvas:studio-theme:v2');
+      const d = m === 'dark' || (m === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = d ? 'dark' : 'light';
+    } catch {}
+  </script>
+  <script type="importmap">
+  {
+    "imports": {
+      "/app.js": "/app.js?v=20261125r5",
+      "/src/pages/whiteboard.js": "/src/pages/whiteboard.js?v=20261125r5",
+      "/src/utils/context.js": "/src/utils/context.js?v=20261125r5",
+      "/src/utils/pointer.js": "/src/utils/pointer.js?v=20261125r5",
+      "/src/utils/auth_client.js": "/src/utils/auth_client.js?v=20261125r5",
+      "/src/utils/offline_sync.js": "/src/utils/offline_sync.js?v=20261125r5",
+      "/src/utils/ui_feedback.js": "/src/utils/ui_feedback.js?v=20261125r5",
+      "/src/components/history.js": "/src/components/history.js?v=20261125r5",
+      "/src/components/toolbar.js": "/src/components/toolbar.js?v=20261125r5",
+      "/src/components/rulerOverlay.js": "/src/components/rulerOverlay.js?v=20261125r5",
+      "/src/components/drawingCanvas.js": "/src/components/drawingCanvas.js?v=20261125r5",
+      "/src/components/pageManager.js": "/src/components/pageManager.js?v=20261125r5",
+      "/src/components/boardDialogs.js": "/src/components/boardDialogs.js?v=20261125r5",
+      "/src/components/aiRecognition.js": "/src/components/aiRecognition.js?v=20261125r5",
+      "/src/components/examManager.js": "/src/components/examManager.js?v=20261125r5",
+      "/src/components/quiz_board.js": "/src/components/quiz_board.js?v=20261125r5",
+      "/src/components/student_score_sidebar.js": "/src/components/student_score_sidebar.js?v=20261125r5",
+      "/src/components/essayGradingManager.js": "/src/components/essayGradingManager.js?v=20261125r5",
+      "/src/components/questionVariantManager.js": "/src/components/questionVariantManager.js?v=20261125r5",
+      "/src/extensions/handwriting.js": "/src/extensions/handwriting.js?v=20261125r5"
+    }
+  }
+  </script>
   <!-- KaTeX hỗ trợ hiển thị công thức Toán học trực tiếp trên bảng -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -21,14 +54,48 @@
 <body>
   <a href="#boardCanvas" class="skip-link">Chuyển tới vùng bảng vẽ</a>
 
+  <!-- Hiệu ứng mở màn Studio Intro với Logo chính thức "Nét Bút Ánh Sáng" -->
+  <div id="studioIntroOverlay" class="studio-intro-overlay" aria-hidden="true">
+    <div class="studio-intro-card">
+      <svg class="studio-intro-mark" viewBox="0 0 112 112" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect class="intro-frame" x="4" y="4" width="104" height="104" rx="24" />
+        <circle class="intro-dot intro-dot-1" cx="28" cy="30" r="3" />
+        <circle class="intro-dot intro-dot-2" cx="56" cy="30" r="3" />
+        <circle class="intro-dot intro-dot-3" cx="28" cy="58" r="3" />
+        <path class="intro-stroke" d="M24 82 C 36 82, 40 42, 51 42 C 60 42, 60 70, 71 70 C 79 70, 82 54, 87 42" />
+        <path class="intro-spark" d="M87 20 L90.4 29.6 L100 33 L90.4 36.4 L87 46 L83.6 36.4 L74 33 L83.6 29.6 Z" />
+      </svg>
+      <div class="studio-intro-wordmark">AI Interactive Canvas</div>
+      <div class="studio-intro-sub">SMARTBOARD STUDIO</div>
+    </div>
+  </div>
+
   <div class="app" id="appShell">
     <header class="topbar">
       <div class="class-meta">
-        <div class="brand-class-badge">
-          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="14" rx="2.5"></rect>
-            <path d="M8 21h8M12 18v3M7 11l3-3 2.5 2.5L17 7"></path>
+        <button
+          class="topbar-btn topbar-icon-btn"
+          id="systemMenuBtn"
+          type="button"
+          popovertarget="systemInfoPopover"
+          aria-label="Mở menu hệ thống, bố cục và cổng liên kết"
+          title="Menu hệ thống &amp; cài đặt bố cục"
+        >
+          <span class="sr-only">Hệ thống</span>
+        </button>
+
+        <span class="topbar-logo-seal" aria-hidden="true" title="AI Interactive Canvas · Nét Bút Ánh Sáng">
+          <svg viewBox="0 0 112 112" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect class="seal-frame" x="4" y="4" width="104" height="104" rx="24" />
+            <circle class="seal-dot" cx="28" cy="30" r="3.4" />
+            <circle class="seal-dot" cx="56" cy="30" r="3.4" />
+            <circle class="seal-dot" cx="28" cy="58" r="3.4" />
+            <path class="seal-stroke" d="M24 82 C 36 82, 40 42, 51 42 C 60 42, 60 70, 71 70 C 79 70, 82 54, 87 42" />
+            <path class="seal-spark" d="M87 20 L90.4 29.6 L100 33 L90.4 36.4 L87 46 L83.6 36.4 L74 33 L83.6 29.6 Z" />
           </svg>
+        </span>
+
+        <div class="brand-class-badge">
           <label for="classSelect" class="subject-label">Lớp <span id="className" class="sr-only">10A1</span></label>
           <select id="classSelect" class="subject-select class-select" title="Chọn lớp giảng dạy cho phiên bảng thông minh">
             <option value="10A1" selected>10A1</option>
@@ -40,128 +107,188 @@
         </div>
 
         <div class="subject-wrapper">
-          <label for="subjectSelect" class="subject-label">Môn học</label>
+          <label for="subjectSelect" class="sr-only">Môn học</label>
           <select id="subjectSelect" class="subject-select" title="Chọn môn học để AI nhận diện tối ưu">
-            <option value="TOAN" selected>Toán học (LaTeX)</option>
-            <option value="VAT_LY">Vật lý (Công thức)</option>
-            <option value="HOA_HOC">Hóa học (Phân tử)</option>
-            <option value="TIENG_ANH">Tiếng Anh (Từ vựng)</option>
-            <option value="SINH_HOC">Sinh học (Khái niệm)</option>
-            <option value="DIA_LY">Địa lý (Bản đồ/Hệ MT)</option>
+            <option value="TOAN" selected>Toán học</option>
+            <option value="VAT_LY">Vật lý</option>
+            <option value="HOA_HOC">Hóa học</option>
+            <option value="TIENG_ANH">Tiếng Anh</option>
+            <option value="SINH_HOC">Sinh học</option>
+            <option value="DIA_LY">Địa lý</option>
           </select>
         </div>
       </div>
 
       <div class="session-actions">
         <span class="offline-sync-badge" id="offlineSyncBadge" title="Số ảnh snapshot lưu tạm trong IndexedDB chờ đồng bộ" hidden></span>
-        <span class="ai-status-indicator" id="aiStatusIndicator" title="Trạng thái kết nối AI">AI: Sẵn sàng</span>
-        <span class="timer" id="sessionTimer" title="Thời lượng tiết học hiện tại">Đang diễn ra 00:00</span>
 
         <button
           class="topbar-btn topbar-btn-subtle"
           id="toggleStudentsBtn"
           type="button"
           aria-controls="studentsPanel"
-          aria-expanded="true"
-          title="Đóng hoặc mở bảng danh sách học sinh và cộng điểm thưởng"
+          aria-expanded="false"
+          title="Mở danh sách học sinh và cộng điểm thưởng"
         >
           <span>Học sinh</span>
         </button>
 
-        <button
-          class="topbar-btn topbar-btn-subtle"
-          id="systemMenuBtn"
-          type="button"
-          popovertarget="systemInfoPopover"
-          aria-haspopup="dialog"
-          title="Thông tin phòng học, đo hiệu năng và lối tắt cổng hệ thống"
-        >
-          <span>Hệ thống</span>
-        </button>
-
         <span class="teacher-session-pill" id="teacherSessionPill" hidden></span>
         <button class="topbar-btn teacher-auth-btn" id="teacherAuthBtn" type="button" title="Đăng nhập Giáo viên qua OTP Email (duy trì 14 ngày)">Đăng nhập GV</button>
-        <button class="end-button" id="endSession" type="button">Kết thúc phiên</button>
+        <button class="end-button" id="endSession" type="button" title="Kết thúc tiết học hiện tại">Kết thúc</button>
       </div>
     </header>
 
-    <!-- Popover thông tin kỹ thuật phiên học, đo hiệu năng & lối tắt cổng phụ -->
-    <div id="systemInfoPopover" class="system-popover" popover="auto" role="region" aria-label="Thông tin phiên học và công cụ hệ thống">
-      <div class="system-popover-section">
-        <span class="system-popover-heading">Thông tin phòng học</span>
-        <p class="session-meta">Phiên: <code id="sessionId">session-10a1</code> · Phòng: <code id="roomId">room-10a1</code></p>
-      </div>
-      <div class="system-popover-section">
-        <span class="system-popover-heading">Vị trí thanh công cụ (Tablet / Bảng cảm ứng)</span>
-        <div class="toolbar-dock-switcher" role="group" aria-label="Chọn vị trí thanh công cụ vừa tầm tay">
-          <button type="button" class="dock-option-btn is-active" data-toolbar-dock="left" aria-pressed="true">Bên trái</button>
-          <button type="button" class="dock-option-btn" data-toolbar-dock="bottom" aria-pressed="false">Cạnh dưới</button>
-          <button type="button" class="dock-option-btn" data-toolbar-dock="right" aria-pressed="false">Bên phải</button>
-        </div>
-      </div>
-      <div class="system-popover-section">
-        <span class="system-popover-heading">Kiểm chuẩn kỹ thuật</span>
-        <button class="benchmark-btn" id="benchmarkBtn" type="button" title="Đo kiểm hiệu năng nét bút, thời gian AI và tính cô lập 2 lớp học (Task TF28522)">
-          <span>Đo hiệu năng &amp; Cô lập</span>
-          <span class="fps-pill" id="benchmarkFpsValue">60 FPS</span>
+    <!-- Menu 3 gạch (☰) tinh gọn kiểu Excalidraw: Tác vụ, Giao diện Sáng/Tối/Hệ thống, Lưới & Màu nền bảng -->
+    <div id="systemInfoPopover" class="system-popover" popover="auto" role="region" aria-label="Menu cài đặt bảng vẽ và hệ thống">
+      <div class="menu-list">
+        <button class="menu-item" id="menuExportPngBtn" type="button">
+          <span class="menu-item-left">
+            <span class="menu-icon" style="--m-icon: var(--icon-camera);" aria-hidden="true"></span>
+            <span>Xuất ảnh bảng</span>
+          </span>
+          <span class="menu-shortcut">PNG</span>
+        </button>
+
+        <button class="menu-item" id="menuResetViewBtn" type="button">
+          <span class="menu-item-left">
+            <span class="menu-icon" style="--m-icon: var(--icon-rescan);" aria-hidden="true"></span>
+            <span>Đặt lại góc nhìn</span>
+          </span>
+          <span class="menu-shortcut">Ctrl+0</span>
+        </button>
+
+        <button class="menu-item" id="benchmarkBtn" type="button" title="Đo kiểm hiệu năng nét bút, thời gian AI và tính cô lập 2 lớp học (Task TF28522)">
+          <span class="menu-item-left">
+            <span class="menu-icon" style="--m-icon: var(--icon-auto);" aria-hidden="true"></span>
+            <span>Đo hiệu năng</span>
+          </span>
+          <span class="menu-shortcut" id="benchmarkFpsValue">60 FPS</span>
+        </button>
+
+        <button class="menu-item menu-item-danger" id="menuResetCanvasBtn" type="button">
+          <span class="menu-item-left">
+            <span class="menu-icon" style="--m-icon: var(--icon-trash);" aria-hidden="true"></span>
+            <span>Làm sạch trang bảng</span>
+          </span>
         </button>
       </div>
-      <div class="system-popover-section">
-        <span class="system-popover-heading">Cổng liên kết trong hệ sinh thái</span>
-        <div class="portal-shortcut-links">
-          <a href="./src/pages/student_portal.html" target="_blank" rel="noopener">Cổng Ôn tập HS / PH</a>
-          <a href="./src/pages/admin.html" target="_blank" rel="noopener">Cổng Quản trị Admin</a>
+
+      <hr class="menu-divider">
+
+      <div class="menu-list">
+        <a class="menu-item" href="./src/pages/student_portal.html" target="_blank" rel="noopener">
+          <span class="menu-item-left">
+            <span class="menu-icon" style="--m-icon: var(--icon-users);" aria-hidden="true"></span>
+            <span>Cổng Ôn Tập Học Sinh</span>
+          </span>
+          <span class="menu-shortcut">↗</span>
+        </a>
+        <a class="menu-item" href="./src/pages/admin.html" target="_blank" rel="noopener">
+          <span class="menu-item-left">
+            <span class="menu-icon" style="--m-icon: var(--icon-teacher);" aria-hidden="true"></span>
+            <span>Quản Trị Hệ Thống</span>
+          </span>
+          <span class="menu-shortcut">↗</span>
+        </a>
+      </div>
+
+      <hr class="menu-divider">
+
+      <div class="menu-pref-row">
+        <span class="menu-pref-label">Giao diện</span>
+        <div class="theme-segment" role="group" aria-label="Chế độ Sáng, Tối hoặc Hệ thống">
+          <button type="button" class="theme-seg-btn is-active" data-theme-mode="light" aria-pressed="true" aria-label="Giao diện Sáng" title="Giao diện Sáng (Warm Parchment)"></button>
+          <button type="button" class="theme-seg-btn" data-theme-mode="dark" aria-pressed="false" aria-label="Giao diện Tối" title="Giao diện Tối (Warm Charcoal)"></button>
+          <button type="button" class="theme-seg-btn" data-theme-mode="system" aria-pressed="false" aria-label="Theo hệ thống" title="Tự động theo hệ điều hành"></button>
         </div>
+      </div>
+
+      <div class="menu-pref-row">
+        <span class="menu-pref-label">Lưới bảng</span>
+        <div class="grid-segment" role="group" aria-label="Kiểu lưới mặt bảng">
+          <button type="button" class="grid-seg-btn is-active" data-grid="dots" aria-pressed="true">Chấm</button>
+          <button type="button" class="grid-seg-btn" data-grid="lines" aria-pressed="false">Ô vuông</button>
+          <button type="button" class="grid-seg-btn" data-grid="plain" aria-pressed="false">Trơn</button>
+        </div>
+      </div>
+
+      <div class="menu-pref-row">
+        <span class="menu-pref-label">Thanh công cụ</span>
+        <div class="grid-segment" role="group" aria-label="Chọn vị trí thanh công cụ vừa tầm tay">
+          <button type="button" class="grid-seg-btn dock-option-btn is-active" data-toolbar-dock="top" aria-pressed="true">Trên</button>
+          <button type="button" class="grid-seg-btn dock-option-btn" data-toolbar-dock="bottom" aria-pressed="false">Dưới</button>
+          <button type="button" class="grid-seg-btn dock-option-btn" data-toolbar-dock="left" aria-pressed="false">Trái</button>
+        </div>
+      </div>
+
+      <div class="menu-bg-section">
+        <span class="menu-pref-label">Màu nền bảng</span>
+        <div class="menu-bg-swatches" id="boardBgSwatches" role="group" aria-label="Chọn màu nền mặt bảng"></div>
+      </div>
+
+      <hr class="menu-divider">
+      <div class="menu-footer-meta">
+        <span>Phiên <code id="sessionId">session-10a1</code></span>
+        <code id="roomId">room-10a1</code>
       </div>
     </div>
 
-    <div class="workspace" id="workspaceGrid">
+    <div class="workspace is-students-collapsed" id="workspaceGrid">
       <aside
         class="toolbar"
         id="toolbar"
         role="toolbar"
-        aria-orientation="vertical"
+        aria-orientation="horizontal"
         aria-controls="boardCanvas"
-        focusgroup="toolbar wrap block"
+        focusgroup="toolbar wrap"
         aria-label="Thanh công cụ vẽ và trợ lý AI"
       >
-        <div class="tool-group" role="group" aria-label="Công cụ vẽ và hình học">
-          <span class="tool-group-label" aria-hidden="true">Bút &amp; Hình</span>
-          <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" aria-pressed="true" title="Bút vẽ cảm ứng Stylus">Bút</button>
-          <button class="tool-button" id="highlighterTool" type="button" data-tool="highlighter" aria-pressed="false" title="Bút dạ quang">Dạ quang</button>
-          <button class="tool-button" id="eraserMenu" type="button" aria-controls="eraserOptions" aria-expanded="false" title="Tùy chọn tẩy">Tẩy</button>
-          <button class="tool-button" id="shapeMenu" type="button" aria-controls="shapeOptions" aria-expanded="false" title="Chọn hình học 2D &amp; 3D">Hình học</button>
-          <button class="tool-button" id="rulerTool" type="button" data-tool="ruler" aria-pressed="false" title="Thước kẻ ảo theo pixel">Thước</button>
-          <button class="tool-button" id="colorMenu" type="button" aria-controls="colorOptions" aria-expanded="false" title="Màu sắc, độ dày nét và nền bảng">Màu &amp; Nét</button>
-          <button class="tool-button" id="textTool" type="button" data-tool="text" aria-pressed="false" title="Thêm khung chữ lên bảng">Chữ</button>
-          <button class="tool-button" id="handwritingTool" type="button" aria-pressed="false" title="Khoanh vùng chữ viết tay để chuyển thành văn bản hoặc LaTeX">Chuyển chữ</button>
+        <div class="tool-group tool-group-draw" role="group" aria-label="Công cụ vẽ và hình học">
+          <button class="tool-button" id="handTool" type="button" data-tool="hand" data-key="V" aria-pressed="false" title="Kéo di chuyển bảng vô hạn (Phím V hoặc giữ Space)">Kéo bảng</button>
+          <button class="tool-button is-active" id="penTool" type="button" data-tool="pen" data-key="P" aria-pressed="true" title="Bút vẽ Stylus (Phím P)">Bút</button>
+          <button class="tool-button" id="highlighterTool" type="button" data-tool="highlighter" data-key="H" aria-pressed="false" title="Bút dạ quang (Phím H)">Dạ quang</button>
+          <button class="tool-button" id="eraserMenu" type="button" data-key="E" aria-controls="eraserOptions" aria-expanded="false" title="Công cụ tẩy (Phím E)">Tẩy</button>
+          <button class="tool-button" id="shapeMenu" type="button" data-key="S" aria-controls="shapeOptions" aria-expanded="false" title="Hình học 2D &amp; 3D (Phím S)">Hình học</button>
+          <button class="tool-button" id="rulerTool" type="button" data-key="R" aria-pressed="false" title="Bật / Tắt thước kẻ thẳng thông minh (Phím R)">Thước</button>
+          <button class="tool-button" id="colorMenu" type="button" data-key="C" aria-controls="colorOptions" aria-expanded="false" title="Màu mực, nét bút &amp; nền bảng (Phím C)">Màu &amp; Nét</button>
+          <button class="tool-button" id="textTool" type="button" data-tool="text" data-key="T" aria-pressed="false" title="Chèn khung chữ (Phím T)">Chữ</button>
+          <button class="tool-button" id="handwritingTool" type="button" data-key="O" aria-pressed="false" title="Khoanh vùng chuyển nét chữ sang LaTeX / Văn bản (Phím O)">Chuyển chữ</button>
         </div>
 
-        <div class="toolbar-divider" role="separator" aria-orientation="horizontal"></div>
+        <div class="toolbar-divider" role="separator" aria-orientation="vertical"></div>
 
-        <!-- Nút kích hoạt nhận diện AI thủ công & Bật/Tắt tự động nhận diện khi dừng viết -->
-        <div class="tool-group" role="group" aria-label="Trợ lý AI và kiểm tra đánh giá">
-          <span class="tool-group-label" aria-hidden="true">Trợ lý AI</span>
-          <button class="tool-button tool-ai tool-span-2" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini / Mathpix) bóc tách công thức">Nhận diện AI</button>
-          <button class="tool-button tool-span-2" id="btnReanalyzeBoard" type="button" title="Đọc lại và phân tích toàn bộ nét vẽ hiện có trên trang bảng bất cứ lúc nào">🔍 Đọc lại phân tích bảng</button>
-          <button class="tool-button tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét vẽ phấn trắng từ vựng và khái niệm (Task TF2850F)">Minh họa</button>
-          <button class="tool-button tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc viết trực tiếp và tự động ẩn đáp án (Task TF28517)">Tải đề thi</button>
-          <button class="tool-button tool-quiz" id="quizBoardToggleBtn" type="button" title="Hiển thị đề trắc nghiệm lên bảng và bắt nét khoanh đáp án A, B, C, D (Task TF28518)">Trắc nghiệm</button>
-          <button class="tool-button tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích các phương án gây nhiễu (Task TF28519)">Chấm TN</button>
-          <button class="tool-button tool-essay" id="gradeEssayBtn" type="button" title="AI chấm bài giải tự luận từng dòng viết tay, tích xanh bước đúng, gạch chân đỏ dòng sai và gợi ý không lộ đáp án (Task TF2851A)">Tự luận AI</button>
-          <button class="tool-button tool-variant" id="aiVariantBtn" type="button" title="AI tạo bài tập tương tự (đổi số liệu) hoặc nâng cao độ khó cho học sinh khá giỏi (Task TF2851B)">Đổi đề AI</button>
-          <button class="tool-button tool-auto-ai tool-span-2" id="autoAiToggle" type="button" data-auto="false" aria-pressed="false" title="Bật/Tắt tự động nhận diện AI sau khi ngừng viết bút 1.8 giây (mặc định TẮT để vẽ tự do)">Tự động: TẮT</button>
+        <!-- Cụm AI trung tâm gọn gàng + Ngăn công cụ học tập mở rộng -->
+        <div class="tool-group tool-group-ai" role="group" aria-label="Trợ lý AI và kiểm tra đánh giá">
+          <button class="tool-button tool-ai tool-with-label" id="aiRecognizeBtn" type="button" title="Gửi nét vẽ lên Backend AI (Gemini / Mathpix) bóc tách công thức">Nhận diện AI</button>
+          <button class="tool-button tool-rescan" id="btnReanalyzeBoard" type="button" title="Đọc lại và phân tích toàn bộ nét vẽ hiện có trên trang bảng">Đọc lại bảng</button>
+          <button class="tool-button tool-ai-menu tool-with-label" id="aiStudioMenuBtn" type="button" aria-controls="aiToolsPopover" aria-expanded="false" title="Mở bộ công cụ Đề thi, Trắc nghiệm, Tự luận và Minh họa AI">Học tập AI</button>
         </div>
 
-        <div class="toolbar-divider" role="separator" aria-orientation="horizontal"></div>
+        <div class="toolbar-divider" role="separator" aria-orientation="vertical"></div>
 
-        <div class="tool-group" role="group" aria-label="Thao tác bảng">
-          <span class="tool-group-label" aria-hidden="true">Thao tác</span>
+        <div class="tool-group tool-group-actions" role="group" aria-label="Thao tác lịch sử và xuất ảnh">
           <button class="tool-button" id="undoButton" type="button" title="Hoàn tác (Ctrl + Z)">Hoàn tác</button>
           <button class="tool-button" id="redoButton" type="button" title="Làm lại (Ctrl + Y)">Làm lại</button>
-          <button class="tool-button" id="captureButton" type="button" title="Lưu ảnh chụp bảng PNG">Chụp bảng</button>
-          <button class="tool-button tool-danger" id="clearButton" type="button" title="Xóa tất cả trên trang hiện tại">Xóa bảng</button>
+          <button class="tool-button" id="captureButton" type="button" title="Tải ảnh chụp bảng PNG">Chụp bảng</button>
+          <button class="tool-button tool-danger" id="clearButton" type="button" title="Xóa toàn bộ nét vẽ trên trang hiện tại">Xóa bảng</button>
         </div>
+
+        <section class="tool-popover ai-studio-popover" id="aiToolsPopover" aria-label="Bộ công cụ giảng dạy AI" hidden>
+          <h3>Trợ lý giảng dạy &amp; Khảo thí AI</h3>
+          <p class="popover-help">Soạn đề, chấm bài trực tiếp trên bảng và sinh hình minh họa khái niệm.</p>
+          <div class="ai-studio-grid">
+            <button class="tool-button tool-studio-item tool-illustrate" id="aiIllustrateBtn" type="button" title="AI tạo hình minh họa nét phấn từ vựng và khái niệm">Minh họa khái niệm</button>
+            <button class="tool-button tool-studio-item tool-exam" id="examUploadBtn" type="button" title="Tải đề từ file DOCX/PDF hoặc dán trực tiếp và ẩn đáp án">Tải đề DOCX / PDF</button>
+            <button class="tool-button tool-studio-item tool-quiz" id="quizBoardToggleBtn" type="button" title="Chiếu câu hỏi trắc nghiệm lên bảng và khoanh đáp án A, B, C, D">Trắc nghiệm bảng</button>
+            <button class="tool-button tool-studio-item tool-grade" id="gradeMcqBtn" type="button" title="Chấm trắc nghiệm và giải thích phương án gây nhiễu">Chấm trắc nghiệm</button>
+            <button class="tool-button tool-studio-item tool-essay" id="gradeEssayBtn" type="button" title="Chấm tự luận 1-click trực tiếp trên bảng (nếu đã có Đề bài / bài viết tay) hoặc mở khung nhập tay">Chấm tự luận AI</button>
+            <button class="tool-button tool-studio-item tool-variant" id="aiVariantBtn" type="button" title="AI sinh bài tập tương tự (đổi số) hoặc bài nâng cao">Đổi đề tương đương</button>
+          </div>
+          <div class="ai-studio-auto-row">
+            <button class="tool-button tool-studio-item tool-auto-ai" id="autoAiToggle" type="button" data-auto="false" aria-pressed="false" title="Bật/Tắt tự động nhận diện AI sau khi ngừng viết bút 1.8 giây">Tự động: TẮT</button>
+          </div>
+        </section>
 
         <section class="tool-popover" id="eraserOptions" aria-label="Chọn loại tẩy" hidden>
           <h3>Công cụ tẩy</h3>
@@ -184,19 +311,19 @@
         </section>
 
         <section class="tool-popover color-popover" id="colorOptions" aria-label="Tùy chọn màu và nét" hidden>
-          <h3>Màu mực, độ dày &amp; nền bảng</h3>
+          <h3>Màu mực &amp; độ dày nét bút</h3>
           <div class="color-picker-row">
             <label for="colorPicker" class="control-label">Màu tùy chỉnh</label>
-            <input id="colorPicker" type="color" value="#172554">
+            <input id="colorPicker" type="color" value="#26231F">
           </div>
           <div class="color-palette" role="group" aria-label="Bảng màu nhanh">
-            <button type="button" class="swatch swatch-navy is-selected" data-color="#172554" aria-label="Xanh mực đậm"></button>
-            <button type="button" class="swatch swatch-white" data-color="#ffffff" aria-label="Phấn trắng"></button>
-            <button type="button" class="swatch swatch-red" data-color="#dc2626" aria-label="Đỏ nhấn mạnh"></button>
-            <button type="button" class="swatch swatch-green" data-color="#15803d" aria-label="Xanh lá"></button>
-            <button type="button" class="swatch swatch-amber" data-color="#b45309" aria-label="Vàng hổ phách"></button>
-            <button type="button" class="swatch swatch-blue" data-color="#0369a1" aria-label="Xanh lam"></button>
-            <button type="button" class="swatch swatch-slate" data-color="#334155" aria-label="Xám than"></button>
+            <button type="button" class="swatch swatch-ink is-selected" data-color="#26231F" aria-label="Mực than ấm"></button>
+            <button type="button" class="swatch swatch-white" data-color="#FAF8F4" aria-label="Phấn kem trắng"></button>
+            <button type="button" class="swatch swatch-forest" data-color="#4E7A51" aria-label="Xanh olive"></button>
+            <button type="button" class="swatch swatch-red" data-color="#C96442" aria-label="Cam đất Terracotta"></button>
+            <button type="button" class="swatch swatch-amber" data-color="#B86B23" aria-label="Vàng đất Ochre"></button>
+            <button type="button" class="swatch swatch-teal" data-color="#3D6B7E" aria-label="Xanh đá trầm"></button>
+            <button type="button" class="swatch swatch-slate" data-color="#A84332" aria-label="Đỏ đất chấm bài"></button>
           </div>
           <div class="range-row">
             <label for="widthRange" class="control-label">Độ dày nét bút</label>
@@ -205,16 +332,11 @@
           <input id="widthRange" class="width-range" type="range" min="1" max="24" value="4">
           <div class="width-presets" role="group" aria-label="Độ dày thông dụng">
             <button type="button" class="is-selected" data-width="4">4 px</button>
-            <button type="button" data-width="8">8 px</button>
-            <button type="button" data-width="14">14 px</button>
-            <button type="button" data-width="24">24 px</button>
+            <button type="button" class="data-width-btn" data-width="8">8 px</button>
+            <button type="button" class="data-width-btn" data-width="14">14 px</button>
+            <button type="button" class="data-width-btn" data-width="24">24 px</button>
           </div>
-          <span class="control-label">Chế độ mặt bảng</span>
-          <div class="background-options" role="group" aria-label="Chọn nền bảng">
-            <button type="button" class="background-button is-selected" data-background="#ffffff" aria-pressed="true">Bảng trắng</button>
-            <button type="button" class="background-button" data-background="#111827" aria-pressed="false">Bảng phấn đen</button>
-          </div>
-          <p class="popover-help">Tự động chuyển màu mực tương phản khi đổi nền bảng.</p>
+          <p class="popover-help">Đổi giao diện Sáng/Tối và màu nền bảng trong menu ☰ góc trên bên trái.</p>
         </section>
       </aside>
 
@@ -223,8 +345,7 @@
           <div class="canvas-stage" id="canvasStage">
             <canvas id="boardCanvas" aria-label="Vùng vẽ"></canvas>
             <canvas id="previewCanvas" class="preview-canvas" aria-hidden="true"></canvas>
-            <div class="canvas-hint" id="canvasHint">Chạm bút hoặc kéo chuột để bắt đầu viết bài giảng</div>
-            <div id="latencyStatus" class="latency-badge" title="Ước tính thời gian từ khi xử lý sự kiện bút/chuột đến khi hoàn thành vẽ khung hình">Độ trễ vẽ: -- ms</div>
+            <div class="canvas-hint" id="canvasHint">Giữ <kbd>Space</kbd> + kéo để di chuyển bảng<span class="hint-shortcuts"> · <kbd>Ctrl</kbd> + lăn chuột để thu phóng · <kbd>P</kbd> Bút · <kbd>R</kbd> Thước</span></div>
 
             <!-- BẢNG OVERLAY HIỂN THỊ KẾT QUẢ NHẬN DIỆN AI TRÊN MẶT BẢNG (TASK TF28509) -->
             <section id="aiOverlayPanel" class="ai-overlay-panel" hidden aria-label="Bảng kết quả nhận diện AI">
@@ -242,22 +363,18 @@
               <div class="ai-panel-body">
                 <div id="aiLoadingIndicator" class="ai-loading" hidden>
                   <div class="ai-spinner" aria-hidden="true"></div>
-                  <span>Đang phân tích nét viết (Debounce 800ms)...</span>
+                  <span>Đang phân tích nét viết...</span>
                 </div>
-                <div id="aiErrorBanner" class="ai-error-banner" hidden role="alert"
-                     style="padding:12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;">
-                  <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;">
-                    <span aria-hidden="true">⚠️</span>
-                    <span id="aiErrorMessage" style="font-size:13.5px;line-height:1.45;"></span>
+                <div id="aiErrorBanner" class="ai-error-banner" hidden role="alert">
+                  <div class="ai-error-banner-head">
+                    <span id="aiErrorMessage" class="ai-error-banner-text"></span>
                   </div>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button id="retryAiErrorBtn" class="ai-btn" type="button"
-                            style="background:#dc2626;color:#ffffff;border:none;font-weight:600;">
-                      🔄 Thử lại nhận diện
+                  <div class="ai-error-banner-actions">
+                    <button id="retryAiErrorBtn" class="ai-btn ai-btn-danger" type="button">
+                      Thử lại nhận diện
                     </button>
-                    <button id="rescanBoardErrorBtn" class="ai-btn" type="button"
-                            style="background:#ffffff;color:#dc2626;border:1px solid #dc2626;font-weight:600;">
-                      🔍 Quét lại toàn bảng
+                    <button id="rescanBoardErrorBtn" class="ai-btn ai-btn-outline-danger" type="button">
+                      Quét lại toàn bảng
                     </button>
                   </div>
                 </div>
@@ -297,6 +414,16 @@
                 <button id="insertToBoardBtn" class="ai-btn ai-btn-primary" type="button" title="Chèn văn bản / công thức nhận diện trực tiếp vào vị trí bảng">Chèn vào mặt bảng</button>
               </div>
             </section>
+
+            <!-- Thanh nổi tóm tắt kết quả Chấm tự luận 1-click trực tiếp trên bảng -->
+            <div id="essayBoardFloatingPill" class="essay-floating-pill" hidden role="status" aria-live="polite">
+              <span id="essayPillSummary" class="essay-pill-summary"></span>
+              <div class="essay-pill-actions">
+                <button id="essayPillClearOverlayBtn" class="essay-pill-btn" type="button">Ẩn dấu chấm</button>
+                <button id="essayPillOpenDialogBtn" class="essay-pill-btn essay-pill-btn-accent" type="button">Khung nhập tay</button>
+                <button id="essayPillCloseBtn" class="essay-pill-close" type="button" aria-label="Đóng thanh kết quả chấm">✕</button>
+              </div>
+            </div>
           </div>
         </div>
         <div class="sr-only" role="status" aria-live="polite">
@@ -363,15 +490,29 @@
       </aside>
     </div>
 
+    <button id="scrollBackToContentBtn" class="scroll-back-pill" type="button" hidden>Quay về nội dung</button>
+
     <footer class="footer">
-      <div class="pagination" aria-label="Quản lý các trang bảng">
-        <button id="prevPage" type="button" aria-label="Trang trước" title="Trang trước">&lsaquo;</button>
-        <span id="pageIndicator" aria-live="polite">Trang 1 / 1</span>
-        <button id="nextPage" type="button" aria-label="Trang sau" title="Trang sau">&rsaquo;</button>
-        <button id="addPageButton" class="add-page-button" type="button" title="Thêm trang bảng mới">+ Thêm trang</button>
-        <button id="deletePageButton" class="delete-page-button" type="button" title="Xóa trang hiện tại (không xóa các trang khác)" aria-label="Xóa trang hiện tại">Xóa trang</button>
+      <div class="footer-left-group">
+        <div class="zoom-controls" role="group" aria-label="Thu phóng bảng vẽ">
+          <button id="zoomOutBtn" type="button" aria-label="Thu nhỏ bảng vẽ" title="Thu nhỏ (Ctrl + -)">−</button>
+          <button id="zoomResetBtn" type="button" aria-label="Đặt lại tỷ lệ 100%" title="Đặt lại góc nhìn 100% (Ctrl + 0)">100%</button>
+          <button id="zoomInBtn" type="button" aria-label="Phóng to bảng vẽ" title="Phóng to (Ctrl + +)">+</button>
+        </div>
+        <div class="pagination" aria-label="Quản lý các trang bảng">
+          <button id="prevPage" type="button" aria-label="Trang trước" title="Trang trước">&lsaquo;</button>
+          <span id="pageIndicator" aria-live="polite">Trang 1 / 1</span>
+          <button id="nextPage" type="button" aria-label="Trang sau" title="Trang sau">&rsaquo;</button>
+          <button id="addPageButton" class="add-page-button" type="button" title="Thêm trang bảng mới">+ Trang</button>
+          <button id="deletePageButton" class="delete-page-button" type="button" title="Xóa trang hiện tại (không xóa các trang khác)" aria-label="Xóa trang hiện tại">Xóa</button>
+        </div>
       </div>
-      <span class="footer-status" id="footerStatus">Sẵn sàng kết nối máy chủ</span>
+      <div class="status-cluster">
+        <span class="ai-status-indicator" id="aiStatusIndicator" title="Trạng thái kết nối AI">AI: Sẵn sàng</span>
+        <span class="timer" id="sessionTimer" title="Thời lượng tiết học hiện tại">00:00</span>
+        <span id="latencyStatus" class="latency-badge" title="Độ trễ khung hình bút vẽ">-- ms</span>
+        <span class="footer-status" id="footerStatus">Sẵn sàng kết nối máy chủ</span>
+      </div>
     </footer>
   </div>
 
@@ -720,9 +861,9 @@
     </div>
 
     <div class="essay-input-section">
-      <div class="essay-scan-row" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-        <label for="essayInputLines" style="margin-bottom:0;">Các dòng bước giải (Dòng đầu là Đề bài, dòng có '=', '-', '->' là Lời giải):</label>
-        <button id="scanCanvasForEssayBtn" class="topbar-btn" type="button" style="background:#0284c7; color:#fff; font-weight:600; padding:5px 12px; border-radius:6px; font-size:12.5px; cursor:pointer;" title="Quét trực tiếp nét vẽ đang có trên bảng để chấm tự động">📷 Quét từ bảng vẽ Canvas</button>
+      <div class="essay-scan-row">
+        <label for="essayInputLines">Các dòng bước giải (dòng đầu là Đề bài, dòng có '=', '-', '-&gt;' là Lời giải):</label>
+        <button id="scanCanvasForEssayBtn" class="essay-scan-btn" type="button" title="Quét trực tiếp nét vẽ đang có trên bảng để chấm tự động">Quét từ bảng vẽ</button>
       </div>
       <textarea id="essayInputLines" rows="6" placeholder="Bước 1: (x + 3)^2&#10;Bước 2: = x^2 + 6x + 9&#10;(Hoặc Tiếng Anh:&#10;She (go) to school yesterday.&#10;- went)"></textarea>
       <div class="essay-action-buttons">
@@ -877,11 +1018,11 @@
   <p class="sr-only">Thông báo trạng thái kết nối mạng</p>
   <div id="offlineAriaLive" class="sr-only" aria-live="assertive"></div>
 
-  <script defer src="./src/extensions/ai-correction-popup.js"></script>
-  <script type="module" src="./src/extensions/handwriting-entry.js"></script>
-  <script type="module" src="./src/extensions/molecule3d.js"></script>
-  <script type="module" src="./src/components/geometry_3d_three.js"></script>
-  <script type="module" src="./src/utils/performance_benchmark.js"></script>
+  <script defer src="./src/extensions/ai-correction-popup.js?v=20261125r5"></script>
+  <script type="module" src="./src/extensions/handwriting-entry.js?v=20261125r5"></script>
+  <script type="module" src="./src/extensions/molecule3d.js?v=20261125r5"></script>
+  <script type="module" src="./src/components/geometry_3d_three.js?v=20261125r5"></script>
+  <script type="module" src="./src/utils/performance_benchmark.js?v=20261125r5"></script>
 
 </body>
 </html>

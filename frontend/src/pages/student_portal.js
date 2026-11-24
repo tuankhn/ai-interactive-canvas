@@ -45,10 +45,26 @@ function clearChildren(el) {
   }
 }
 
+function normalizePortalMessage(msg) {
+  if (typeof msg === 'string') return msg;
+  if (Array.isArray(msg)) {
+    return msg
+      .map((item) => (typeof item === 'string' ? item : item?.msg || item?.detail || JSON.stringify(item)))
+      .filter(Boolean)
+      .join(' · ');
+  }
+  if (msg && typeof msg === 'object') {
+    if (msg.detail) return normalizePortalMessage(msg.detail);
+    if (msg.message) return String(msg.message);
+    return JSON.stringify(msg);
+  }
+  return String(msg || '');
+}
+
 function showBanner(msg, type = 'info') {
   const banner = $('portalBanner');
   if (!banner) return;
-  banner.textContent = msg;
+  banner.textContent = normalizePortalMessage(msg);
   banner.className = `status-banner is-${type}`;
   banner.hidden = false;
 }
@@ -521,10 +537,16 @@ function bindEvents() {
   $('portalLoginForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     hideBanner();
+    const phone = $('loginPhoneInput').value.trim();
+    const password = $('loginPasswordInput').value;
+    if (phone.length < 9 || password.length < 6) {
+      showBanner('Vui lòng nhập số điện thoại hợp lệ (tối thiểu 9 số) và mật khẩu tối thiểu 6 ký tự.', 'error');
+      return;
+    }
     try {
       const data = await loginStudentOrParent({
-        phoneNumber: $('loginPhoneInput').value.trim(),
-        password: $('loginPasswordInput').value,
+        phoneNumber: phone,
+        password,
       });
       portalState.session = data;
       showBanner('Đăng nhập Cổng ôn tập thành công.', 'success');
@@ -705,6 +727,38 @@ function bindEvents() {
   $('zoomResetBtn')?.addEventListener('click', () => {
     portalState.zoomScale = 1;
     updateLightboxImageZoom();
+  });
+
+  // Tự động cập nhật ngay khi giáo viên bấm "Lưu snapshot rồi xóa" hoặc "Chụp bảng" ở tab Bảng vẽ
+  const refreshIfLoggedIn = () => {
+    if (portalState.session?.access_token) {
+      void loadClassLessons();
+    }
+  };
+
+  try {
+    if (typeof BroadcastChannel === 'function') {
+      const snapChannel = new BroadcastChannel('ai-canvas:snapshots');
+      snapChannel.addEventListener('message', (ev) => {
+        if (ev?.data?.type === 'snapshot-saved') {
+          refreshIfLoggedIn();
+        }
+      });
+    }
+  } catch {
+    // Ignore unsupported BroadcastChannel
+  }
+
+  window.addEventListener('storage', (ev) => {
+    if (ev.key === 'ai-canvas:last-snapshot-sync') {
+      refreshIfLoggedIn();
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshIfLoggedIn();
+    }
   });
 }
 

@@ -7,6 +7,27 @@ function setStatus(message) {
 const TEACHER_SESSION_KEY = 'ai-canvas:teacher-session:v1';
 const DEVICE_ID_KEY = 'ai-canvas:classroom-device-id:v1';
 
+function formatApiDetail(detail, status) {
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') {
+          const field = Array.isArray(item.loc) ? item.loc[item.loc.length - 1] : '';
+          const msg = item.msg || JSON.stringify(item);
+          return field && field !== 'body' ? `${field}: ${msg}` : msg;
+        }
+        return String(item);
+      })
+      .join(' · ');
+  }
+  if (detail && typeof detail === 'object') {
+    return detail.message || detail.msg || JSON.stringify(detail);
+  }
+  return `HTTP ${status}`;
+}
+
 const getAuthEls = () => ({
   authBtn: $('teacherAuthBtn'),
   sessionPill: $('teacherSessionPill'),
@@ -111,15 +132,32 @@ export function promptTeacherLogin(reasonMessage = '') {
   }
 }
 
-export function authFetch(url, options = {}) {
-  const mergedHeaders = {
-    ...getTeacherAuthHeaders(),
-    ...(options.headers || {}),
-  };
-  return fetch(url, {
+export async function authFetch(url, options = {}) {
+  const authHeaders = getTeacherAuthHeaders();
+  const baseHeaders = { ...(options.headers || {}) };
+  const res = await fetch(url, {
     ...options,
-    headers: mergedHeaders,
+    headers: { ...authHeaders, ...baseHeaders },
   });
+
+  // Tự phục hồi nếu token giáo viên lưu lâu trong localStorage bị hết hạn / lệch phiên server
+  if (res.status === 401 && authHeaders.Authorization) {
+    const refreshed = await refreshStoredTeacherSession();
+    if (refreshed?.access_token) {
+      return fetch(url, {
+        ...options,
+        headers: { Authorization: `Bearer ${refreshed.access_token}`, ...baseHeaders },
+      });
+    }
+    clearStoredTeacherSession();
+    renderAuthState(null);
+    return fetch(url, {
+      ...options,
+      headers: baseHeaders,
+    });
+  }
+
+  return res;
 }
 
 function clearStoredTeacherSession() {
@@ -330,7 +368,7 @@ export function setupTeacherAuth() {
         body: JSON.stringify({ email, phone_number: phone, role: 'TEACHER' }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(formatApiDetail(data.detail, res.status));
 
       pendingCreds = { email, phone_number: data.phone_number || phone };
       els.requestForm.hidden = true;
@@ -386,7 +424,7 @@ export function setupTeacherAuth() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(formatApiDetail(data.detail, res.status));
 
       const saved = saveTeacherSession(data);
       renderAuthState(saved);
@@ -442,7 +480,7 @@ async function authJsonFetch(url, options = {}) {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(formatApiDetail(data.detail, res.status));
   return data;
 }
 
