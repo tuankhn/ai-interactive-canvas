@@ -533,6 +533,41 @@ class AIRecognitionService:
         if not subject_details:
             subject_details = getattr(g_res, "subject_details", None)
 
+        # Kiểm tra xem đây có phải trạng thái lỗi runtime thực sự từ AI không
+        is_runtime_error = bool(
+            (isinstance(subject_details, dict) and subject_details.get("status") == "error")
+            or (degraded_reason and not recognized_text.strip() and not latex_formula.strip())
+        )
+
+        if is_runtime_error:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return RecognizeResponse(
+                session_id=request.session_id,
+                room_id=request.room_id,
+                page_number=request.page_number,
+                subject=display_subject,
+                provider=f"gemini-error ({self.gemini.active_model_name})",
+                recognized_text="",
+                latex="",
+                confidence=0.0,
+                needs_correction=False,
+                suggestions=[],
+                ambiguous_tokens=[],
+                latency_ms=elapsed_ms,
+                debounce_ms=request.debounce_ms,
+                preprocess=preprocess_info,
+                visualization=None,
+                explanation=explanation or f"Dịch vụ AI tạm thời gián đoạn ({degraded_reason}). Vui lòng thử lại.",
+                subject_details={
+                    **(subject_details if isinstance(subject_details, dict) else {}),
+                    "status": "error",
+                    "retryable": True,
+                    "error_reason": degraded_reason,
+                },
+                illustration=None,
+                degraded_reason=degraded_reason,
+            )
+
         # Task TF2850F: Tạo hình ảnh minh họa nét phấn trắng (Chalkboard Sketch)
         # khi giáo viên viết từ vựng Tiếng Anh hoặc khái niệm Sinh, Địa
         illustration_dict: Optional[Dict[str, Any]] = None
