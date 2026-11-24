@@ -46,7 +46,7 @@ def test_c2_m11_gemini_model_config_and_provider_labels():
     """C2/M11: Mặc định gemini-3.5-flash, có GEMINI_FALLBACK_MODELS và .env.example đồng bộ."""
     repo_root = Path(__file__).resolve().parents[2]
     env_example = (repo_root / "backend" / ".env.example").read_text(encoding="utf-8")
-    assert 'GEMINI_MODEL="gemini-3.5-flash"' in env_example
+    assert 'GEMINI_MODEL="gemini-3.5-flash-lite"' in env_example
     assert isinstance(settings.GEMINI_FALLBACK_MODELS, list)
     assert len(settings.GEMINI_FALLBACK_MODELS) >= 1
 

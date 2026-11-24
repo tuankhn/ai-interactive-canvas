@@ -65,7 +65,7 @@ class Settings:
         model.strip()
         for model in os.getenv(
             "GEMINI_FALLBACK_MODELS",
-            "gemini-3.5-flash-lite,gemini-3.5-flash",
+            "gemini-3.5-flash-lite,gemini-3.1-flash-lite",
         ).split(",")
         if model.strip()
     ]
