@@ -75,7 +75,14 @@ export function setupEssayGradingManager() {
       showStatus('AI đang quét và bóc tách các dòng viết tay trên bảng vẽ...');
 
       try {
-        const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
+        const prevBg = fabricCanvas.backgroundColor;
+        if (!prevBg) {
+          fabricCanvas.backgroundColor = '#ffffff';
+        }
+        const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 });
+        if (!prevBg) {
+          fabricCanvas.backgroundColor = prevBg;
+        }
         const currentSubject = essaySubjectSelect ? essaySubjectSelect.value : (state.subject || 'TOAN');
 
         const res = await authFetch('/api/v1/recognize', {

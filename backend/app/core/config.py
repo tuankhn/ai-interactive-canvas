@@ -59,13 +59,13 @@ class Settings:
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
     SMTP_FROM: str = os.getenv("SMTP_FROM", "noreply@aicanvas.edu.vn")
 
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     GEMINI_FALLBACK_MODELS: list[str] = [
         model.strip()
         for model in os.getenv(
             "GEMINI_FALLBACK_MODELS",
-            "gemini-3.5-flash-lite,gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash",
         ).split(",")
         if model.strip()
     ]

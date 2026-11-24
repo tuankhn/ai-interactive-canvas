@@ -20,23 +20,46 @@ def decode_base64_image(image_base64: str) -> Tuple[Image.Image, int]:
     return img, len(raw_bytes)
 
 
-def preprocess_canvas_image(image_base64: str, padding: int = 18) -> Dict[str, Any]:
+def _composite_rgba_preserving_strokes(img: Image.Image) -> Image.Image:
+    """
+    Hợp nhất kênh Alpha thông minh:
+    - Nếu người dùng vẽ bút phấn trắng/vàng/xanh sáng trên nền Canvas trong suốt (RGBA),
+      tự động đặt lên nền tối (17, 24, 39) để không bị mất nét trắng trên nền trắng.
+    - Ngược lại đặt lên nền trắng chuẩn (255, 255, 255).
+    """
+    if img.mode not in ("RGBA", "LA"):
+        return img.convert("RGB")
+
+    rgba = img.convert("RGBA")
+    if HAS_OPENCV:
+        arr = np.array(rgba)
+        alpha = arr[:, :, 3]
+        opaque_mask = alpha > 32
+        if np.any(opaque_mask):
+            # Tính độ sáng trung bình của các pixel có nét vẽ
+            rgb_opaque = arr[:, :, :3][opaque_mask].astype(np.float32)
+            lum = 0.299 * rgb_opaque[:, 0] + 0.587 * rgb_opaque[:, 1] + 0.114 * rgb_opaque[:, 2]
+            # Kiểm tra xem có phải toàn bộ ảnh đã có nền đặc sẵn hay nền trong suốt
+            transparent_ratio = float(np.mean(alpha < 16))
+            if transparent_ratio > 0.15 and float(np.mean(lum)) > 180.0:
+                dark_bg = Image.new("RGBA", rgba.size, (17, 24, 39, 255))
+                return Image.alpha_composite(dark_bg, rgba).convert("RGB")
+
+    white_bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    return Image.alpha_composite(white_bg, rgba).convert("RGB")
+
+
+def preprocess_canvas_image(image_base64: str, padding: int = 22) -> Dict[str, Any]:
     """
     Sprint 1 - Task 6: Tiền xử lý ảnh vùng vẽ bằng OpenCV và Pillow trước khi gửi AI.
     Các bước:
-      1. Chuyển ảnh RGBA/RGB sang ảnh xám (Grayscale), tự động đảo màu nếu đang vẽ phấn trắng trên nền bảng đen.
-      2. Khử nhiễu (Gaussian / Median blur) và tăng độ tương phản nét viết.
-      3. Tìm hộp giới hạn (Bounding Box) ôm sát vùng có nét bút để cắt bỏ khoảng trống thừa.
-      4. Xuất lại ảnh PNG nén nhẹ dạng Base64 để gửi sang Gemini 2.5 Flash / Mathpix.
+      1. Hợp nhất kênh RGBA bảo toàn cả nét mực tối lẫn nét phấn sáng, chuẩn hóa thành chữ đậm trên nền trắng.
+      2. Tìm hộp giới hạn (Bounding Box) ôm sát vùng có nét bút (dựa trên độ lệch so với màu nền) mà KHÔNG
+         dùng adaptiveThreshold khối nhỏ làm rỗng ruột nét bút dày.
+      3. Giữ nguyên biên dạng mượt (anti-aliased) và ruột nét đặc để Gemini Vision / Mathpix đọc chuẩn xác nhất.
     """
     img, raw_len = decode_base64_image(image_base64)
-
-    # Xử lý kênh trong suốt (nếu Canvas gửi ảnh PNG nền trong suốt)
-    if img.mode == "RGBA":
-        bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
-        composed = Image.alpha_composite(bg, img).convert("RGB")
-    else:
-        composed = img.convert("RGB")
+    composed = _composite_rgba_preserving_strokes(img)
 
     orig_w, orig_h = composed.size
     gray = ImageOps.grayscale(composed)
@@ -46,17 +69,22 @@ def preprocess_canvas_image(image_base64: str, padding: int = 18) -> Dict[str, A
     total_px = max(orig_w * orig_h, 1)
     mean_lum = sum(i * count for i, count in enumerate(hist)) / total_px
     if mean_lum < 128:
-        # Đảo ngược thành nền trắng - nét chữ đen để OCR/AI đọc chuẩn nhất
+        # Đảo ngược thành nền sáng - nét chữ đậm để OCR/AI đọc chuẩn nhất
         gray = ImageOps.invert(gray)
 
     if HAS_OPENCV:
         arr = np.array(gray)
-        # Khử nhiễu nhẹ bằng GaussianBlur + Adaptive Threshold
-        blurred = cv2.GaussianBlur(arr, (3, 3), 0)
-        binary = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 8
-        )
-        coords = cv2.findNonZero(binary)
+        # Ước lượng độ sáng nền từ trung vị ảnh (trên bảng vẽ, nền chiếm đa số diện tích)
+        bg_val = int(np.median(arr))
+        diff = cv2.absdiff(arr, bg_val)
+
+        # Tạo mặt nạ nhị phân chỉ để tìm Bounding Box (ngưỡng 20 bắt được cả nét bút màu nhạt)
+        _, stroke_mask = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+        if orig_w > 32 and orig_h > 32:
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+            stroke_mask = cv2.morphologyEx(stroke_mask, cv2.MORPH_OPEN, kernel)
+
+        coords = cv2.findNonZero(stroke_mask)
         if coords is not None:
             x, y, w, h = cv2.boundingRect(coords)
             x0 = max(0, x - padding)
@@ -66,16 +94,24 @@ def preprocess_canvas_image(image_base64: str, padding: int = 18) -> Dict[str, A
         else:
             x0, y0, x1, y1 = 0, 0, orig_w, orig_h
 
-        # Tạo ảnh nền trắng chữ đen rõ nét
-        clean_arr = 255 - binary[y0:y1, x0:x1]
+        crop_arr = arr[y0:y1, x0:x1].astype(np.float32)
+        # Làm sạch nền về trắng tinh (255) nhưng giữ nguyên độ đậm đặc và khử răng cưa của ruột nét bút
+        if bg_val > 140:
+            scale = 255.0 / max(float(bg_val), 180.0)
+            normalized = np.clip(crop_arr * scale, 0, 255)
+            # Tăng độ đậm nét viết nhẹ để nét màu sáng (đỏ, xanh lơ, cam) rõ ràng hơn
+            normalized = np.where(normalized < 242, np.clip((normalized - 242) * 1.35 + 242, 0, 255), 255)
+            clean_arr = normalized.astype(np.uint8)
+        else:
+            clean_arr = crop_arr.astype(np.uint8)
+
         cropped_img = Image.fromarray(clean_arr)
     else:
         # Fallback thuần Pillow khi môi trường chưa cài gói opencv
         denoised = gray.filter(ImageFilter.MedianFilter(size=3))
-        enhanced = ImageEnhance.Contrast(denoised).enhance(2.2)
+        enhanced = ImageEnhance.Contrast(denoised).enhance(1.8)
         inverted = ImageOps.invert(enhanced)
-        # Ngưỡng nhị phân lọc nét viết
-        mask = inverted.point(lambda p: 255 if p > 35 else 0)
+        mask = inverted.point(lambda p: 255 if p > 24 else 0)
         bbox = mask.getbbox()
         if bbox:
             x0 = max(0, bbox[0] - padding)
@@ -86,6 +122,13 @@ def preprocess_canvas_image(image_base64: str, padding: int = 18) -> Dict[str, A
             x0, y0, x1, y1 = 0, 0, orig_w, orig_h
 
         cropped_img = enhanced.crop((x0, y0, x1, y1))
+
+    # Giới hạn cạnh lớn nhất 1536px để đảm bảo tốc độ gửi Gemini < 1.5s trên màn 4K
+    max_side = max(cropped_img.width, cropped_img.height)
+    if max_side > 1536:
+        ratio = 1536.0 / max_side
+        new_size = (max(1, int(cropped_img.width * ratio)), max(1, int(cropped_img.height * ratio)))
+        cropped_img = cropped_img.resize(new_size, Image.Resampling.LANCZOS)
 
     out_buf = io.BytesIO()
     cropped_img.save(out_buf, format="PNG", optimize=True)

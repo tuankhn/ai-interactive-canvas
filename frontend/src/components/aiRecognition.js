@@ -109,8 +109,18 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
   if (aiElements.content) aiElements.content.hidden = true;
   setStatus('Đang gửi nét vẽ lên AI (Gemini / Mathpix)...');
 
+  const abortCtrl = new AbortController();
+  const reqTimeout = setTimeout(() => abortCtrl.abort(), 20000);
+
   try {
-    const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
+    const prevBg = fabricCanvas.backgroundColor;
+    if (!prevBg) {
+      fabricCanvas.backgroundColor = '#ffffff';
+    }
+    const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 });
+    if (!prevBg) {
+      fabricCanvas.backgroundColor = prevBg;
+    }
     const subject = aiElements.subjectSelect ? aiElements.subjectSelect.value : 'TOAN';
 
     const payload = {
@@ -129,6 +139,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
       headers: {
         'Content-Type': 'application/json'
       },
+      signal: abortCtrl.signal,
       body: JSON.stringify(payload)
     });
 
@@ -320,6 +331,7 @@ export async function performAIRecognition({ isDebounced = false } = {}) {
       setStatus('Lỗi nhận diện AI');
     }
   } finally {
+    clearTimeout(reqTimeout);
     isRecognizing = false;
   }
 }

@@ -147,12 +147,14 @@ async def get_debounce_config():
 )
 async def get_providers_status():
     """Kiểm tra tính sẵn sàng của Google Gemini và Mathpix OCR API."""
+    gem_ready = ai_recognition_service.gemini.ensure_configured()
     return {
         "gemini": {
             "name": f"Google Gemini ({settings.GEMINI_MODEL})",
             "model": settings.GEMINI_MODEL,
-            "configured": ai_recognition_service.gemini.is_configured,
-            "status": "ready" if ai_recognition_service.gemini.is_configured else "mock_fallback",
+            "active_model": ai_recognition_service.gemini.active_model_name,
+            "configured": gem_ready,
+            "status": "ready" if gem_ready else "mock_fallback",
         },
         "mathpix": {
             "name": "Mathpix OCR API",

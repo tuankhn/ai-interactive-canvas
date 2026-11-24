@@ -32,11 +32,57 @@ class GeminiAIService:
     """
 
     def __init__(self):
-        self.api_key = settings.GEMINI_API_KEY
-        self.model_name = settings.GEMINI_MODEL or "gemini-3.5-flash"
+        self.api_key = (settings.GEMINI_API_KEY or "").strip().strip('"').strip("'")
+        self.model_name = (settings.GEMINI_MODEL or "gemini-3.5-flash").strip()
+        self._preferred_model: Optional[str] = None
         self.is_configured = False
         self._client_type = None
         self._init_client()
+
+    @property
+    def active_model_name(self) -> str:
+        return self._preferred_model or self.model_name or settings.GEMINI_MODEL
+
+    def ensure_configured(self) -> bool:
+        """
+        Kiểm tra và tự động nạp lại GEMINI_API_KEY từ file .env / biến môi trường
+        nếu người dùng vừa cập nhật hoặc khởi động lại container mà chưa kịp ăn key.
+        """
+        if self.is_configured:
+            return True
+        if "pytest" in sys.modules:
+            return False
+
+        import os
+        from pathlib import Path
+        from dotenv import load_dotenv
+
+        candidate_envs = [
+            Path(__file__).resolve().parent.parent.parent / ".env",
+            Path(__file__).resolve().parent.parent.parent.parent / ".env",
+        ]
+        for env_path in candidate_envs:
+            if env_path.exists():
+                load_dotenv(env_path, override=True)
+
+        fresh_key = (
+            os.getenv("GEMINI_API_KEY", "")
+            or os.getenv("GOOGLE_API_KEY", "")
+            or settings.GEMINI_API_KEY
+            or ""
+        ).strip().strip('"').strip("'")
+
+        fresh_model = (os.getenv("GEMINI_MODEL", "") or settings.GEMINI_MODEL or "gemini-3.5-flash").strip()
+        if fresh_model:
+            self.model_name = fresh_model
+            settings.GEMINI_MODEL = fresh_model
+
+        if fresh_key:
+            self.api_key = fresh_key
+            settings.GEMINI_API_KEY = fresh_key
+            self._init_client()
+
+        return self.is_configured
 
     def _init_client(self):
         """Khởi tạo client Google GenAI (hỗ trợ cả google-genai mới và google-generativeai)."""
@@ -84,13 +130,8 @@ class GeminiAIService:
         if "," in clean_b64:
             clean_b64 = clean_b64.split(",", 1)[1]
 
-        if not self.is_configured and "pytest" not in sys.modules:
-            # Thử nạp lại key nếu người dùng vừa mới cập nhật file .env hoặc biến môi trường
-            import os
-            fresh_key = (os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "") or settings.GEMINI_API_KEY).strip()
-            if fresh_key:
-                self.api_key = fresh_key
-                self._init_client()
+        if not self.is_configured:
+            self.ensure_configured()
 
         if not self.is_configured:
             logger.info("Gemini API Key chưa cấu hình. Kích hoạt Gemini Mock Engine dự phòng.")
@@ -108,25 +149,33 @@ class GeminiAIService:
             raw_text = ""
             total_budget = max(5.0, float(timeout or 20.0))
             deadline = time.perf_counter() + total_budget
-            if self._client_type == "google-genai":
-                candidate_models = []
-                for mod_name in [self.model_name] + settings.GEMINI_FALLBACK_MODELS:
-                    if mod_name and mod_name not in candidate_models:
-                        candidate_models.append(mod_name)
-                # Luôn bổ sung model siêu nhẹ gemini-3.1-flash-lite làm lá chắn cuối cùng
-                if "gemini-3.1-flash-lite" not in candidate_models:
-                    candidate_models.append("gemini-3.1-flash-lite")
+            candidate_models: list[str] = []
+            for m in [
+                self._preferred_model,
+                self.model_name,
+                *settings.GEMINI_FALLBACK_MODELS,
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.0-flash",
+            ]:
+                if m and m not in candidate_models:
+                    candidate_models.append(m)
 
+            if self._client_type == "google-genai":
                 last_err = None
+                use_native_aio = (
+                    type(self.client).__module__.startswith("google")
+                    and hasattr(self.client, "aio")
+                    and hasattr(self.client.aio, "models")
+                )
                 for mod in candidate_models:
-                    # Cho phép retry ngay lập tức tối đa 2 lần cho model chính khi gặp quá tải tạm thời (503/429)
                     max_attempts = 2 if mod == candidate_models[0] else 1
                     for attempt in range(max_attempts):
                         remaining = deadline - time.perf_counter()
-                        if remaining <= 0.8:
+                        if remaining <= 0.5:
                             last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
                             break
-                        # Giới hạn timeout cho mỗi lần gọi để không chiếm hết deadline
                         per_attempt_timeout = min(remaining, 8.5)
                         try:
                             gen_config = None
@@ -139,15 +188,30 @@ class GeminiAIService:
                             except Exception:
                                 pass
 
-                            if hasattr(self.client, "aio") and hasattr(self.client.aio, "models"):
-                                response = await asyncio.wait_for(
-                                    self.client.aio.models.generate_content(
-                                        model=mod,
-                                        contents=[pil_image, prompt],
-                                        config=gen_config,
-                                    ),
-                                    timeout=per_attempt_timeout,
-                                )
+                            if use_native_aio:
+                                try:
+                                    response = await asyncio.wait_for(
+                                        self.client.aio.models.generate_content(
+                                            model=mod,
+                                            contents=[pil_image, prompt],
+                                            config=gen_config,
+                                        ),
+                                        timeout=per_attempt_timeout,
+                                    )
+                                except RuntimeError as loop_err:
+                                    if "Event loop is closed" in str(loop_err):
+                                        self._init_client()
+                                        response = await asyncio.wait_for(
+                                            asyncio.to_thread(
+                                                self.client.models.generate_content,
+                                                model=mod,
+                                                contents=[pil_image, prompt],
+                                                config=gen_config,
+                                            ),
+                                            timeout=per_attempt_timeout,
+                                        )
+                                    else:
+                                        raise
                             else:
                                 response = await asyncio.wait_for(
                                     asyncio.to_thread(
@@ -160,16 +224,22 @@ class GeminiAIService:
                                 )
                             raw_text = response.text or ""
                             if raw_text:
+                                self._preferred_model = mod
                                 break
                         except Exception as mod_err:
                             last_err = mod_err
                             err_str = str(mod_err)
-                            is_transient = any(kw in err_str for kw in ["503", "429", "UNAVAILABLE", "high demand", "temporarily unavailable"])
+                            is_transient = any(
+                                kw in err_str
+                                for kw in ["503", "429", "UNAVAILABLE", "high demand", "temporarily unavailable"]
+                            )
                             if is_transient and attempt < max_attempts - 1 and (deadline - time.perf_counter()) > 2.0:
                                 logger.warning(f"Model {mod} quá tải tạm thời (503/429), chờ 0.5s và thử lại lần {attempt + 2}...")
                                 await asyncio.sleep(0.5)
                                 continue
                             else:
+                                if self._preferred_model == mod:
+                                    self._preferred_model = None
                                 logger.warning(f"Lỗi gọi model {mod}: {mod_err}, thử model tiếp theo...")
                                 break
 
