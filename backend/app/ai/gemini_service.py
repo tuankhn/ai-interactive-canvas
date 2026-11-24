@@ -72,7 +72,7 @@ class GeminiAIService:
         image_base64: str,
         subject: str = "MATH",
         grade_level: Optional[str] = "THPT",
-        timeout: float = 15.0
+        timeout: float = 20.0
     ) -> RecognizeCanvasResponse:
         """
         Phân tích ảnh vùng nét vẽ bằng Gemini 2.5 Flash / 3.5 Flash Lite.
@@ -106,47 +106,75 @@ class GeminiAIService:
             )
 
             raw_text = ""
-            total_budget = max(1.0, float(timeout or 15.0))
+            total_budget = max(5.0, float(timeout or 20.0))
             deadline = time.perf_counter() + total_budget
             if self._client_type == "google-genai":
-                candidate_models = [self.model_name]
-                for fallback in settings.GEMINI_FALLBACK_MODELS:
-                    if fallback not in candidate_models:
-                        candidate_models.append(fallback)
+                candidate_models = []
+                for mod_name in [self.model_name] + settings.GEMINI_FALLBACK_MODELS:
+                    if mod_name and mod_name not in candidate_models:
+                        candidate_models.append(mod_name)
+                # Luôn bổ sung model siêu nhẹ gemini-3.1-flash-lite làm lá chắn cuối cùng
+                if "gemini-3.1-flash-lite" not in candidate_models:
+                    candidate_models.append("gemini-3.1-flash-lite")
 
                 last_err = None
                 for mod in candidate_models:
-                    remaining = deadline - time.perf_counter()
-                    if remaining <= 0.2:
-                        last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
-                        break
-                    per_attempt_timeout = max(3.5, remaining)
-                    try:
-                        gen_config = None
-                        try:
-                            from google.genai import types
-                            gen_config = types.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                temperature=0.1,
-                            )
-                        except Exception:
-                            pass
-
-                        response = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.client.models.generate_content,
-                                model=mod,
-                                contents=[pil_image, prompt],
-                                config=gen_config,
-                            ),
-                            timeout=per_attempt_timeout,
-                        )
-                        raw_text = response.text or ""
-                        if raw_text:
+                    # Cho phép retry ngay lập tức tối đa 2 lần cho model chính khi gặp quá tải tạm thời (503/429)
+                    max_attempts = 2 if mod == candidate_models[0] else 1
+                    for attempt in range(max_attempts):
+                        remaining = deadline - time.perf_counter()
+                        if remaining <= 0.8:
+                            last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
                             break
-                    except Exception as mod_err:
-                        last_err = mod_err
-                        logger.warning(f"Lỗi gọi model {mod}: {mod_err}, thử model tiếp theo...")
+                        # Giới hạn timeout cho mỗi lần gọi để không chiếm hết deadline
+                        per_attempt_timeout = min(remaining, 8.5)
+                        try:
+                            gen_config = None
+                            try:
+                                from google.genai import types
+                                gen_config = types.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    temperature=0.1,
+                                )
+                            except Exception:
+                                pass
+
+                            if hasattr(self.client, "aio") and hasattr(self.client.aio, "models"):
+                                response = await asyncio.wait_for(
+                                    self.client.aio.models.generate_content(
+                                        model=mod,
+                                        contents=[pil_image, prompt],
+                                        config=gen_config,
+                                    ),
+                                    timeout=per_attempt_timeout,
+                                )
+                            else:
+                                response = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        self.client.models.generate_content,
+                                        model=mod,
+                                        contents=[pil_image, prompt],
+                                        config=gen_config,
+                                    ),
+                                    timeout=per_attempt_timeout,
+                                )
+                            raw_text = response.text or ""
+                            if raw_text:
+                                break
+                        except Exception as mod_err:
+                            last_err = mod_err
+                            err_str = str(mod_err)
+                            is_transient = any(kw in err_str for kw in ["503", "429", "UNAVAILABLE", "high demand", "temporarily unavailable"])
+                            if is_transient and attempt < max_attempts - 1 and (deadline - time.perf_counter()) > 2.0:
+                                logger.warning(f"Model {mod} quá tải tạm thời (503/429), chờ 0.5s và thử lại lần {attempt + 2}...")
+                                await asyncio.sleep(0.5)
+                                continue
+                            else:
+                                logger.warning(f"Lỗi gọi model {mod}: {mod_err}, thử model tiếp theo...")
+                                break
+
+                    if raw_text:
+                        break
 
                 if not raw_text and last_err:
                     raise last_err
@@ -213,7 +241,8 @@ class GeminiAIService:
 
         except Exception as err:
             logger.error(f"Lỗi gọi Gemini ({self.model_name}) Vision: {err}")
-            reason = f"{type(err).__name__}: {err}"
+            err_msg = str(err).strip() or "Hết thời gian chờ kết nối (Timeout)"
+            reason = f"{type(err).__name__}: {err_msg}"
             fallback_res = self._mock_result(subject, clean_b64, degraded_reason=reason)
             fallback_res.degraded_reason = reason
             return fallback_res
