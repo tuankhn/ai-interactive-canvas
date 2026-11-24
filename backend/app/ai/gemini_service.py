@@ -32,11 +32,57 @@ class GeminiAIService:
     """
 
     def __init__(self):
-        self.api_key = settings.GEMINI_API_KEY
-        self.model_name = settings.GEMINI_MODEL or "gemini-3.5-flash"
+        self.api_key = (settings.GEMINI_API_KEY or "").strip().strip('"').strip("'")
+        self.model_name = (settings.GEMINI_MODEL or "gemini-3.5-flash").strip()
+        self._preferred_model: Optional[str] = None
         self.is_configured = False
         self._client_type = None
         self._init_client()
+
+    @property
+    def active_model_name(self) -> str:
+        return self._preferred_model or self.model_name or settings.GEMINI_MODEL
+
+    def ensure_configured(self) -> bool:
+        """
+        Kiểm tra và tự động nạp lại GEMINI_API_KEY từ file .env / biến môi trường
+        nếu người dùng vừa cập nhật hoặc khởi động lại container mà chưa kịp ăn key.
+        """
+        if self.is_configured:
+            return True
+        if "pytest" in sys.modules:
+            return False
+
+        import os
+        from pathlib import Path
+        from dotenv import load_dotenv
+
+        candidate_envs = [
+            Path(__file__).resolve().parent.parent.parent / ".env",
+            Path(__file__).resolve().parent.parent.parent.parent / ".env",
+        ]
+        for env_path in candidate_envs:
+            if env_path.exists():
+                load_dotenv(env_path, override=True)
+
+        fresh_key = (
+            os.getenv("GEMINI_API_KEY", "")
+            or os.getenv("GOOGLE_API_KEY", "")
+            or settings.GEMINI_API_KEY
+            or ""
+        ).strip().strip('"').strip("'")
+
+        fresh_model = (os.getenv("GEMINI_MODEL", "") or settings.GEMINI_MODEL or "gemini-3.5-flash").strip()
+        if fresh_model:
+            self.model_name = fresh_model
+            settings.GEMINI_MODEL = fresh_model
+
+        if fresh_key:
+            self.api_key = fresh_key
+            settings.GEMINI_API_KEY = fresh_key
+            self._init_client()
+
+        return self.is_configured
 
     def _init_client(self):
         """Khởi tạo client Google GenAI (hỗ trợ cả google-genai mới và google-generativeai)."""
@@ -84,13 +130,8 @@ class GeminiAIService:
         if "," in clean_b64:
             clean_b64 = clean_b64.split(",", 1)[1]
 
-        if not self.is_configured and "pytest" not in sys.modules:
-            # Thử nạp lại key nếu người dùng vừa mới cập nhật file .env hoặc biến môi trường
-            import os
-            fresh_key = (os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "") or settings.GEMINI_API_KEY).strip()
-            if fresh_key:
-                self.api_key = fresh_key
-                self._init_client()
+        if not self.is_configured:
+            self.ensure_configured()
 
         if not self.is_configured:
             logger.info("Gemini API Key chưa cấu hình. Kích hoạt Gemini Mock Engine dự phòng.")
@@ -108,19 +149,28 @@ class GeminiAIService:
             raw_text = ""
             total_budget = max(1.0, float(timeout or 15.0))
             deadline = time.perf_counter() + total_budget
-            if self._client_type == "google-genai":
-                candidate_models = [self.model_name]
-                for fallback in settings.GEMINI_FALLBACK_MODELS:
-                    if fallback not in candidate_models:
-                        candidate_models.append(fallback)
 
+            candidate_models: list[str] = []
+            for m in [
+                self._preferred_model,
+                self.model_name,
+                *settings.GEMINI_FALLBACK_MODELS,
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.0-flash",
+            ]:
+                if m and m not in candidate_models:
+                    candidate_models.append(m)
+
+            if self._client_type == "google-genai":
                 last_err = None
-                for mod in candidate_models:
+                for idx, mod in enumerate(candidate_models):
                     remaining = deadline - time.perf_counter()
                     if remaining <= 0.2:
                         last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
                         break
-                    per_attempt_timeout = max(3.5, remaining)
+                    is_last_model = idx == len(candidate_models) - 1
+                    per_attempt_timeout = remaining if is_last_model else min(remaining, max(3.5, total_budget * 0.45))
                     try:
                         gen_config = None
                         try:
@@ -143,9 +193,12 @@ class GeminiAIService:
                         )
                         raw_text = response.text or ""
                         if raw_text:
+                            self._preferred_model = mod
                             break
                     except Exception as mod_err:
                         last_err = mod_err
+                        if self._preferred_model == mod:
+                            self._preferred_model = None
                         logger.warning(f"Lỗi gọi model {mod}: {mod_err}, thử model tiếp theo...")
 
                 if not raw_text and last_err:

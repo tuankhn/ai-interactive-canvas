@@ -74,7 +74,12 @@ services:
     container_name: aicanvas_backend
     restart: unless-stopped
     env_file:
-      - ./backend/.env.example
+      - path: ./backend/.env.example
+        required: true
+      - path: ./backend/.env
+        required: false
+      - path: ./.env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-aicanvas}:${POSTGRES_PASSWORD:-aicanvas_secret}@postgres:5432/${POSTGRES_DB:-ai_interactive_canvas}
       REDIS_URL: redis://redis:6379/0
@@ -85,9 +90,6 @@ services:
       MINIO_SECURE: "false"
       FRONTEND_DIR: /frontend
       SEED_DEMO_ON_STARTUP: ${SEED_DEMO_ON_STARTUP:-true}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      MATHPIX_APP_ID: ${MATHPIX_APP_ID:-}
-      MATHPIX_APP_KEY: ${MATHPIX_APP_KEY:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:

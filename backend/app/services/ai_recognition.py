@@ -440,14 +440,14 @@ class AIRecognitionService:
                         subject=subject_norm,
                         grade_level=request.grade_level or "THPT",
                     )
-                    if self.gemini.is_configured
+                    if self.gemini.ensure_configured()
                     else self.gemini._mock_result(subject_norm, processed_b64, degraded_reason=degraded_reason)
                 )
                 recognized_text = g_res.recognized_text
                 latex_formula = g_res.latex or g_res.recognized_text
                 confidence = g_res.confidence
                 provider_used = (
-                    (self.gemini.model_name or settings.GEMINI_MODEL)
+                    self.gemini.active_model_name
                     if (self.gemini.is_configured and not g_res.degraded_reason)
                     else "gemini-mock"
                 )
@@ -456,6 +456,7 @@ class AIRecognitionService:
                     visualization_dict = g_res.visualization.model_dump()
         elif provider_choice == "gemini":
             # Ưu tiên Gemini đa phương thức
+            self.gemini.ensure_configured()
             g_res = await self.gemini.analyze_board(
                 processed_b64,
                 subject=subject_norm,
@@ -466,7 +467,7 @@ class AIRecognitionService:
             confidence = g_res.confidence
             degraded_reason = getattr(g_res, "degraded_reason", None)
             provider_used = (
-                (self.gemini.model_name or settings.GEMINI_MODEL)
+                self.gemini.active_model_name
                 if (self.gemini.is_configured and not degraded_reason)
                 else "gemini-mock"
             )
@@ -494,7 +495,7 @@ class AIRecognitionService:
                     degraded_reason = f"Mathpix fallback: {m_res.get('error', 'error')}"
 
             if not used_mathpix:
-                if self.gemini.is_configured:
+                if self.gemini.ensure_configured():
                     g_res = await self.gemini.analyze_board(
                         processed_b64,
                         subject=subject_norm,
@@ -505,7 +506,7 @@ class AIRecognitionService:
                     confidence = g_res.confidence
                     degraded_reason = getattr(g_res, "degraded_reason", None) or degraded_reason
                     provider_used = (
-                        (self.gemini.model_name or settings.GEMINI_MODEL)
+                        self.gemini.active_model_name
                         if not getattr(g_res, "degraded_reason", None)
                         else "hybrid-mock-engine"
                     )

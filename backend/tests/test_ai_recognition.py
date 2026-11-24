@@ -303,3 +303,58 @@ def test_api_correct_token_endpoint():
     data = response.json()
     assert data["status"] == "success"
     assert data["updated_latex"] == "y = \\sin(x) + 1"
+
+
+def test_preprocess_preserves_white_chalk_on_transparent_rgba():
+    """Đảm bảo nét phấn trắng trên nền RGBA trong suốt không bị mất trắng khi tiền xử lý."""
+    from app.services.image_preprocess import preprocess_canvas_image
+
+    img = Image.new("RGBA", (600, 300), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.line([(120, 140), (420, 140)], fill=(255, 255, 255, 255), width=12)
+
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    b64 = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
+
+    res = preprocess_canvas_image(b64)
+    assert res["bounding_box"]["width"] < 600
+    assert res["bounding_box"]["height"] < 300
+    out_img = Image.open(BytesIO(base64.b64decode(res["raw_base64"]))).convert("L")
+    # Phải có các pixel nét chữ đậm (< 80) và nền trắng (> 240)
+    extrema = out_img.getextrema()
+    assert extrema[0] < 80
+    assert extrema[1] > 240
+
+
+@pytest.mark.anyio
+async def test_gemini_fallback_chain_and_preferred_model_memoization():
+    """Khi model đầu bị 404/503, tự động chuyển sang model fallback hợp lệ và ghi nhớ cho lần gọi kế tiếp."""
+    b64_img = generate_test_stroke_base64()
+    called_models = []
+
+    def fake_generate_content(*, model, contents, config=None):
+        called_models.append(model)
+        if model == "gemini-invalid-test":
+            raise RuntimeError("404 NOT_FOUND: models/gemini-invalid-test is not found")
+        resp = MagicMock()
+        resp.text = '{"recognized_text": "2x + 3 = 7", "latex": "2x + 3 = 7", "subject": "TOAN", "confidence": 0.98}'
+        return resp
+
+    service = GeminiAIService()
+    service.is_configured = True
+    service._client_type = "google-genai"
+    service.model_name = "gemini-invalid-test"
+    service.client = MagicMock()
+    service.client.models.generate_content.side_effect = fake_generate_content
+
+    res1 = await service.analyze_board(b64_img, subject="TOAN")
+    assert res1.recognized_text == "2x + 3 = 7"
+    assert service._preferred_model != "gemini-invalid-test"
+    first_working = service._preferred_model
+
+    # Lần gọi thứ 2 phải gọi thẳng model đã hoạt động ngay ở lượt đầu tiên (không lặp lại lỗi 404)
+    called_models.clear()
+    res2 = await service.analyze_board(b64_img, subject="TOAN")
+    assert res2.recognized_text == "2x + 3 = 7"
+    assert called_models == [first_working]

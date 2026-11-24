@@ -7,6 +7,7 @@ import { FabricImage, Path, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@
 import { $, stage, surface, toolbar, fabricCanvas, state, ui, toolNames, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from '../components/history.js';
 import { closePanels, setTool } from '../components/toolbar.js';
+import { authFetch } from '../utils/auth_client.js';
 
 const OCR_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const MATH_CDN = 'https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js';
@@ -136,36 +137,54 @@ function overlaps(a, b) {
 
 function cropForOCR(region) {
   // Bản kết xuất Fabric có cả nét và nền, không có lớp kéo khung chọn.
+  const darkBoard = fabricCanvas.backgroundColor === '#111827';
+  const prevBg = fabricCanvas.backgroundColor;
+  if (!prevBg) {
+    fabricCanvas.backgroundColor = '#ffffff';
+  }
   const drawing = fabricCanvas.toCanvasElement(2);
+  if (!prevBg) {
+    fabricCanvas.backgroundColor = prevBg;
+  }
   const factorX = drawing.width / fabricCanvas.getWidth();
   const factorY = drawing.height / fabricCanvas.getHeight();
-  const x1 = clamp(region.left - 10, 0, fabricCanvas.getWidth());
-  const y1 = clamp(region.top - 10, 0, fabricCanvas.getHeight());
-  const x2 = clamp(region.left + region.width + 10, 0, fabricCanvas.getWidth());
-  const y2 = clamp(region.top + region.height + 10, 0, fabricCanvas.getHeight());
+  const x1 = clamp(region.left - 12, 0, fabricCanvas.getWidth());
+  const y1 = clamp(region.top - 12, 0, fabricCanvas.getHeight());
+  const x2 = clamp(region.left + region.width + 12, 0, fabricCanvas.getWidth());
+  const y2 = clamp(region.top + region.height + 12, 0, fabricCanvas.getHeight());
   const width = x2 - x1;
   const height = y2 - y1;
-  const enlargement = Math.min(3, 2600 / Math.max(width, height));
+  const enlargement = Math.min(3, 2400 / Math.max(width, height, 1));
   const result = document.createElement('canvas');
   result.width = Math.max(1, Math.round(width * enlargement));
   result.height = Math.max(1, Math.round(height * enlargement));
   const ctx = result.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = darkBoard ? '#111827' : '#ffffff';
   ctx.fillRect(0, 0, result.width, result.height);
   ctx.drawImage(drawing, x1 * factorX, y1 * factorY, width * factorX, height * factorY,
     0, 0, result.width, result.height);
 
-  // Chuẩn hóa nét tối trên nền sáng, kể cả khi đang dùng bảng đen.
+  // Giữ bản ảnh mượt gốc (anti-aliased, giữ nguyên màu nét & độ dày) để gửi lên Gemini Vision / Mathpix
+  const rawAiDataUrl = result.toDataURL('image/png');
+
+  // Chuẩn hóa nét tối trên nền sáng theo khoảng cách màu với nền (không làm mất nét vàng/xanh lơ/mỏng)
   const image = ctx.getImageData(0, 0, result.width, result.height);
   const pixels = image.data;
-  const darkBoard = fabricCanvas.backgroundColor === '#111827';
+  const bgR = darkBoard ? 17 : 255;
+  const bgG = darkBoard ? 24 : 255;
+  const bgB = darkBoard ? 39 : 255;
   for (let p = 0; p < pixels.length; p += 4) {
-    const luminance = pixels[p] * 0.299 + pixels[p + 1] * 0.587 + pixels[p + 2] * 0.114;
-    const white = darkBoard ? luminance < 120 : luminance >= 185;
-    pixels[p] = pixels[p + 1] = pixels[p + 2] = white ? 255 : 0;
+    const diff = Math.max(
+      Math.abs(pixels[p] - bgR),
+      Math.abs(pixels[p + 1] - bgG),
+      Math.abs(pixels[p + 2] - bgB)
+    );
+    const isStroke = diff > 26;
+    pixels[p] = pixels[p + 1] = pixels[p + 2] = isStroke ? 0 : 255;
     pixels[p + 3] = 255;
   }
   ctx.putImageData(image, 0, 0);
+  result._rawAiDataUrl = rawAiDataUrl;
   return result;
 }
 
@@ -365,12 +384,67 @@ export function setupHandwriting() {
   }
 
   async function runRecognition() {
-    if (!region || busy) return;
+    if (!region || !crop || busy) return;
     const current = ++job;
     const editAtStart = { ...edited };
     setBusy(true);
-    status('Đang tải bộ nhận dạng OCR; lần đầu cần Internet để tải dữ liệu ngôn ngữ...');
+    status('Đang nhận diện chữ viết tay bằng AI...');
     try {
+      // 1. Ưu tiên gọi Backend AI (Gemini Vision / Mathpix) để đọc chuẩn cả tiếng Việt & công thức Toán
+      let recognizedByBackend = false;
+      try {
+        const subject = $('subjectSelect')?.value || 'TOAN';
+        const aiDataUrl = crop._rawAiDataUrl || crop.toDataURL('image/png');
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 16000);
+        try {
+          const resp = await authFetch('/api/v1/recognize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: ctrl.signal,
+            body: JSON.stringify({
+              session_id: $('sessionId')?.textContent?.trim() || 'session-10a1',
+              room_id: $('roomId')?.textContent?.trim() || 'room-10a1',
+              subject,
+              page_number: (pageOfSelection ?? state.pageIndex) + 1,
+              image_base64: aiDataUrl,
+              debounce_ms: 800,
+              provider: 'auto',
+            }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            const isMock =
+              String(data.provider || '').toLowerCase().includes('mock') ||
+              Boolean(data.degraded_reason);
+            const recText = String(data.recognized_text || data.latex || '').trim();
+            const recLatex = String(data.latex || mathGuess(recText)).trim();
+            if (!isMock && (recText || recLatex)) {
+              if (current !== job || !dialog.open) return;
+              lastOCR = recText || recLatex;
+              if (!edited.text && !editAtStart.text) values.text = recText || recLatex;
+              if (!edited.latex && !editAtStart.latex) values.latex = recLatex || mathGuess(recText);
+              const looksLikeMath = /[\\^_=]|\\frac|\\sqrt|\\int|\\sum/.test(recLatex) && !['TIENG_ANH', 'ENG'].includes(subject.toUpperCase());
+              if (looksLikeMath && !edited.text && !edited.latex) {
+                mode.value = 'latex';
+              }
+              if (!edited[mode.value]) textarea.value = values[mode.value];
+              await updatePreview();
+              status(`Đã nhận diện bằng AI (${data.provider || 'Gemini'}). Hãy kiểm tra trước khi chèn.`);
+              recognizedByBackend = true;
+            }
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {
+        recognizedByBackend = false;
+      }
+
+      if (recognizedByBackend) return;
+
+      // 2. Dự phòng bằng Tesseract.js OCR cục bộ khi chưa cấu hình API key hoặc đang Offline
+      status('Đang chạy bộ nhận dạng OCR cục bộ...');
       const worker = await getOCRWorker((message) => {
         if (current !== job || !dialog.open || !busy) return;
         const percent = Number.isFinite(message.progress)
@@ -385,7 +459,7 @@ export function setupHandwriting() {
       if (!edited[mode.value]) textarea.value = values[mode.value];
       await updatePreview();
       if (!lastOCR) status('Không nhận ra chữ trong vùng chọn. Hãy nhập nội dung thủ công hoặc chọn vùng rõ hơn.', true);
-      else status('Đã nhận dạng. Hãy kiểm tra và sửa kết quả, đặc biệt với ký hiệu toán học.');
+      else status('Đã nhận dạng (OCR cục bộ). Hãy kiểm tra và sửa kết quả nếu cần.');
     } catch (error) {
       if (current !== job || !dialog.open) return;
       console.warn('OCR handwriting:', error);
