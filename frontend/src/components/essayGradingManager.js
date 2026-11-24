@@ -42,6 +42,7 @@ export function setupEssayGradingManager() {
   const essayInputLines = $('essayInputLines');
   const evaluateEssayStepsBtn = $('evaluateEssayStepsBtn');
   const annotateEssayToCanvasBtn = $('annotateEssayToCanvasBtn');
+  const scanCanvasForEssayBtn = $('scanCanvasForEssayBtn');
 
   const essayResultSection = $('essayResultSection');
   const metricTotalSteps = $('metricTotalSteps');
@@ -59,6 +60,79 @@ export function setupEssayGradingManager() {
     essayDialogStatus.textContent = text;
     essayDialogStatus.hidden = !text;
     essayDialogStatus.style.color = isError ? '#dc2626' : '#16a34a';
+  }
+
+  // Quét trực tiếp nét vẽ từ Canvas vào bài giải tự luận
+  if (scanCanvasForEssayBtn) {
+    scanCanvasForEssayBtn.addEventListener('click', async () => {
+      if (!fabricCanvas || fabricCanvas.getObjects().length === 0) {
+        showStatus('Mặt bảng vẽ hiện đang trống. Hãy viết đề bài và các bước giải lên bảng trước!', true);
+        return;
+      }
+
+      scanCanvasForEssayBtn.disabled = true;
+      scanCanvasForEssayBtn.textContent = 'Đang quét nét vẽ...';
+      showStatus('AI đang quét và bóc tách các dòng viết tay trên bảng vẽ...');
+
+      try {
+        const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1 });
+        const currentSubject = essaySubjectSelect ? essaySubjectSelect.value : (state.subject || 'TOAN');
+
+        const res = await authFetch('/api/v1/recognize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: state.sessionId || 'session-10a1',
+            room_id: state.roomId || 'room-10a1',
+            subject: currentSubject,
+            image_base64: imageBase64,
+            provider: 'auto',
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error('Không thể nhận diện nét vẽ từ bảng');
+        }
+
+        const data = await res.json();
+        const recognizedText = data.recognized_text || data.latex || '';
+        if (!recognizedText.trim()) {
+          showStatus('Không phát hiện nét chữ nào rõ ràng trên bảng vẽ.', true);
+          return;
+        }
+
+        // Tự động phân tách dòng đề bài và các dòng bước giải
+        const rawLines = recognizedText.split('\n').map((l) => l.trim()).filter(Boolean);
+        let formattedSteps = [];
+        if (rawLines.length === 1) {
+          formattedSteps = [rawLines[0]];
+        } else {
+          rawLines.forEach((line, idx) => {
+            if (/^(?:bước|buoc|step|\d+[\.:\)])/i.test(line)) {
+              formattedSteps.push(line);
+            } else if (idx === 0) {
+              formattedSteps.push(`Đề bài: ${line}`);
+            } else {
+              formattedSteps.push(`Bước ${idx}: ${line}`);
+            }
+          });
+        }
+
+        if (essayInputLines) {
+          essayInputLines.value = formattedSteps.join('\n');
+        }
+
+        showStatus(`Đã quét thành công ${formattedSteps.length} dòng từ bảng! Đang kích hoạt AI chấm...`);
+        if (evaluateEssayStepsBtn) {
+          evaluateEssayStepsBtn.click();
+        }
+      } catch (err) {
+        showStatus(`Lỗi khi quét bảng vẽ: ${err.message}`, true);
+      } finally {
+        scanCanvasForEssayBtn.disabled = false;
+        scanCanvasForEssayBtn.textContent = '📷 Quét từ bảng vẽ Canvas';
+      }
+    });
   }
 
   // Mở modal

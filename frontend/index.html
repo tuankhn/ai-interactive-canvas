@@ -685,6 +685,8 @@
           <option value="TOAN" selected>Toán học (Biến đổi &amp; Công thức)</option>
           <option value="VAT_LY">Vật lý (Định luật &amp; Đơn vị)</option>
           <option value="HOA_HOC">Hóa học (Phương trình &amp; Tỉ lệ)</option>
+          <option value="TIENG_ANH">Tiếng Anh (Ngữ pháp &amp; Từ vựng)</option>
+          <option value="SINH_HOC">Sinh học (Di truyền &amp; Cơ chế)</option>
         </select>
       </div>
 
@@ -700,8 +702,11 @@
     </div>
 
     <div class="essay-input-section">
-      <label for="essayInputLines">Các dòng bước giải của học sinh (mỗi dòng là một bước biến đổi):</label>
-      <textarea id="essayInputLines" rows="6" placeholder="Bước 1: 2x - 6 = 0&#10;Bước 2: 2x = -6&#10;Bước 3: x = -3"></textarea>
+      <div class="essay-scan-row" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <label for="essayInputLines" style="margin-bottom:0;">Các dòng bước giải (Dòng đầu là Đề bài, dòng có '=', '-', '->' là Lời giải):</label>
+        <button id="scanCanvasForEssayBtn" class="topbar-btn" type="button" style="background:#0284c7; color:#fff; font-weight:600; padding:5px 12px; border-radius:6px; font-size:12.5px; cursor:pointer;" title="Quét trực tiếp nét vẽ đang có trên bảng để chấm tự động">📷 Quét từ bảng vẽ Canvas</button>
+      </div>
+      <textarea id="essayInputLines" rows="6" placeholder="Bước 1: (x + 3)^2&#10;Bước 2: = x^2 + 6x + 9&#10;(Hoặc Tiếng Anh:&#10;She (go) to school yesterday.&#10;- went)"></textarea>
       <div class="essay-action-buttons">
         <button id="evaluateEssayStepsBtn" class="dialog-primary" type="button">Chấm từng dòng bằng AI</button>
         <button id="annotateEssayToCanvasBtn" class="essay-annotate-btn" type="button" disabled>Đánh dấu lên mặt bảng vẽ</button>

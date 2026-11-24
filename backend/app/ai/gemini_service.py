@@ -72,10 +72,10 @@ class GeminiAIService:
         image_base64: str,
         subject: str = "MATH",
         grade_level: Optional[str] = "THPT",
-        timeout: float = 4.0
+        timeout: float = 15.0
     ) -> RecognizeCanvasResponse:
         """
-        Phân tích ảnh vùng nét vẽ bằng Gemini 2.5 Flash.
+        Phân tích ảnh vùng nét vẽ bằng Gemini 2.5 Flash / 3.5 Flash Lite.
         """
         start_time = time.perf_counter()
 
@@ -87,7 +87,6 @@ class GeminiAIService:
         if not self.is_configured and "pytest" not in sys.modules:
             # Thử nạp lại key nếu người dùng vừa mới cập nhật file .env hoặc biến môi trường
             import os
-            from app.core.config import settings
             fresh_key = (os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "") or settings.GEMINI_API_KEY).strip()
             if fresh_key:
                 self.api_key = fresh_key
@@ -107,7 +106,7 @@ class GeminiAIService:
             )
 
             raw_text = ""
-            total_budget = max(0.5, float(timeout or 4.0))
+            total_budget = max(1.0, float(timeout or 15.0))
             deadline = time.perf_counter() + total_budget
             if self._client_type == "google-genai":
                 candidate_models = [self.model_name]
@@ -118,16 +117,27 @@ class GeminiAIService:
                 last_err = None
                 for mod in candidate_models:
                     remaining = deadline - time.perf_counter()
-                    if remaining <= 0.05:
+                    if remaining <= 0.2:
                         last_err = last_err or asyncio.TimeoutError("Hết thời gian chờ gọi Gemini API")
                         break
-                    per_attempt_timeout = min(remaining, max(0.8, total_budget / max(1, len(candidate_models)) * 1.5))
+                    per_attempt_timeout = max(3.5, remaining)
                     try:
+                        gen_config = None
+                        try:
+                            from google.genai import types
+                            gen_config = types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                temperature=0.1,
+                            )
+                        except Exception:
+                            pass
+
                         response = await asyncio.wait_for(
                             asyncio.to_thread(
                                 self.client.models.generate_content,
                                 model=mod,
                                 contents=[pil_image, prompt],
+                                config=gen_config,
                             ),
                             timeout=per_attempt_timeout,
                         )
@@ -147,21 +157,7 @@ class GeminiAIService:
                 )
                 raw_text = response.text or ""
 
-            raw_text = raw_text.strip()
-            if raw_text.startswith("```json"):
-                raw_text = raw_text[7:]
-            elif raw_text.startswith("```"):
-                raw_text = raw_text[3:]
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3]
-
-            # Bọc lót trích xuất JSON bằng Regex chống dị tật văn bản thừa
-            import re
-            json_match = re.search(r"\{.*\}", raw_text.strip(), re.DOTALL)
-            if json_match:
-                raw_text = json_match.group(0)
-
-            parsed_data = json.loads(raw_text.strip())
+            parsed_data = self._parse_json_robust(raw_text, subject=subject)
 
             # Chuẩn hóa ambiguous_tokens để tương thích với Pydantic schema
             raw_tokens = parsed_data.get("ambiguous_tokens", [])
@@ -221,6 +217,76 @@ class GeminiAIService:
             fallback_res = self._mock_result(subject, clean_b64, degraded_reason=reason)
             fallback_res.degraded_reason = reason
             return fallback_res
+
+    def _parse_json_robust(self, raw_text: str, subject: str = "TOAN") -> Dict[str, Any]:
+        """Phân tích JSON chống dị tật, tự động sửa escape backslash trong LaTeX và unescaped quotes."""
+        import re
+        clean_text = (raw_text or "").strip()
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[7:]
+        elif clean_text.startswith("```"):
+            clean_text = clean_text[3:]
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3]
+        clean_text = clean_text.strip()
+
+        json_match = re.search(r"\{.*\}", clean_text, re.DOTALL)
+        candidate = json_match.group(0) if json_match else clean_text
+
+        # 1. Thử parse trực tiếp với strict=False
+        try:
+            return json.loads(candidate, strict=False)
+        except Exception:
+            pass
+
+        # 2. Thử sửa lỗi unescaped backslashes (\frac, \times, \alpha...)
+        fixed_slashes = re.sub(r'\\(?![/\\bfnrtu"U])', r'\\\\', candidate)
+        try:
+            return json.loads(fixed_slashes, strict=False)
+        except Exception:
+            pass
+
+        # 3. Trích xuất trực tiếp bằng Regex khi có unescaped quotes trong explanation
+        m_rec = re.search(r'"recognized_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', candidate)
+        if not m_rec:
+            m_rec = re.search(r'"recognized_text"\s*:\s*"(.*?)"\s*[,}]', candidate, re.DOTALL)
+
+        m_lat = re.search(r'"latex"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', candidate)
+        if not m_lat:
+            m_lat = re.search(r'"latex"\s*:\s*"(.*?)"\s*[,}]', candidate, re.DOTALL)
+
+        m_exp = re.search(r'"explanation"\s*:\s*"(.*)', candidate, re.DOTALL)
+        exp_text = None
+        if m_exp:
+            exp_text = re.sub(r'"\s*\}\s*$', '', m_exp.group(1)).strip()
+
+        m_fn = re.search(r'"function"\s*:\s*"([^"]+)"', candidate)
+
+        if m_rec or m_lat:
+            rec_str = (m_rec.group(1) if m_rec else (m_lat.group(1) if m_lat else "")).replace(r'\"', '"').strip()
+            lat_str = (m_lat.group(1) if m_lat else (m_rec.group(1) if m_rec else "")).replace(r'\"', '"').strip()
+            data = {
+                "recognized_text": rec_str,
+                "latex": lat_str,
+                "subject": subject,
+                "confidence": 0.95,
+                "has_ambiguity": False,
+                "ambiguous_tokens": [],
+                "explanation": exp_text or f"Nhận diện công thức: {rec_str}",
+            }
+            if m_fn:
+                data["visualization"] = {
+                    "type": "2D_GRAPH",
+                    "engine": "plotly",
+                    "title": f"Đồ thị {rec_str}",
+                    "parameters": {"function": m_fn.group(1)},
+                    "latex_formula": lat_str,
+                }
+            return data
+
+        # 4. Nếu hoàn toàn không thể parse và không có công thức (chuỗi rác / lỗi server),
+        # raise để kích hoạt fallback an toàn _mock_result
+        return json.loads(candidate)
 
     def _mock_result(
         self,
