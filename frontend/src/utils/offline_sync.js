@@ -1,4 +1,4 @@
-import { $, fabricCanvas, state, ui, setStatus } from './context.js';
+import { $, fabricCanvas, state, ui, setStatus, withOpaqueBoardExport } from './context.js';
 import { authFetch, promptTeacherLogin, readStoredTeacherSession } from './auth_client.js';
 
 const OFFLINE_DB_NAME = 'ai-canvas-offline-db';
@@ -38,14 +38,58 @@ function createSyncId() {
 function getSessionMeta() {
   const aiSubject = getOfflineElements().subjectSelect;
   const teacherSess = readStoredTeacherSession();
+  const selectedClass =
+    $('classSelect')?.value?.trim() ||
+    $('className')?.textContent?.trim() ||
+    '10A1';
   return {
-    session_id: $('sessionId')?.textContent?.trim() || 'session-10a1',
-    room_id: $('roomId')?.textContent?.trim() || 'room-10a1',
-    class_name: $('className')?.textContent?.trim() || '10A1',
+    session_id: $('sessionId')?.textContent?.trim() || `session-${selectedClass.toLowerCase()}`,
+    room_id: $('roomId')?.textContent?.trim() || `room-${selectedClass.toLowerCase()}`,
+    class_name: selectedClass,
     teacher_name: teacherSess?.full_name || 'Nguyễn Tuấn Khang',
     subject: aiSubject ? aiSubject.value : 'TOAN',
     period_number: 1,
   };
+}
+
+function extractBoardTextMetadata() {
+  const chunks = [];
+  const rawLatex = $('aiLatexRaw')?.textContent?.trim();
+  if (rawLatex && rawLatex !== '--') {
+    chunks.push(rawLatex);
+  }
+  try {
+    for (const obj of fabricCanvas.getObjects()) {
+      if (typeof obj?.text === 'string' && obj.text.trim()) {
+        chunks.push(obj.text.trim());
+      }
+    }
+  } catch {
+    // Ignore canvas inspection errors
+  }
+  return chunks.join(' · ').slice(0, 240);
+}
+
+export function notifySnapshotBroadcast(detail = {}) {
+  const payload = {
+    type: 'snapshot-saved',
+    ts: Date.now(),
+    ...detail,
+  };
+  try {
+    if (typeof BroadcastChannel === 'function') {
+      const ch = new BroadcastChannel('ai-canvas:snapshots');
+      ch.postMessage(payload);
+      ch.close();
+    }
+  } catch {
+    // Ignore unsupported BroadcastChannel
+  }
+  try {
+    localStorage.setItem('ai-canvas:last-snapshot-sync', JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota errors
+  }
 }
 
 export function isOfflineMode() {
@@ -439,18 +483,24 @@ export async function checkServerConnectivity() {
  */
 export async function captureAndSaveSnapshot({ triggerType = 'MANUAL', pageNumber = state.pageIndex + 1, recognizedLatex = '' } = {}) {
   const meta = getSessionMeta();
-  const imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 2 });
+  const imageBase64 = withOpaqueBoardExport(
+    () => fabricCanvas.toDataURL({ format: 'png', multiplier: 2 }),
+    '#f4f7f5',
+    '#121214'
+  );
+  const autoLatex = recognizedLatex || extractBoardTextMetadata();
+
   const payload = {
     client_sync_id: createSyncId(),
     ...meta,
     page_number: pageNumber,
     trigger_type: triggerType,
     image_base64: imageBase64,
-    recognized_latex: recognizedLatex,
+    recognized_latex: autoLatex,
     captured_at: new Date().toISOString(),
   };
 
-  if (isOfflineMode()) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     await saveSnapshotToIndexedDB(payload);
     const pendingCount = await refreshOfflineUI();
     showCornerNotification({
@@ -459,7 +509,7 @@ export async function captureAndSaveSnapshot({ triggerType = 'MANUAL', pageNumbe
       variant: 'offline',
       autoDismissMs: 0,
     });
-    return { mode: 'offline_indexeddb', pendingCount };
+    return { mode: 'offline_indexeddb', pendingCount, className: meta.class_name, imageBase64 };
   }
 
   try {
@@ -488,18 +538,27 @@ export async function captureAndSaveSnapshot({ triggerType = 'MANUAL', pageNumbe
             autoDismissMs: 5000,
           });
         }
-        return { mode: 'queued_http_4xx', status: response.status, pendingCount };
+        return { mode: 'queued_http_4xx', status: response.status, pendingCount, className: meta.class_name, imageBase64 };
       }
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    return { mode: 'online', data };
+    if (isOffline) {
+      await markNetworkOnline();
+    }
+    notifySnapshotBroadcast({
+      className: meta.class_name,
+      subject: meta.subject,
+      snapshotId: data?.snapshot_id,
+      triggerType,
+    });
+    return { mode: 'online', data, className: meta.class_name, imageBase64 };
   } catch (err) {
     if (isLikelyNetworkError(err)) {
       await saveSnapshotToIndexedDB(payload);
       await markNetworkOffline('snapshot-fallback');
       const pendingCount = await countPendingSnapshots();
-      return { mode: 'offline_indexeddb', pendingCount };
+      return { mode: 'offline_indexeddb', pendingCount, className: meta.class_name, imageBase64 };
     }
     throw err;
   }
@@ -540,6 +599,13 @@ export function setupOfflineSync() {
   window.addEventListener('app:teacher-authenticated', () => {
     syncPendingSnapshots({ silentIfEmpty: true });
   });
+
+  // Tự động dò kết nối lại khi trước đó bị đánh dấu offline tạm thời trên máy cục bộ
+  setInterval(() => {
+    if (isOffline && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+      void checkServerConnectivity();
+    }
+  }, 6000);
 
   // Kiểm tra trạng thái mạng & đẩy các ảnh còn tồn trong IndexedDB lúc khởi động.
   if (isOfflineMode()) {

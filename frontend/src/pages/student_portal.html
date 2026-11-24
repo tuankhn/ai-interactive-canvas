@@ -3,28 +3,43 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#222f71">
+  <meta name="theme-color" content="#F4F0E8">
   <meta name="description" content="Cổng ôn tập tại nhà cho Học sinh và Phụ huynh — xem lại bài giảng Smartboard theo Lịch và Bộ sưu tập ảnh bảng độ nét cao.">
-  <title>Cổng Ôn Tập Tại Nhà (Học Sinh &amp; Phụ Huynh) · AI Interactive Canvas</title>
+  <title>Cổng Ôn Tập · AI Interactive Canvas</title>
+  <link rel="icon" type="image/svg+xml" href="../../favicon.svg?v=20261125r6">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600;700&amp;display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
-      font-family: Inter, "Segoe UI", Arial, Helvetica, sans-serif;
-      --bg: #f4f6fb;
-      --surface: #ffffff;
-      --surface-alt: #f8fafc;
-      --ink: #1e293b;
-      --muted: #526075;
-      --border: #cbd5e1;
-      --primary: #222f71;
-      --primary-hover: #192459;
-      --accent: #0284c7;
-      --success: #15803d;
-      --success-bg: #dcfce7;
-      --danger: #b91c1c;
-      --danger-bg: #fee2e2;
-      --focus: #2563eb;
-      --radius: 12px;
+      --font-sans: "Be Vietnam Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-family: var(--font-sans);
+      --bg: #F4F0E8;
+      --surface: #FAF8F4;
+      --surface-alt: #EBE5D9;
+      --surface-hover: #E2DBD0;
+      --ink: #26231F;
+      --ink-secondary: #5C564E;
+      --muted: #6E675E;
+      --border: #E5DFD3;
+      --border-strong: #BFB6A6;
+      --primary: #9C3F23;
+      --primary-hover: #86331A;
+      --primary-soft: #F3E4DC;
+      --accent: #9A5518;
+      --accent-soft: #FBF1E4;
+      --success: #3D6940;
+      --success-bg: #EBF2EA;
+      --danger: #9E3B2B;
+      --danger-bg: #F4E3E0;
+      --focus: #C96442;
+      --radius-sm: 6px;
+      --radius: 8px;
+      --radius-lg: 10px;
+      --shadow-card: 0 4px 20px -2px rgba(38, 35, 31, 0.07), 0 1px 3px rgba(38, 35, 31, 0.04);
+      --shadow-elevated: 0 12px 32px rgba(38, 35, 31, 0.10);
     }
 
     * { box-sizing: border-box; }
@@ -32,9 +47,11 @@
       margin: 0;
       padding: 0;
       min-height: 100%;
+      overflow-x: hidden;
       background: var(--bg);
       color: var(--ink);
-      line-height: 1.5;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
     }
 
     [hidden] { display: none !important; }
@@ -57,62 +74,100 @@
     input:focus-visible,
     select:focus-visible,
     a:focus-visible {
-      outline: 3px solid var(--focus);
+      outline: 2px solid var(--focus);
       outline-offset: 2px;
     }
 
-    /* Topbar */
+    /* Topbar kiến trúc giấy ấm */
     .topbar {
-      background: var(--primary);
-      color: #ffffff;
-      padding: 0.85rem 1.5rem;
+      background: var(--surface);
+      color: var(--ink);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.5rem;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 0.75rem;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      border-radius: var(--radius-sm);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .brand-mark svg {
+      width: 36px;
+      height: 36px;
+      display: block;
     }
 
     .brand-title {
       margin: 0;
-      font-size: 1.15rem;
+      font-size: 1.05rem;
       font-weight: 700;
+      letter-spacing: -0.015em;
+      line-height: 1.3;
+      color: var(--ink);
     }
 
     .brand-sub {
       margin: 0.1rem 0 0;
-      font-size: 0.82rem;
-      color: #cbd5e1;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.4;
     }
 
     .topbar-actions {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 0.65rem;
+      gap: 0.5rem;
     }
 
     .topbar-pill {
-      padding: 0.38rem 0.8rem;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.18);
-      font-size: 0.84rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: var(--radius-sm);
+      background: var(--primary-soft);
+      border: 1px solid rgba(20, 83, 45, 0.22);
+      color: var(--primary);
+      font-size: 0.8rem;
       font-weight: 600;
+      font-family: var(--font-mono);
     }
 
     .topbar-link,
     .topbar-btn {
-      min-height: 44px;
-      padding: 0.45rem 0.9rem;
-      border-radius: 9px;
-      border: 1px solid rgba(255, 255, 255, 0.35);
-      background: rgba(255, 255, 255, 0.12);
-      color: #ffffff;
-      font-size: 0.88rem;
+      min-height: 40px;
+      padding: 0.42rem 0.85rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--surface-alt);
+      color: var(--ink);
+      font-size: 0.85rem;
       font-weight: 600;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
+      transition: background-color 140ms ease, border-color 140ms ease;
+    }
+    .topbar-link:hover,
+    .topbar-btn:hover {
+      background: var(--surface-hover);
     }
 
     .container {
@@ -122,75 +177,98 @@
     }
 
     .status-banner {
-      padding: 0.8rem 1rem;
-      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius);
       margin-bottom: 1rem;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       font-weight: 600;
+      line-height: 1.5;
       border: 1px solid transparent;
     }
     .status-banner.is-success { background: var(--success-bg); color: var(--success); border-color: #86efac; }
     .status-banner.is-error { background: var(--danger-bg); color: var(--danger); border-color: #fca5a5; }
-    .status-banner.is-info { background: #e0f2fe; color: #0369a1; border-color: #7dd3fc; }
+    .status-banner.is-info { background: var(--primary-soft); color: var(--primary); border-color: #86efac; }
 
     /* Auth Card */
     .auth-shell {
       max-width: 500px;
-      margin: 1.75rem auto;
+      margin: 1.5rem auto;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 1.65rem;
-      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      box-shadow: var(--shadow-elevated);
+    }
+
+    .auth-heading {
+      margin: 0 0 0.9rem;
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      color: var(--ink);
     }
 
     .auth-tabs {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 0.45rem;
-      margin-bottom: 1.2rem;
+      gap: 4px;
+      padding: 4px;
+      background: var(--surface-alt);
+      border-radius: var(--radius);
+      margin-bottom: 1.25rem;
     }
 
     .auth-tab-btn {
-      min-height: 44px;
-      padding: 0.45rem 0.5rem;
-      border-radius: 9px;
-      border: 1px solid var(--border);
-      background: var(--surface-alt);
-      color: var(--ink);
-      font-size: 0.86rem;
+      min-height: 40px;
+      padding: 0.4rem 0.35rem;
+      border-radius: var(--radius-sm);
+      border: 0;
+      background: transparent;
+      color: var(--ink-secondary);
+      font-size: 0.83rem;
       font-weight: 600;
+      white-space: nowrap;
+      transition: background-color 140ms ease, color 140ms ease;
+    }
+    .auth-tab-btn:hover {
+      color: var(--ink);
     }
     .auth-tab-btn[aria-selected="true"] {
       background: var(--primary);
-      border-color: var(--primary);
       color: #ffffff;
+      box-shadow: 0 1px 3px rgba(24, 24, 27, 0.14);
     }
 
     .form-field {
       display: flex;
       flex-direction: column;
-      gap: 0.28rem;
+      gap: 0.3rem;
       margin-block-end: 0.95rem;
     }
     .form-field label {
-      font-size: 0.88rem;
+      font-size: 0.85rem;
       font-weight: 600;
+      color: var(--ink-secondary);
     }
     .form-field input,
     .form-field select {
       width: 100%;
-      min-height: 46px;
+      min-height: 44px;
       padding: 0.55rem 0.75rem;
-      font-size: max(1rem, 1em);
-      border: 1.5px solid #64748b;
-      border-radius: 8px;
+      font-size: 0.95rem;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
       background: #ffffff;
+      color: var(--ink);
+    }
+    .form-field input:focus,
+    .form-field select:focus {
+      border-color: var(--primary);
     }
     .form-field input:user-invalid,
     .form-field input[aria-invalid="true"] {
       border-color: var(--danger);
-      background: #fff5f5;
+      background: var(--danger-bg);
     }
 
     .password-row {
@@ -202,10 +280,10 @@
     .btn-primary,
     .btn-secondary,
     .btn-outline {
-      min-height: 44px;
-      padding: 0.5rem 1rem;
-      border-radius: 9px;
-      font-size: 0.9rem;
+      min-height: 42px;
+      padding: 0.5rem 0.95rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.88rem;
       font-weight: 600;
       border: 1px solid transparent;
       display: inline-flex;
@@ -213,43 +291,62 @@
       justify-content: center;
       gap: 0.35rem;
       text-decoration: none;
+      transition: background-color 140ms ease, border-color 140ms ease;
     }
-    .btn-primary { background: var(--primary); color: #ffffff; }
+    .btn-primary { background: var(--primary); color: #ffffff; border-color: var(--primary); }
     .btn-primary:hover { background: var(--primary-hover); }
-    .btn-secondary { background: #eef2ff; color: var(--primary); border-color: #c7d2fe; }
-    .btn-outline { background: #ffffff; color: var(--ink); border-color: #64748b; }
-    .btn-outline:hover { background: #f1f5f9; }
+    .btn-secondary { background: var(--primary-soft); color: var(--primary); border-color: rgba(156, 63, 35, 0.28); }
+    .btn-secondary:hover { background: #EAD5C9; }
+    .btn-outline { background: var(--surface); color: var(--ink); border-color: var(--border-strong); }
+    .btn-outline:hover { background: var(--surface-alt); }
     .btn-row { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+
+    .auth-shell .btn-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.6rem;
+      margin-top: 0.35rem;
+    }
+    .auth-shell form > button[type="submit"],
+    .auth-shell .btn-row > button {
+      width: 100%;
+      min-height: 46px;
+    }
 
     /* Portal Dashboard Layout */
     .portal-summary-row {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-      gap: 0.9rem;
-      margin-bottom: 1.1rem;
+      gap: 0.85rem;
+      margin-bottom: 1rem;
     }
 
     .stat-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 0.9rem 1.05rem;
+      padding: 0.95rem 1.1rem;
+      box-shadow: var(--shadow-card);
     }
     .stat-label {
-      font-size: 0.78rem;
+      font-size: 0.75rem;
       font-weight: 700;
       text-transform: uppercase;
+      letter-spacing: 0.04em;
       color: var(--muted);
     }
     .stat-value {
       font-size: 1.45rem;
-      font-weight: 800;
+      font-weight: 700;
+      font-family: var(--font-mono);
       color: var(--primary);
       margin-top: 0.2rem;
+      line-height: 1.25;
     }
     .stat-sub {
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       color: var(--muted);
+      margin-top: 0.15rem;
     }
 
     /* Filter Bar */
@@ -257,58 +354,62 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 0.95rem 1.1rem;
-      margin-bottom: 1.15rem;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1.1rem;
       display: flex;
       flex-wrap: wrap;
-      align-items: end;
+      align-items: flex-end;
       justify-content: space-between;
       gap: 0.85rem;
+      box-shadow: var(--shadow-card);
     }
 
     .filter-controls {
       display: flex;
       flex-wrap: wrap;
-      align-items: end;
+      align-items: flex-end;
       gap: 0.75rem;
-      flex: 1 1 560px;
+      flex: 1 1 540px;
     }
 
     .filter-group {
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
-      min-width: 155px;
-      flex: 1 1 160px;
+      min-width: 150px;
+      flex: 1 1 155px;
     }
     .filter-group label {
-      font-size: 0.82rem;
-      font-weight: 700;
-      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--ink-secondary);
     }
     .filter-group input,
     .filter-group select {
-      min-height: 44px;
+      min-height: 42px;
       padding: 0.45rem 0.7rem;
-      border: 1.5px solid #64748b;
-      border-radius: 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
       background: #ffffff;
+      color: var(--ink);
     }
 
     .view-switcher {
       display: inline-flex;
-      border: 1.5px solid var(--primary);
-      border-radius: 10px;
-      overflow: hidden;
+      gap: 4px;
+      padding: 4px;
+      background: var(--surface-alt);
+      border-radius: var(--radius);
     }
     .view-switch-btn {
-      min-height: 44px;
-      padding: 0.45rem 0.95rem;
+      min-height: 36px;
+      padding: 0.35rem 0.85rem;
       border: 0;
-      background: #ffffff;
-      color: var(--primary);
-      font-weight: 700;
-      font-size: 0.88rem;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--ink-secondary);
+      font-weight: 600;
+      font-size: 0.85rem;
     }
     .view-switch-btn[aria-pressed="true"] {
       background: var(--primary);
@@ -319,22 +420,13 @@
     .portal-workspace {
       display: grid;
       grid-template-columns: 330px minmax(0, 1fr);
-      gap: 1.15rem;
+      gap: 1.1rem;
       align-items: start;
     }
 
-    .portal-workspace.is-calendar-focus {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
+    .portal-workspace.is-calendar-focus,
     .portal-workspace.is-gallery-only {
       grid-template-columns: minmax(0, 1fr);
-    }
-
-    @media (max-width: 960px) {
-      .portal-workspace {
-        grid-template-columns: 1fr;
-      }
     }
 
     /* Calendar Card */
@@ -343,6 +435,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 1rem;
+      box-shadow: var(--shadow-card);
     }
 
     .calendar-header {
@@ -354,23 +447,26 @@
     }
     .calendar-title {
       margin: 0;
-      font-size: 1rem;
+      font-size: 0.98rem;
       font-weight: 700;
-      color: var(--primary);
+      color: var(--ink);
     }
     .calendar-nav-btns {
       display: flex;
       gap: 0.35rem;
     }
     .cal-nav-btn {
-      min-width: 38px;
-      min-height: 38px;
+      min-width: 36px;
+      min-height: 36px;
       padding: 0 0.55rem;
-      border-radius: 8px;
-      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
       background: var(--surface-alt);
-      font-weight: 700;
+      color: var(--ink);
+      font-size: 0.82rem;
+      font-weight: 600;
     }
+    .cal-nav-btn:hover { background: var(--surface-hover); }
 
     .calendar-weekdays,
     .calendar-days {
@@ -381,17 +477,17 @@
 
     .calendar-weekday {
       text-align: center;
-      font-size: 0.76rem;
+      font-size: 0.74rem;
       font-weight: 700;
       color: var(--muted);
       padding-bottom: 0.35rem;
     }
 
     .cal-day-btn {
-      min-height: 44px;
+      min-height: 42px;
       padding: 0.25rem;
-      border-radius: 9px;
-      border: 1px solid #e2e8f0;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
       background: #ffffff;
       color: var(--ink);
       display: flex;
@@ -399,16 +495,15 @@
       align-items: center;
       justify-content: center;
       gap: 2px;
-      font-size: 0.85rem;
+      font-size: 0.82rem;
+      font-family: var(--font-mono);
       font-weight: 600;
     }
-    .cal-day-btn.is-outside {
-      opacity: 0.4;
-    }
+    .cal-day-btn.is-outside { opacity: 0.38; }
     .cal-day-btn.has-lessons {
-      background: #eff6ff;
-      border-color: #93c5fd;
-      color: #1e3a8a;
+      background: var(--primary-soft);
+      border-color: rgba(20, 83, 45, 0.38);
+      color: var(--primary);
       font-weight: 700;
     }
     .cal-day-btn.is-selected {
@@ -417,10 +512,10 @@
       color: #ffffff;
     }
     .cal-dot-count {
-      font-size: 0.68rem;
+      font-size: 0.66rem;
       padding: 0 5px;
-      border-radius: 999px;
-      background: #2563eb;
+      border-radius: 4px;
+      background: var(--primary);
       color: #ffffff;
     }
     .cal-day-btn.is-selected .cal-dot-count {
@@ -434,6 +529,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 1rem 1.1rem;
+      box-shadow: var(--shadow-card);
     }
     .gallery-header {
       display: flex;
@@ -441,34 +537,40 @@
       align-items: center;
       justify-content: space-between;
       gap: 0.65rem;
-      margin-bottom: 0.9rem;
+      margin-bottom: 0.95rem;
     }
     .gallery-header h2 {
       margin: 0;
-      font-size: 1.05rem;
-      color: var(--primary);
+      font-size: 1.02rem;
+      font-weight: 700;
+      color: var(--ink);
     }
 
     .gallery-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 1rem;
+      grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));
+      gap: 0.95rem;
     }
 
     .lesson-card {
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: var(--radius);
       overflow: hidden;
       background: #ffffff;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+      transition: border-color 140ms ease, box-shadow 140ms ease;
+    }
+    .lesson-card:hover {
+      border-color: var(--border-strong);
+      box-shadow: var(--shadow-card);
     }
 
     .lesson-thumb-btn {
       padding: 0;
       border: 0;
-      background: #f1f5f9;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-alt);
       display: block;
       width: 100%;
       position: relative;
@@ -487,12 +589,12 @@
       position: absolute;
       right: 8px;
       bottom: 8px;
-      background: rgba(15, 23, 42, 0.76);
+      background: rgba(24, 24, 27, 0.82);
       color: #ffffff;
-      font-size: 0.74rem;
-      font-weight: 700;
+      font-size: 0.72rem;
+      font-weight: 600;
       padding: 3px 8px;
-      border-radius: 999px;
+      border-radius: 4px;
     }
 
     .lesson-card-body {
@@ -512,16 +614,17 @@
     }
 
     .subject-chip {
-      padding: 0.18rem 0.55rem;
-      border-radius: 999px;
-      background: #eef2ff;
+      padding: 0.16rem 0.5rem;
+      border-radius: 4px;
+      background: var(--primary-soft);
       color: var(--primary);
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       font-weight: 700;
     }
 
     .date-chip {
-      font-size: 0.78rem;
+      font-size: 0.76rem;
+      font-family: var(--font-mono);
       color: var(--muted);
       font-weight: 600;
     }
@@ -530,6 +633,7 @@
       margin: 0;
       font-size: 0.85rem;
       color: var(--ink);
+      line-height: 1.5;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
@@ -551,14 +655,14 @@
     }
     .card-action-btn {
       flex: 1 1 auto;
-      min-height: 38px;
+      min-height: 36px;
       padding: 0.35rem 0.55rem;
-      border-radius: 8px;
-      font-size: 0.79rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.78rem;
       font-weight: 600;
       text-align: center;
       text-decoration: none;
-      border: 1px solid var(--border);
+      border: 1px solid var(--border-strong);
       background: var(--surface-alt);
       color: var(--ink);
     }
@@ -580,27 +684,26 @@
       padding: 2rem 1rem;
       text-align: center;
       color: var(--muted);
-      border: 1.5px dashed var(--border);
-      border-radius: 12px;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
       background: var(--surface-alt);
     }
 
-    /* Native Lightbox Modal (following modern-web-guidance dialog) */
-    dialog:modal {
-      overscroll-behavior: contain;
-    }
+    /* Native Lightbox Modal */
+    dialog:modal { overscroll-behavior: contain; }
     dialog::backdrop {
       overflow: hidden;
       overscroll-behavior: contain;
-      background: rgba(15, 23, 42, 0.78);
+      background: rgba(18, 18, 20, 0.72);
+      backdrop-filter: blur(2px);
     }
     dialog.lightbox-dialog[open] {
       width: min(1040px, calc(100vw - 24px));
       max-height: calc(100dvh - 24px);
       padding: 1rem 1.15rem;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: #ffffff;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
       color: var(--ink);
       display: flex;
       flex-direction: column;
@@ -616,20 +719,20 @@
     .lightbox-top h2 {
       margin: 0;
       font-size: 1.05rem;
-      color: var(--primary);
+      color: var(--ink);
     }
     .lightbox-viewport {
       flex: 1 1 auto;
-      min-height: 280px;
+      min-height: 260px;
       max-height: 62vh;
       overflow: auto;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #f8fafc;
+      border-radius: var(--radius-sm);
+      background: var(--surface-alt);
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 0.5rem;
+      padding: 0.75rem;
     }
     .lightbox-img {
       max-width: 100%;
@@ -644,16 +747,100 @@
       justify-content: space-between;
       gap: 0.65rem;
     }
+
+    @media (max-width: 960px) {
+      .portal-workspace {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .calendar-card,
+      .gallery-section,
+      .filter-card,
+      .filter-controls,
+      .lesson-card {
+        min-width: 0;
+        max-width: 100%;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .topbar {
+        padding: 0.48rem 0.75rem;
+        gap: 0.4rem;
+      }
+      .brand-mark,
+      .brand-sub,
+      .topbar-pill {
+        display: none;
+      }
+      .brand-group {
+        flex: 1 1 140px;
+        min-width: 0;
+      }
+      .brand-group > div {
+        min-width: 0;
+      }
+      .brand-title {
+        font-size: 0.88rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .topbar-actions {
+        gap: 0.35rem;
+      }
+      .topbar-link, .topbar-btn {
+        min-height: 34px;
+        padding: 0.28rem 0.55rem;
+        font-size: 0.76rem;
+      }
+      .container { padding: 0.9rem 0.85rem 2.25rem; }
+      .auth-shell {
+        margin: 0.75rem auto;
+        padding: 1.15rem 1rem;
+      }
+      .auth-tab-btn {
+        font-size: 0.78rem;
+        padding: 0.4rem 0.25rem;
+      }
+      .filter-controls {
+        flex: 1 1 100%;
+        min-width: 0;
+      }
+      .filter-group {
+        flex: 1 1 100%;
+        min-width: 0;
+      }
+      .gallery-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .btn-row > button,
+      .btn-row > a {
+        flex: 1 1 auto;
+      }
+      .view-switcher { width: 100%; }
+      .view-switch-btn { flex: 1 1 50%; }
+    }
   </style>
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1 class="brand-title">Cổng Ôn Tập Tại Nhà · Học Sinh &amp; Phụ Huynh</h1>
-      <p class="brand-sub">Xem lại bài giảng Smartboard theo Lịch &amp; Bộ sưu tập, phóng to chi tiết và tải ảnh độ nét cao (PNG/WebP)</p>
+    <div class="brand-group">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 112 112" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="4" y="4" width="104" height="104" rx="24" fill="#FAF8F4" stroke="#BFB6A6" stroke-width="3.2"/>
+          <circle cx="28" cy="30" r="3.4" fill="#D8D1C5"/>
+          <circle cx="56" cy="30" r="3.4" fill="#D8D1C5"/>
+          <circle cx="28" cy="58" r="3.4" fill="#D8D1C5"/>
+          <path d="M24 82 C 36 82, 40 42, 51 42 C 60 42, 60 70, 71 70 C 79 70, 82 54, 87 42" stroke="#26231F" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M87 20 L90.4 29.6 L100 33 L90.4 36.4 L87 46 L83.6 36.4 L74 33 L83.6 29.6 Z" fill="#C96442"/>
+        </svg>
+      </span>
+      <div>
+        <h1 class="brand-title">Cổng Ôn Tập</h1>
+      </div>
     </div>
     <div class="topbar-actions">
-      <a class="topbar-link" href="/">← Bảng Vẽ Smartboard</a>
+      <a class="topbar-link" href="/">← Bảng Vẽ</a>
       <span id="portalUserBadge" class="topbar-pill" hidden></span>
       <button id="portalLogoutBtn" class="topbar-btn" type="button" hidden>Đăng xuất</button>
     </div>
@@ -664,7 +851,7 @@
 
     <!-- Khu vực Đăng nhập / Đăng ký / Quên mật khẩu qua OTP -->
     <section id="portalAuthSection" class="auth-shell" aria-labelledby="portalAuthTitle">
-      <h2 id="portalAuthTitle" style="margin:0 0 0.85rem;color:var(--primary);">Truy cập bài học lớp của bạn</h2>
+      <h2 id="portalAuthTitle" class="auth-heading">Đăng nhập học tập</h2>
 
       <div class="auth-tabs" role="tablist" aria-label="Tùy chọn tài khoản Học sinh và Phụ huynh">
         <button id="tabAuthLogin" class="auth-tab-btn" type="button" role="tab" aria-selected="true" aria-controls="panelAuthLogin">Đăng nhập</button>
@@ -676,19 +863,19 @@
       <div id="panelAuthLogin" role="tabpanel" aria-labelledby="tabAuthLogin">
         <form id="portalLoginForm" method="POST" action="/api/v1/auth/student/login" novalidate>
           <div class="form-field">
-            <label for="loginPhoneInput">Số điện thoại (Học sinh THCS/THPT hoặc Phụ huynh Tiểu học)</label>
+            <label for="loginPhoneInput">Số điện thoại</label>
             <input id="loginPhoneInput" name="phone_number" type="tel" required autocomplete="tel" placeholder="0901234567">
           </div>
           <div class="form-field">
             <label for="loginPasswordInput">Mật khẩu</label>
             <div class="password-row">
               <input id="loginPasswordInput" name="password" type="password" required minlength="6" autocomplete="current-password">
-              <button id="toggleLoginPwBtn" class="btn-secondary" type="button" aria-pressed="false">Hiện</button>
+              <button id="toggleLoginPwBtn" class="btn-outline" type="button" aria-pressed="false">Hiện</button>
             </div>
           </div>
           <div class="btn-row">
             <button class="btn-primary" type="submit">Đăng nhập vào Cổng ôn tập</button>
-            <button id="fillPortalDemoBtn" class="btn-secondary" type="button">Tạo &amp; thử tài khoản mẫu lớp 10A1</button>
+            <button id="fillPortalDemoBtn" class="btn-secondary" type="button">Thử tài khoản mẫu lớp 10A1</button>
           </div>
         </form>
       </div>
@@ -699,9 +886,9 @@
           <div class="form-field">
             <label for="regLevelSelect">Cấp học</label>
             <select id="regLevelSelect" name="school_level" required>
-              <option value="THPT" selected>THPT (Dùng SĐT Học sinh)</option>
-              <option value="THCS">THCS (Dùng SĐT Học sinh)</option>
-              <option value="TIEU_HOC">Tiểu học (Bắt buộc SĐT Phụ huynh)</option>
+              <option value="THPT" selected>THPT</option>
+              <option value="THCS">THCS</option>
+              <option value="TIEU_HOC">Tiểu học (SĐT Phụ huynh)</option>
             </select>
           </div>
           <div class="form-field">
@@ -716,7 +903,7 @@
             <input id="regFullNameInput" name="full_name" type="text" required minlength="2" autocomplete="name" placeholder="Nguyễn Văn An">
           </div>
           <div class="form-field">
-            <label for="regStudentCodeInput">Mã học sinh (Mỗi HS chỉ gắn 1 tài khoản)</label>
+            <label for="regStudentCodeInput">Mã học sinh</label>
             <input id="regStudentCodeInput" name="student_code" type="text" required minlength="3" placeholder="HS-10A1-01">
           </div>
           <div class="form-field">
@@ -851,7 +1038,7 @@
 
           <div id="galleryPagination" class="pagination-row" hidden>
             <button id="galleryPrevPageBtn" class="btn-outline" type="button">← Trang trước</button>
-            <span id="galleryPageInfo" style="font-weight:700;font-size:0.9rem;">Trang 1</span>
+            <span id="galleryPageInfo" style="font-weight:700;font-size:0.9rem;font-family:var(--font-mono);">Trang 1</span>
             <button id="galleryNextPageBtn" class="btn-outline" type="button">Trang sau →</button>
           </div>
         </section>
@@ -868,27 +1055,34 @@
       </form>
     </div>
 
-    <p id="lightboxMetaInfo" style="margin:0;font-size:0.86rem;color:var(--muted);"></p>
+    <p id="lightboxMetaInfo" style="margin:0;font-size:0.85rem;color:var(--muted);"></p>
 
     <div class="lightbox-viewport">
-      <img id="lightboxImage" class="lightbox-img" alt="Ảnh bảng bài học độ nét cao" fetchpriority="low">
+      <img id="lightboxImage" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" class="lightbox-img" alt="Ảnh bảng bài học độ nét cao" fetchpriority="low">
     </div>
 
     <div class="lightbox-controls">
       <div class="btn-row">
         <button id="zoomOutBtn" class="btn-outline" type="button" aria-label="Thu nhỏ ảnh">- Thu nhỏ</button>
-        <span id="zoomPercentText" style="font-weight:700;min-width:52px;text-align:center;">100%</span>
+        <span id="zoomPercentText" style="font-weight:700;min-width:52px;text-align:center;font-family:var(--font-mono);">100%</span>
         <button id="zoomInBtn" class="btn-outline" type="button" aria-label="Phóng to ảnh">+ Phóng to</button>
         <button id="zoomResetBtn" class="btn-outline" type="button">Khớp khung</button>
       </div>
 
       <div class="btn-row">
-        <a id="downloadWebpLink" class="btn-secondary" href="#" download>⬇ Tải ảnh WebP</a>
-        <a id="downloadPngLink" class="btn-primary" href="#" download>⬇ Tải ảnh PNG nét cao</a>
+        <a id="downloadWebpLink" class="btn-secondary" href="#" download>Tải ảnh WebP</a>
+        <a id="downloadPngLink" class="btn-primary" href="#" download>Tải ảnh PNG nét cao</a>
       </div>
     </div>
   </dialog>
 
-  <script type="module" src="./student_portal.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "/src/utils/auth_client.js": "/src/utils/auth_client.js?v=20261124r3"
+    }
+  }
+  </script>
+  <script type="module" src="./student_portal.js?v=20261124r3"></script>
 </body>
 </html>

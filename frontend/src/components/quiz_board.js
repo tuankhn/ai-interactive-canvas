@@ -1,4 +1,4 @@
-import { $, fabricCanvas, state, setStatus } from '../utils/context.js';
+import { $, fabricCanvas, state, setStatus, isDarkBoardActive } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { authFetch } from '../utils/auth_client.js';
 import { Circle, FabricText, Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
@@ -254,8 +254,9 @@ export function setupQuizBoard() {
     clearManagedQuizObjects();
 
     const startX = 48;
-    const startY = 36;
-    const cardWidth = Math.min(820, Math.max(460, fabricCanvas.getWidth() - 96));
+    const startY = 136;
+    const cardWidth = Math.min(820, Math.max(300, fabricCanvas.getWidth() - 96));
+    const isDarkBoard = isDarkBoardActive();
 
     const header = new Textbox(
       `[Trắc nghiệm ${index + 1}/${total}] ${question.content || ''}`,
@@ -264,11 +265,12 @@ export function setupQuizBoard() {
         top: startY,
         width: cardWidth,
         fontSize: 19,
+        fontFamily: 'Be Vietnam Pro, sans-serif',
         fontWeight: 'bold',
-        fill: fabricCanvas.backgroundColor === '#111827' ? '#f8fafc' : '#172554',
+        fill: isDarkBoard ? '#f4f4f5' : '#18181b',
         selectable: false,
         evented: false,
-        lineHeight: 1.3,
+        lineHeight: 1.4,
       }
     );
     header.meta = { quizCardManaged: true, question_id: question.id, type: 'quiz_header' };
@@ -278,9 +280,9 @@ export function setupQuizBoard() {
     let optionTop = startY + Math.max(48, (headerRect?.height || 40) + 18);
 
     const options = Array.isArray(question.options) ? question.options : [];
-    const inkColor = fabricCanvas.backgroundColor === '#111827' ? '#e2e8f0' : '#1e293b';
-    const cardBg = fabricCanvas.backgroundColor === '#111827' ? 'rgba(30, 41, 59, 0.85)' : '#f8fafc';
-    const cardStroke = fabricCanvas.backgroundColor === '#111827' ? '#475569' : '#cbd5e1';
+    const inkColor = isDarkBoard ? '#f4f4f5' : '#18181b';
+    const cardBg = isDarkBoard ? 'rgba(34, 34, 41, 0.9)' : '#f4f7f5';
+    const cardStroke = isDarkBoard ? '#52525b' : '#b5c5bc';
 
     for (const opt of options) {
       const label = String(opt.label || 'A').toUpperCase();
@@ -291,8 +293,8 @@ export function setupQuizBoard() {
         top: optionTop,
         width: cardWidth,
         height: rowHeight,
-        rx: 10,
-        ry: 10,
+        rx: 8,
+        ry: 8,
         fill: cardBg,
         stroke: cardStroke,
         strokeWidth: 1.5,
@@ -314,7 +316,7 @@ export function setupQuizBoard() {
         top: optionTop + 8,
         radius: 15,
         fill: '#ffffff',
-        stroke: '#222f71',
+        stroke: '#14532d',
         strokeWidth: 2,
         selectable: false,
         evented: false,
@@ -331,8 +333,9 @@ export function setupQuizBoard() {
         left: startX + 21,
         top: optionTop + 14,
         fontSize: 16,
+        fontFamily: 'Be Vietnam Pro, sans-serif',
         fontWeight: 'bold',
-        fill: '#222f71',
+        fill: '#14532d',
         selectable: false,
         evented: false,
       });
@@ -344,6 +347,7 @@ export function setupQuizBoard() {
         top: optionTop + 13,
         width: cardWidth - 70,
         fontSize: 16,
+        fontFamily: 'Be Vietnam Pro, sans-serif',
         fill: inkColor,
         selectable: false,
         evented: false,

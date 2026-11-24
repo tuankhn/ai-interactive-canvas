@@ -1,6 +1,6 @@
 import { $, state, ui, stage, fabricCanvas, blankPage, setStatus } from '../utils/context.js';
 import { readStoredPages, writeStoredPages } from '../utils/storage.js';
-import { updateHint, syncBackgroundButtons, updateHistoryButtons } from './history.js';
+import { updateHint, syncBackgroundButtons, updateHistoryButtons, getActiveStudioBoardBg, adaptObjectsForBoardTheme } from './history.js';
 import { closePanels } from './toolbar.js';
 
 function serializeCurrentPage() {
@@ -8,7 +8,8 @@ function serializeCurrentPage() {
     objects: fabricCanvas.getObjects().map((object) =>
       object.toObject(['_hitPoints', '_hitWidth', '_isPlotlyGraph', 'meta'])
     ),
-    background: fabricCanvas.backgroundColor || '#ffffff'
+    background: getActiveStudioBoardBg(),
+    viewport: (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice()
   };
 }
 
@@ -27,7 +28,12 @@ export function persistPages() {
 }
 
 function syncLoadedCanvas() {
-  stage.style.backgroundColor = fabricCanvas.backgroundColor || '#ffffff';
+  const activeBg = getActiveStudioBoardBg();
+  const isDark = activeBg === '#111827';
+  fabricCanvas.backgroundColor = '';
+  stage.style.removeProperty('background-color');
+  stage.classList.toggle('is-dark-board', isDark);
+  adaptObjectsForBoardTheme(fabricCanvas.getObjects(), isDark);
   syncBackgroundButtons();
   updateHint();
   fabricCanvas.requestRenderAll();
@@ -37,7 +43,7 @@ async function loadPageData(data) {
   const safePage = data && Array.isArray(data.objects) ? data : blankPage();
   await fabricCanvas.loadFromJSON({
     objects: safePage.objects,
-    background: safePage.backgroundColor ?? safePage.background ?? '#ffffff'
+    background: ''
   }, (original, object) => {
     if (!object) return;
     const isInteractiveAnswer = original?.meta?.type === 'answer_option';
@@ -51,6 +57,11 @@ async function loadPageData(data) {
     if (original._isPlotlyGraph === true) object._isPlotlyGraph = true;
     if (original.meta && typeof original.meta === 'object') object.meta = original.meta;
   });
+  const nextVpt =
+    Array.isArray(safePage.viewport) && safePage.viewport.length === 6
+      ? safePage.viewport.slice()
+      : [1, 0, 0, 1, 0, 0];
+  fabricCanvas.setViewportTransform(nextVpt);
   syncLoadedCanvas();
 }
 

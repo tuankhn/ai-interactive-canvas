@@ -1,18 +1,138 @@
 import { $, fabricCanvas, stage, ui, state, setStatus } from '../utils/context.js';
 import { persistPages } from './pageManager.js';
 
+const DARK_NEUTRAL_INKS = new Set([
+  '#26231f',
+  '#18181b',
+  '#172554',
+  '#000000',
+  '#0f172a',
+  '#1e293b',
+  '#111827',
+  '#191816',
+  '#222f71',
+]);
+
+const LIGHT_NEUTRAL_INKS = new Set([
+  '#ece7df',
+  '#faf8f4',
+  '#ffffff',
+  '#f4f4f5',
+  '#f8fafc',
+  '#e2e8f0',
+]);
+
+export function getActiveStudioBoardBg() {
+  if (typeof document !== 'undefined' && document.documentElement?.dataset?.theme === 'dark') {
+    return '#111827';
+  }
+  return '#ffffff';
+}
+
+function adaptSingleObjectTheme(obj, isDarkBoard) {
+  if (!obj) return;
+  if (typeof obj.getObjects === 'function') {
+    obj.getObjects().forEach((child) => adaptSingleObjectTheme(child, isDarkBoard));
+  }
+
+  const meta = obj.meta || null;
+  if (meta?.quizCardManaged) {
+    if (meta.type === 'quiz_header' || (meta.type === 'quiz_option_target' && typeof obj.text === 'string')) {
+      obj.set?.('fill', isDarkBoard ? '#f4f4f5' : '#18181b');
+    } else if (meta.type === 'quiz_option_target' && obj.rx != null) {
+      obj.set?.({
+        fill: isDarkBoard ? 'rgba(34, 34, 41, 0.9)' : '#f4f7f5',
+        stroke: isDarkBoard ? '#52525b' : '#b5c5bc',
+      });
+    }
+    return;
+  }
+
+  const fill = typeof obj.fill === 'string' ? obj.fill.trim().toLowerCase() : '';
+  const stroke = typeof obj.stroke === 'string' ? obj.stroke.trim().toLowerCase() : '';
+
+  if (isDarkBoard) {
+    if (DARK_NEUTRAL_INKS.has(fill)) {
+      obj.set ? obj.set('fill', '#ECE7DF') : (obj.fill = '#ECE7DF');
+    }
+    if (DARK_NEUTRAL_INKS.has(stroke)) {
+      obj.set ? obj.set('stroke', '#ECE7DF') : (obj.stroke = '#ECE7DF');
+    }
+  } else {
+    if (LIGHT_NEUTRAL_INKS.has(fill)) {
+      obj.set ? obj.set('fill', '#26231F') : (obj.fill = '#26231F');
+    }
+    if (LIGHT_NEUTRAL_INKS.has(stroke)) {
+      obj.set ? obj.set('stroke', '#26231F') : (obj.stroke = '#26231F');
+    }
+  }
+}
+
+export function adaptObjectsForBoardTheme(objects, isDarkBoard) {
+  if (!Array.isArray(objects)) return;
+  objects.forEach((obj) => adaptSingleObjectTheme(obj, isDarkBoard));
+}
+
+function adaptSerializedPageTheme(page, targetBg) {
+  if (!page || typeof page !== 'object') return;
+  const isDark = targetBg === '#111827';
+  page.background = targetBg;
+  if ('backgroundColor' in page) page.backgroundColor = targetBg;
+  if (Array.isArray(page.objects)) {
+    page.objects.forEach((rawObj) => adaptSingleObjectTheme(rawObj, isDark));
+  }
+}
+
+/**
+ * Đồng bộ chế độ mặt bảng Sáng / Tối xuyên suốt Canvas hiện tại, toàn bộ ngăn xếp Undo/Redo
+ * và các trang đã lưu mà KHÔNG tạo bước Undo giả làm đảo ngược giao diện khi bấm Hoàn tác.
+ */
+export function syncBoardAndHistoryTheme(targetBackground, { persist = true } = {}) {
+  const isDark = targetBackground === '#111827';
+  // Giữ canvas trong suốt để lộ nền giấy chấm dot (Excalidraw Dot Grid) của #canvasStage bên dưới
+  fabricCanvas.backgroundColor = '';
+  stage.style.removeProperty('background-color');
+  stage.classList.toggle('is-dark-board', isDark);
+
+  adaptObjectsForBoardTheme(fabricCanvas.getObjects(), isDark);
+
+  state.undoStack.forEach((entry) => {
+    if (!entry) return;
+    entry.background = targetBackground;
+    adaptObjectsForBoardTheme(entry.objects, isDark);
+  });
+
+  state.redoStack.forEach((entry) => {
+    if (!entry) return;
+    entry.background = targetBackground;
+    adaptObjectsForBoardTheme(entry.objects, isDark);
+  });
+
+  if (Array.isArray(state.pages)) {
+    state.pages.forEach((p) => adaptSerializedPageTheme(p, targetBackground));
+  }
+
+  syncBackgroundButtons();
+  updateHint();
+  fabricCanvas.requestRenderAll();
+  if (persist) {
+    persistPages();
+  }
+}
+
 export function snapshot() {
   return {
     objects: fabricCanvas.getObjects().slice(),
-    background: fabricCanvas.backgroundColor || '#ffffff'
+    background: getActiveStudioBoardBg(),
   };
 }
 
 function stateChanged(before) {
   const currentObjects = fabricCanvas.getObjects();
-  return before.background !== fabricCanvas.backgroundColor ||
+  return (
     before.objects.length !== currentObjects.length ||
-    before.objects.some((object, index) => object !== currentObjects[index]);
+    before.objects.some((object, index) => object !== currentObjects[index])
+  );
 }
 
 export function updateHistoryButtons() {
@@ -33,11 +153,14 @@ export function remember(before) {
 export function updateHint() {
   const noObjects = fabricCanvas.getObjects().length === 0;
   ui.hint.classList.toggle('is-hidden', !noObjects);
-  ui.hint.classList.toggle('on-dark', fabricCanvas.backgroundColor === '#111827');
+  ui.hint.classList.toggle('on-dark', getActiveStudioBoardBg() === '#111827');
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app:sync-viewport'));
+  }
 }
 
 export function syncBackgroundButtons() {
-  const bg = fabricCanvas.backgroundColor || '#ffffff';
+  const bg = getActiveStudioBoardBg();
   document.querySelectorAll('[data-background]').forEach((button) => {
     const selected = button.dataset.background === bg;
     button.classList.toggle('is-selected', selected);
@@ -45,12 +168,18 @@ export function syncBackgroundButtons() {
   });
 }
 
-export function restore(state) {
+export function restore(snapState) {
+  const activeBg = getActiveStudioBoardBg();
+  const isDark = activeBg === '#111827';
   const existing = fabricCanvas.getObjects().slice();
   if (existing.length) fabricCanvas.remove(...existing);
-  if (state.objects.length) fabricCanvas.add(...state.objects);
-  fabricCanvas.backgroundColor = state.background;
-  stage.style.backgroundColor = state.background;
+  if (snapState.objects.length) {
+    adaptObjectsForBoardTheme(snapState.objects, isDark);
+    fabricCanvas.add(...snapState.objects);
+  }
+  fabricCanvas.backgroundColor = '';
+  stage.style.removeProperty('background-color');
+  stage.classList.toggle('is-dark-board', isDark);
   syncBackgroundButtons();
   updateHint();
   fabricCanvas.requestRenderAll();
@@ -84,7 +213,8 @@ export function setupHistoryShortcuts() {
     if (!(event.ctrlKey || event.metaKey)) return;
     if (event.key.toLowerCase() === 'z') {
       event.preventDefault();
-      if (event.shiftKey) redo(); else undo();
+      if (event.shiftKey) redo();
+      else undo();
     } else if (event.key.toLowerCase() === 'y') {
       event.preventDefault();
       redo();

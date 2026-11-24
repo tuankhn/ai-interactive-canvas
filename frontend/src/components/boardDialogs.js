@@ -1,8 +1,9 @@
-import { $, fabricCanvas, state, ui, setStatus } from '../utils/context.js';
+import { $, fabricCanvas, state, setStatus, withOpaqueBoardExport } from '../utils/context.js';
 import { snapshot, updateHint, remember } from './history.js';
 import { closePanels } from './toolbar.js';
 import { deleteCurrentPage } from './pageManager.js';
 import { captureAndSaveSnapshot } from '../utils/offline_sync.js';
+import { showAppToast } from '../utils/ui_feedback.js';
 
 const deletePageDialog = $('deletePageDialog');
 const deletePageDialogTitle = $('deletePageDialogTitle');
@@ -13,39 +14,60 @@ const deletePageWithoutSavingButton = $('deletePageWithoutSavingButton');
 const saveAndDeletePageButton = $('saveAndDeletePageButton');
 let deleteDialogBusy = false;
 
-
 const clearDialog = $('clearBoardDialog');
 const clearDialogError = $('clearDialogError');
 const cancelClearButton = $('cancelClearButton');
 const clearWithoutSavingButton = $('clearWithoutSavingButton');
 const saveAndClearButton = $('saveAndClearButton');
+let clearDialogBusy = false;
 
+function triggerPngDownload(dataUrl, filename) {
+  try {
+    const link = document.createElement('a');
+    link.download = filename;
+    link.href = dataUrl;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } catch (err) {
+    console.warn('Trình duyệt chặn tải tệp tự động:', err);
+  }
+}
 
 export async function downloadCurrentPageSnapshot(triggerType = 'MANUAL') {
-  const filename = `snapshot-trang-${state.pageIndex + 1}-${new Date().toISOString().slice(0, 10)}.png`;
-  const dataUrl = fabricCanvas.toDataURL({ format: 'png', multiplier: 2 });
-  const link = document.createElement('a');
-  link.download = filename;
-  link.href = dataUrl;
-  document.body.append(link);
-  link.click();
-  link.remove();
+  const pageNum = state.pageIndex + 1;
+  const filename = `snapshot-trang-${pageNum}-${new Date().toISOString().slice(0, 10)}.png`;
 
+  // 1. Đẩy ảnh bảng độ nét cao lên Cổng Học Sinh (/api/v1/sessions/snapshots) trước tiên
+  let syncResult = null;
+  let dataUrl = '';
   try {
-    const syncResult = await captureAndSaveSnapshot({
+    syncResult = await captureAndSaveSnapshot({
       triggerType,
-      pageNumber: state.pageIndex + 1,
+      pageNumber: pageNum,
     });
-    if (syncResult.mode === 'offline_indexeddb') {
+    dataUrl = syncResult?.imageBase64 || '';
+    if (syncResult?.mode === 'offline_indexeddb') {
       setStatus(`Đã lưu tạm snapshot vào IndexedDB (${syncResult.pendingCount} ảnh chờ đồng bộ)`);
     }
   } catch (syncError) {
     console.warn('Không thể đồng bộ snapshot lên máy chủ:', syncError);
   }
-  return filename;
+
+  // 2. Xuất bản sao PNG về máy tính giáo viên
+  if (!dataUrl) {
+    dataUrl = withOpaqueBoardExport(
+      () => fabricCanvas.toDataURL({ format: 'png', multiplier: 2 }),
+      '#f4f7f5',
+      '#121214'
+    );
+  }
+  triggerPngDownload(dataUrl, filename);
+
+  return { filename, syncResult };
 }
 
-export function clearCurrentPage() {
+export function clearCurrentPage({ skipAutoSnapshot = false } = {}) {
   if (state.ended || state.pageBusy || state.stroke) return;
   const objects = fabricCanvas.getObjects().slice();
   if (!objects.length) {
@@ -53,22 +75,24 @@ export function clearCurrentPage() {
     return;
   }
 
-  // Task TF28512: Tự động lưu ảnh Snapshot bảo vệ dữ liệu trước khi xóa bảng
-  try {
-    captureAndSaveSnapshot({
-      triggerType: 'BEFORE_CLEAR',
-      pageNumber: state.pageIndex + 1,
-    }).catch((err) => console.warn('Lưu snapshot nền trước khi xóa:', err));
-  } catch (err) {
-    console.warn('Lỗi kích hoạt lưu snapshot trước khi xóa:', err);
+  if (!skipAutoSnapshot) {
+    // Task TF28512: Tự động lưu ảnh Snapshot bảo vệ dữ liệu trước khi xóa bảng
+    try {
+      captureAndSaveSnapshot({
+        triggerType: 'BEFORE_CLEAR',
+        pageNumber: state.pageIndex + 1,
+      }).catch((err) => console.warn('Lưu snapshot nền trước khi xóa:', err));
+    } catch (err) {
+      console.warn('Lỗi kích hoạt lưu snapshot trước khi xóa:', err);
+    }
   }
 
   const before = snapshot();
   fabricCanvas.remove(...objects);
   fabricCanvas.requestRenderAll();
   updateHint();
-  remember(before); // Ghi vào lịch sử hoàn tác và chỉ cập nhật trang hiện tại trong localStorage.
-  setStatus(`Đã lưu ảnh snapshot và xóa nét vẽ ở trang ${state.pageIndex + 1}; các trang khác được giữ nguyên`);
+  remember(before);
+  setStatus(`Đã xóa nét vẽ ở trang ${state.pageIndex + 1}; bấm Hoàn tác (Ctrl + Z) nếu cần khôi phục`);
 }
 
 function setDeleteDialogBusy(busy) {
@@ -76,19 +100,24 @@ function setDeleteDialogBusy(busy) {
   cancelDeletePageButton.disabled = busy;
   deletePageWithoutSavingButton.disabled = busy;
   saveAndDeletePageButton.disabled = busy;
-  saveAndDeletePageButton.textContent = busy ? 'Đang tạo ảnh...' : 'Lưu ảnh rồi xóa';
+  saveAndDeletePageButton.textContent = busy ? 'Đang lưu lên Cổng HS...' : 'Lưu ảnh rồi xóa';
 }
 
 function setClearDialogBusy(busy) {
+  clearDialogBusy = busy;
   cancelClearButton.disabled = busy;
   clearWithoutSavingButton.disabled = busy;
   saveAndClearButton.disabled = busy;
-  saveAndClearButton.textContent = busy ? 'Đang tạo snapshot...' : 'Lưu snapshot rồi xóa';
+  saveAndClearButton.textContent = busy ? 'Đang lưu lên Cổng HS...' : 'Lưu snapshot rồi xóa';
 }
 
 export function setupBoardDialogs() {
   deletePageDialog.addEventListener('cancel', (event) => {
     if (deleteDialogBusy) event.preventDefault();
+  });
+
+  clearDialog.addEventListener('cancel', (event) => {
+    if (clearDialogBusy) event.preventDefault();
   });
 
   $('deletePageButton').addEventListener('click', () => {
@@ -104,35 +133,40 @@ export function setupBoardDialogs() {
   });
 
   cancelDeletePageButton.addEventListener('click', () => deletePageDialog.close());
+
   deletePageWithoutSavingButton.addEventListener('click', async () => {
     if (deleteDialogBusy || state.pageBusy || state.ended) return;
-    try {
-      await captureAndSaveSnapshot({
-        triggerType: 'BEFORE_DELETE_PAGE',
-        pageNumber: state.pageIndex + 1,
-      });
-    } catch (e) {
-      console.warn('Lưu snapshot nền trước khi xóa trang:', e);
-    }
-    deletePageDialog.close(); // Chính popup đã là bước xác nhận.
+    const removedNum = state.pageIndex + 1;
+    deletePageDialog.close();
     await deleteCurrentPage();
+    showAppToast({
+      title: `Đã xóa Trang ${removedNum}`,
+      message: `Còn lại ${state.pages.length} trang trên bảng vẽ.`,
+      variant: 'info',
+    });
   });
 
   saveAndDeletePageButton.addEventListener('click', async () => {
     if (deleteDialogBusy || state.pageBusy || state.ended) return;
     deletePageDialogError.hidden = true;
     setDeleteDialogBusy(true);
+    const removedNum = state.pageIndex + 1;
     try {
-      const filename = await downloadCurrentPageSnapshot('BEFORE_DELETE_PAGE');
+      const { filename, syncResult } = await downloadCurrentPageSnapshot('BEFORE_DELETE_PAGE');
       deletePageDialog.close();
-      // Browser chỉ xác nhận đã yêu cầu tải về, không xác nhận tệp đã nằm trên ổ đĩa.
-      if (window.confirm(`Đã yêu cầu tải ${filename}.\n\n` +
-        `Sau khi kiểm tra ảnh tải về, chọn OK để xóa hẳn trang ${state.pageIndex + 1}; ` +
-        'chọn Hủy để giữ nguyên trang.')) {
-        await deleteCurrentPage();
-      } else {
-        setStatus('Đã giữ nguyên trang; hãy kiểm tra ảnh đã tải');
-      }
+      await deleteCurrentPage();
+      const cls = syncResult?.className || '10A1';
+      showAppToast({
+        title:
+          syncResult?.mode === 'online'
+            ? `Đã lưu lên Cổng Học Sinh (Lớp ${cls}) & xóa Trang ${removedNum}`
+            : `Đã xuất ${filename} & xóa Trang ${removedNum}`,
+        message:
+          syncResult?.mode === 'online'
+            ? 'Học sinh có thể xem lại ngay trên Cổng Ôn Tập.'
+            : 'Ảnh đã tải về máy và xếp hàng đồng bộ.',
+        variant: 'info',
+      });
     } catch (error) {
       console.error('Không thể tạo snapshot trước khi xóa trang:', error);
       deletePageDialogError.textContent = error.message || 'Không thể tạo ảnh. Trang chưa bị xóa.';
@@ -142,11 +176,15 @@ export function setupBoardDialogs() {
     }
   });
 
-
   $('clearButton').addEventListener('click', () => {
     if (state.ended || state.pageBusy || state.stroke) return;
     if (fabricCanvas.getObjects().length === 0) {
       setStatus(`Trang ${state.pageIndex + 1} đang trống`);
+      showAppToast({
+        title: `Trang ${state.pageIndex + 1} đang trống`,
+        message: 'Chưa có nét vẽ nào trên trang hiện tại để xóa.',
+        variant: 'info',
+      });
       return;
     }
     closePanels();
@@ -156,25 +194,40 @@ export function setupBoardDialogs() {
   });
 
   cancelClearButton.addEventListener('click', () => clearDialog.close());
+
   clearWithoutSavingButton.addEventListener('click', () => {
-    if (!window.confirm(`Xóa nét vẽ ở trang ${state.pageIndex + 1} mà không lưu snapshot? Các trang khác sẽ được giữ nguyên.`)) return;
+    if (clearDialogBusy || state.pageBusy || state.ended) return;
+    const pageNum = state.pageIndex + 1;
     clearDialog.close();
-    clearCurrentPage();
+    clearCurrentPage({ skipAutoSnapshot: true });
+    showAppToast({
+      title: `Đã làm sạch Trang ${pageNum}`,
+      message: 'Bấm Hoàn tác (Ctrl + Z) nếu bạn muốn khôi phục lại nét vẽ.',
+      variant: 'info',
+    });
   });
 
   saveAndClearButton.addEventListener('click', async () => {
-    if (state.pageBusy || state.ended) return;
+    if (clearDialogBusy || state.pageBusy || state.ended) return;
     clearDialogError.hidden = true;
     setClearDialogBusy(true);
+    const pageNum = state.pageIndex + 1;
     try {
-      const filename = await downloadCurrentPageSnapshot('BEFORE_CLEAR');
+      const { filename, syncResult } = await downloadCurrentPageSnapshot('BEFORE_CLEAR');
       clearDialog.close();
-      // Tải xuống được yêu cầu chưa có nghĩa tệp đã lưu thành công trên thiết bị.
-      if (window.confirm(`Đã yêu cầu tải tệp ${filename}.\n\nChọn OK để xóa nét vẽ CHỈ TRÊN TRANG ${state.pageIndex + 1} sau khi kiểm tra ảnh tải về. Chọn Hủy để giữ nguyên trang hiện tại.`)) {
-        clearCurrentPage();
-      } else {
-        setStatus('Đã giữ nguyên trang hiện tại; bạn có thể kiểm tra snapshot');
-      }
+      clearCurrentPage({ skipAutoSnapshot: true });
+      const cls = syncResult?.className || '10A1';
+      showAppToast({
+        title:
+          syncResult?.mode === 'online'
+            ? `Đã lưu bảng lên Cổng Học Sinh (Lớp ${cls})`
+            : `Đã xuất ảnh ${filename} & làm sạch bảng`,
+        message:
+          syncResult?.mode === 'online'
+            ? `Ảnh bài giảng Trang ${pageNum} đã hiển thị trên Cổng Ôn Tập của học sinh và tải bản sao PNG về máy.`
+            : `Ảnh Trang ${pageNum} đã tải về máy và lưu tạm chờ đồng bộ.`,
+        variant: 'info',
+      });
     } catch (error) {
       console.error('Lỗi xuất snapshot:', error);
       clearDialogError.textContent = error.message || 'Không thể lưu snapshot. Bảng chưa bị xóa.';
@@ -187,9 +240,20 @@ export function setupBoardDialogs() {
   $('captureButton').addEventListener('click', async () => {
     if (state.pageBusy || state.stroke) return;
     closePanels();
-    await downloadCurrentPageSnapshot('MANUAL');
-    setStatus('Đã xuất hình PNG và lưu snapshot');
+    const pageNum = state.pageIndex + 1;
+    const { filename, syncResult } = await downloadCurrentPageSnapshot('MANUAL');
+    const cls = syncResult?.className || '10A1';
+    setStatus('Đã xuất hình PNG và đồng bộ bài giảng lên Cổng Học Sinh');
+    showAppToast({
+      title:
+        syncResult?.mode === 'online'
+          ? `Đã lưu bài giảng lên Cổng Học Sinh (Lớp ${cls})`
+          : `Đã tải ảnh ${filename}`,
+      message:
+        syncResult?.mode === 'online'
+          ? `Ảnh Trang ${pageNum} đã đồng bộ sang Cổng Ôn Tập và tải tệp PNG về máy.`
+          : `Ảnh Trang ${pageNum} đã lưu về máy và chờ đồng bộ mạng.`,
+      variant: 'info',
+    });
   });
-
-
 }

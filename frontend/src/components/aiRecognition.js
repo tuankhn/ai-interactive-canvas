@@ -1,9 +1,10 @@
 import { Text, FabricImage, Path } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
-import { $, fabricCanvas, state, ui, setStatus } from '../utils/context.js';
+import { $, fabricCanvas, state, ui, setStatus, isDarkBoardActive, withOpaqueBoardExport } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
+import { showAppToast } from '../utils/ui_feedback.js';
 import {
   isOfflineMode,
   markNetworkOffline,
@@ -221,7 +222,11 @@ export async function performAIRecognition({
   const objects = fabricCanvas.getObjects();
   if (!cachedImageBase64 && (!objects || objects.length === 0)) {
     if (!isDebounced) {
-      alert('Chưa có nét vẽ nào trên bảng để nhận diện.');
+      showAppToast({
+        title: 'Mặt bảng đang trống',
+        message: 'Hãy viết công thức hoặc từ vựng lên bảng trước khi bấm Nhận diện AI.',
+        variant: 'warning',
+      });
     }
     return;
   }
@@ -253,14 +258,9 @@ export async function performAIRecognition({
       recognizedStrokeObjects = fabricCanvas.getObjects().filter((obj) => obj instanceof Path);
       recognizedPageIndex = state.pageIndex;
 
-      const prevBg = fabricCanvas.backgroundColor;
-      if (!prevBg) {
-        fabricCanvas.backgroundColor = '#ffffff';
-      }
-      imageBase64 = fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 });
-      if (!prevBg) {
-        fabricCanvas.backgroundColor = prevBg;
-      }
+      imageBase64 = withOpaqueBoardExport(() =>
+        fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 })
+      );
     }
     const subject = cachedMeta?.subject || (aiElements.subjectSelect ? aiElements.subjectSelect.value : 'TOAN');
 
@@ -575,6 +575,53 @@ export async function insertIllustrationToBoard(illuData, targetX = null, target
   }
 }
 
+/**
+ * Gắn metadata ngữ nghĩa (Đề bài / Bước giải) cho đối tượng vừa dán từ AI
+ * và tạo nhãn trực quan ở góc trên bên trái (chạm ngắn vào nhãn để đổi vai trò).
+ */
+export function attachEssayRoleMetadata(targetObj, rawLatexText, region) {
+  const existingQuestions = fabricCanvas
+    .getObjects()
+    .filter((obj) => obj?.meta?.dataRole === 'question');
+  const role = existingQuestions.length === 0 ? 'question' : 'answer_formatted';
+  const isQuestion = role === 'question';
+  const groupId = `essay_item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+  targetObj.meta = {
+    ...(targetObj.meta || {}),
+    dataRole: role,
+    rawLatex: String(rawLatexText || '').trim(),
+    questionGroupId: groupId,
+  };
+
+  const badgeLeft = region.left;
+  const badgeTop = region.top - 24;
+  const badgeText = new Text(isQuestion ? ' ĐỀ BÀI ' : ' BƯỚC GIẢI ', {
+    left: badgeLeft,
+    top: badgeTop,
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: 'Be Vietnam Pro, sans-serif',
+    fill: '#FAF8F4',
+    backgroundColor: isQuestion ? '#9C3F23' : '#3D6940',
+    selectable: false,
+    evented: false,
+    objectCaching: false,
+  });
+  const bw = badgeText.width || 64;
+  const bh = badgeText.height || 16;
+  badgeText._hitPoints = [
+    { x: badgeLeft, y: badgeTop + bh / 2 },
+    { x: badgeLeft + bw, y: badgeTop + bh / 2 },
+  ];
+  badgeText._hitWidth = Math.max(20, bh);
+  badgeText.meta = {
+    dataRole: 'question_badge',
+    linkedGroupId: groupId,
+  };
+  fabricCanvas.add(badgeText);
+}
+
 export async function insertAiResultToBoard() {
   if (!currentAiResult || state.ended || state.pageBusy) return;
   let textToInsert = currentAiResult.latex || currentAiResult.recognized_text;
@@ -648,9 +695,9 @@ export async function insertAiResultToBoard() {
       const textObj = new Text(textToInsert, {
         left: region.left,
         top: region.top,
-        fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
+        fill: isDarkBoardActive() ? '#ECE7DF' : '#26231F',
         fontSize: 22,
-        fontFamily: 'Arial, sans-serif',
+        fontFamily: 'Be Vietnam Pro, sans-serif',
         selectable: false,
         evented: false,
       });
@@ -681,6 +728,7 @@ export async function insertAiResultToBoard() {
 
   if (objectToInsert) {
     fabricCanvas.add(objectToInsert);
+    attachEssayRoleMetadata(objectToInsert, currentAiResult.latex || textToInsert, region);
   }
 
   // 4. Nếu có hình minh họa nét phấn trắng, đặt gọn gàng ngay bên cạnh nội dung vừa chèn
@@ -850,7 +898,12 @@ export function setupAIRecognition() {
     aiElements.submitIllustrateBtn.addEventListener('click', async () => {
       const concept = aiElements.illustrateInput?.value?.trim();
       if (!concept) {
-        alert('Vui lòng nhập từ vựng hoặc khái niệm cần tạo minh họa.');
+        showAppToast({
+          title: 'Thiếu nội dung minh họa',
+          message: 'Vui lòng nhập từ vựng hoặc khái niệm trước khi tạo hình minh họa.',
+          variant: 'warning',
+        });
+        aiElements.illustrateInput?.focus();
         return;
       }
       aiElements.illustrateDialog.close();
@@ -890,9 +943,9 @@ export function setupAIRecognition() {
         const labelObj = new Text(concept, {
           left: 40,
           top: 60,
-          fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
+          fill: isDarkBoardActive() ? '#86efac' : '#14532d',
           fontSize: 24,
-          fontFamily: 'Arial, sans-serif',
+          fontFamily: 'Be Vietnam Pro, sans-serif',
           fontWeight: 'bold',
           selectable: false,
           evented: false
@@ -912,7 +965,11 @@ export function setupAIRecognition() {
         console.error('Lỗi tạo hình minh họa AI:', err);
         const wentOffline = await handlePossibleNetworkError(err);
         if (!wentOffline) {
-          alert(`Không thể tạo hình minh họa: ${err.message}`);
+          showAppToast({
+            title: 'Không thể tạo hình minh họa',
+            message: err.message || 'Máy chủ AI đang bận, vui lòng thử lại.',
+            variant: 'error',
+          });
           setStatus('Lỗi tạo hình minh họa AI');
         }
       }

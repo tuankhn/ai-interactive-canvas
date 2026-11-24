@@ -11,10 +11,83 @@ export const fabricCanvas = new Canvas('boardCanvas', {
   selection: false,
   skipTargetFind: true,
   renderOnAddRemove: false,
-  backgroundColor: '#ffffff'
+  backgroundColor: ''
 });
 export const surface = fabricCanvas.upperCanvasEl;
 surface.style.touchAction = 'none';
+
+export function isDarkBoardActive() {
+  return (
+    (typeof document !== 'undefined' && document.documentElement?.dataset?.theme === 'dark') ||
+    Boolean(stage?.classList?.contains('is-dark-board')) ||
+    fabricCanvas?.backgroundColor === '#111827'
+  );
+}
+
+export function withOpaqueBoardExport(callback, lightBg = '', darkBg = '', options = {}) {
+  const keepCurrentViewport = Boolean(options?.keepCurrentViewport);
+  const prevBg = fabricCanvas.backgroundColor;
+  const prevVpt = (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice();
+  const resolvedLight =
+    typeof lightBg === 'string' && lightBg
+      ? lightBg
+      : state.customBoardBgLight || '#F4F0E8';
+  const resolvedDark =
+    typeof darkBg === 'string' && darkBg
+      ? darkBg
+      : state.customBoardBgDark || '#191816';
+
+  // Nếu người dùng đã kéo bảng vô hạn ra ngoài khung nhìn, tự động căn khung bao trọn mọi nét vẽ khi chụp Snapshot / AI toàn bảng
+  if (!keepCurrentViewport) {
+    const objs = fabricCanvas.getObjects();
+    const cw = fabricCanvas.getWidth() || 1280;
+    const ch = fabricCanvas.getHeight() || 720;
+    if (objs.length > 0 && cw > 40 && ch > 40) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      objs.forEach((o) => {
+        const b = o.getBoundingRect();
+        if (!b) return;
+        minX = Math.min(minX, b.left);
+        minY = Math.min(minY, b.top);
+        maxX = Math.max(maxX, b.left + b.width);
+        maxY = Math.max(maxY, b.top + b.height);
+      });
+      const z = prevVpt[0] || 1;
+      const viewLeft = -prevVpt[4] / z;
+      const viewTop = -prevVpt[5] / z;
+      const viewRight = (cw - prevVpt[4]) / z;
+      const viewBottom = (ch - prevVpt[5]) / z;
+      const clipped =
+        minX < viewLeft || minY < viewTop || maxX > viewRight || maxY > viewBottom;
+      if (clipped && Number.isFinite(minX) && Number.isFinite(maxX)) {
+        const pad = 48;
+        const contentW = Math.max(200, maxX - minX + pad * 2);
+        const contentH = Math.max(160, maxY - minY + pad * 2);
+        const fitZoom = Math.min(1.5, Math.max(0.15, Math.min(cw / contentW, ch / contentH)));
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        fabricCanvas.setViewportTransform([
+          fitZoom,
+          0,
+          0,
+          fitZoom,
+          cw / 2 - cx * fitZoom,
+          ch / 2 - cy * fitZoom,
+        ]);
+      }
+    }
+  }
+
+  fabricCanvas.backgroundColor = isDarkBoardActive() ? resolvedDark : resolvedLight;
+  fabricCanvas.renderAll();
+  try {
+    return callback();
+  } finally {
+    fabricCanvas.backgroundColor = prevBg || '';
+    fabricCanvas.setViewportTransform(prevVpt);
+    fabricCanvas.renderAll();
+  }
+}
 
 export const ui = {
   hint: $('canvasHint'),
@@ -27,7 +100,7 @@ export const ui = {
   footer: $('footerStatus')
 };
 export const toolNames = {
-  pen: 'Bút vẽ', highlighter: 'Bút dạ quang', eraser: 'Tẩy nét',
+  hand: 'Kéo bảng', pen: 'Bút vẽ', highlighter: 'Bút dạ quang', eraser: 'Tẩy nét',
   areaEraser: 'Tẩy vùng', line: 'Đường thẳng', triangle: 'Tam giác',
   circle: 'Hình tròn', ellipse: 'Hình elip', ruler: 'Thước kẻ ảo', text: 'Chữ'
 };
@@ -36,9 +109,16 @@ export const eraserTools = new Set(['eraser', 'areaEraser']);
 export const panels = {
   erasers: { button: $('eraserMenu'), panel: $('eraserOptions') },
   shapes: { button: $('shapeMenu'), panel: $('shapeOptions') },
-  colors: { button: $('colorMenu'), panel: $('colorOptions') }
+  colors: { button: $('colorMenu'), panel: $('colorOptions') },
+  aiStudio: { button: $('aiStudioMenuBtn'), panel: $('aiToolsPopover') }
 };
-export const blankPage = () => ({ objects: [], background: '#ffffff' });
+export const blankPage = () => ({
+  objects: [],
+  background:
+    typeof document !== 'undefined' && document.documentElement?.dataset?.theme === 'dark'
+      ? '#111827'
+      : '#ffffff',
+});
 export const state = {
   tool: 'pen', activePointer: null, penInUse: false,
   activePointerType: null, lastPenSeenAt: -Infinity,

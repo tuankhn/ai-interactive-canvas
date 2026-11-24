@@ -1,4 +1,4 @@
-import { $, fabricCanvas, state, setStatus } from '../utils/context.js';
+import { $, fabricCanvas, state, setStatus, isDarkBoardActive } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
@@ -406,10 +406,10 @@ export function setupExamManager() {
     const isStudent = data.mode === 'STUDENT';
     if (isStudent) {
       previewSecurityBadge.className = 'preview-badge badge-student';
-      previewSecurityBadge.textContent = '🛡️ Chế độ Học sinh: Đáp án đúng & lời giải đã được ẩn an toàn. Nhấp phương án để làm bài!';
+      previewSecurityBadge.textContent = 'Chế độ Học sinh: Đã ẩn an toàn đáp án đúng & lời giải. Nhấp phương án để làm bài.';
     } else {
       previewSecurityBadge.className = 'preview-badge badge-teacher';
-      previewSecurityBadge.textContent = '🎓 Chế độ Giáo viên: Hiển thị đầy đủ đáp án đúng & hướng dẫn giải';
+      previewSecurityBadge.textContent = 'Chế độ Giáo viên: Hiển thị đầy đủ đáp án đúng & hướng dẫn giải';
     }
 
     examQuestionsList.innerHTML = '';
@@ -445,7 +445,7 @@ export function setupExamManager() {
       if (!isStudent && q.explanation) {
         explanationHtml = `
           <div class="exam-q-explanation">
-            <strong>💡 Hướng dẫn giải:</strong> ${escapeHtml(q.explanation)}
+            <strong>Hướng dẫn giải:</strong> ${escapeHtml(q.explanation)}
           </div>
         `;
       }
@@ -514,18 +514,25 @@ export function setupExamManager() {
     const firstPage = layoutData.pages[0];
     if (!firstPage) return;
 
+    const isDarkBoard = isDarkBoardActive();
+    const topOffset = 112;
+
     firstPage.objects.forEach((item) => {
       const TextboxClass = Textbox || FabricText;
+      const rawFill = String(item.fill || '#18181b').toLowerCase();
+      const isDefaultDarkInk = rawFill === '#172554' || rawFill === '#18181b' || rawFill === '#0f172a' || rawFill === '#1e293b';
+      const resolvedFill = isDarkBoard && isDefaultDarkInk ? '#f4f4f5' : (isDefaultDarkInk ? '#18181b' : item.fill);
       const tb = new TextboxClass(item.text, {
         left: item.left,
-        top: item.top,
+        top: (item.top || 24) + topOffset,
         fontSize: item.fontSize || 16,
+        fontFamily: 'Be Vietnam Pro, sans-serif',
         fontWeight: item.fontWeight || 'normal',
         fontStyle: item.fontStyle || 'normal',
-        fill: item.fill || '#172554',
-        width: item.width || 800,
+        fill: resolvedFill,
+        width: Math.min(item.width || 800, Math.max(300, fabricCanvas.getWidth() - 80)),
         selectable: item.selectable !== false,
-        lineHeight: item.lineHeight || 1.2,
+        lineHeight: item.lineHeight || 1.35,
       });
 
       // Lưu metadata để khi học sinh chọn trên canvas có thể chấm trắc nghiệm

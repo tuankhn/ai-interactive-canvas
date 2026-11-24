@@ -1,5 +1,6 @@
 import { $, fabricCanvas, state, setStatus } from '../utils/context.js';
 import { authFetch, readStoredTeacherSession } from '../utils/auth_client.js';
+import { notifySnapshotBroadcast } from '../utils/offline_sync.js';
 
 const SCORES_API_BASE = '/api/v1/scores';
 
@@ -113,7 +114,7 @@ export function setupStudentScoreSidebar() {
 
       const subSpan = document.createElement('span');
       subSpan.className = 'student-subline';
-      subSpan.textContent = `${student.student_code || 'HS'} · 🏆 ${student.total_points} đ`;
+      subSpan.textContent = `${student.student_code || 'HS'} · ${student.total_points} điểm`;
 
       metaWrap.append(nameSpan, subSpan);
 
@@ -160,7 +161,7 @@ export function setupStudentScoreSidebar() {
       const detail = document.createElement('div');
       detail.className = 'score-history-meta';
       const timeStr = item.created_at ? new Date(item.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
-      const snapLabel = item.snapshot_id ? ' · 📸 Snapshot' : '';
+      const snapLabel = item.snapshot_id ? ' · Kèm ảnh bảng' : '';
       detail.textContent = `${item.reason || 'Thưởng'} (${timeStr}${snapLabel})`;
 
       li.append(topRow, detail);
@@ -225,8 +226,14 @@ export function setupStudentScoreSidebar() {
         throw new Error(err.detail || `Lỗi HTTP ${res.status}`);
       }
       const data = await res.json();
+      if (data.snapshot_saved) {
+        notifySnapshotBroadcast({
+          className: sidebarState.className,
+          triggerType: 'BONUS_SCORE',
+        });
+      }
       const snapNote = data.snapshot_saved ? ' (đã lưu kèm ảnh bài làm)' : '';
-      const msg = `✓ Đã cộng +${pts} điểm cho ${student.full_name} → Tổng ${data.total_points} đ${snapNote}`;
+      const msg = `Đã cộng +${pts} điểm cho ${student.full_name} → Tổng ${data.total_points} điểm${snapNote}`;
       showScoreStatus(msg, 'success');
       setStatus(msg);
       await refreshRosterAndHistory(student.student_id);

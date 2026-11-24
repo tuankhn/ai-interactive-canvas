@@ -4,7 +4,7 @@
  * OCR toán chỉ gợi ý LaTeX đơn giản; giáo viên được kiểm tra và sửa kết quả.
  */
 import { FabricImage, Path, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
-import { $, stage, surface, toolbar, fabricCanvas, state, ui, toolNames, setStatus } from '../utils/context.js';
+import { $, stage, surface, toolbar, fabricCanvas, state, ui, toolNames, setStatus, isDarkBoardActive, withOpaqueBoardExport } from '../utils/context.js';
 import { snapshot, remember, updateHint } from '../components/history.js';
 import { closePanels, setTool } from '../components/toolbar.js';
 import { authFetch } from '../utils/auth_client.js';
@@ -137,15 +137,13 @@ function overlaps(a, b) {
 
 function cropForOCR(region) {
   // Bản kết xuất Fabric có cả nét và nền, không có lớp kéo khung chọn.
-  const darkBoard = fabricCanvas.backgroundColor === '#111827';
-  const prevBg = fabricCanvas.backgroundColor;
-  if (!prevBg) {
-    fabricCanvas.backgroundColor = '#ffffff';
-  }
-  const drawing = fabricCanvas.toCanvasElement(2);
-  if (!prevBg) {
-    fabricCanvas.backgroundColor = prevBg;
-  }
+  const darkBoard = isDarkBoardActive();
+  const drawing = withOpaqueBoardExport(
+    () => fabricCanvas.toCanvasElement(2),
+    '#FFFFFF',
+    '#191816',
+    { keepCurrentViewport: true }
+  );
   const factorX = drawing.width / fabricCanvas.getWidth();
   const factorY = drawing.height / fabricCanvas.getHeight();
   const x1 = clamp(region.left - 12, 0, fabricCanvas.getWidth());
@@ -190,8 +188,9 @@ function cropForOCR(region) {
 
 function textColor() {
   const ink = ui.color.value.toLowerCase();
-  if (fabricCanvas.backgroundColor === '#111827' && ink === '#172554') return '#ffffff';
-  if (fabricCanvas.backgroundColor !== '#111827' && ink === '#ffffff') return '#172554';
+  const darkBoard = isDarkBoardActive();
+  if (darkBoard && (ink === '#172554' || ink === '#18181b')) return '#f4f4f5';
+  if (!darkBoard && (ink === '#ffffff' || ink === '#f4f4f5')) return '#18181b';
   return ink;
 }
 
@@ -510,7 +509,15 @@ export function setupHandwriting() {
       setStatus('Vùng chọn quá nhỏ. Nhấn Chuyển chữ để chọn lại.');
       return;
     }
-    region = nextRegion;
+    const screenRegion = nextRegion;
+    const vpt = fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+    const z = vpt[0] || 1;
+    region = {
+      left: (screenRegion.left - vpt[4]) / z,
+      top: (screenRegion.top - vpt[5]) / z,
+      width: screenRegion.width / z,
+      height: screenRegion.height / z,
+    };
     pageOfSelection = state.pageIndex;
     values = { text: '', latex: '' };
     edited = { text: false, latex: false };
@@ -521,7 +528,7 @@ export function setupHandwriting() {
     status('Đang chuẩn bị nhận dạng...');
     preview.textContent = 'Đang lấy hình vùng chọn...';
     try {
-      crop = cropForOCR(region);
+      crop = cropForOCR(screenRegion);
       cropImg.src = crop.toDataURL('image/png');
     } catch (error) {
       console.warn('Không thể lấy vùng ảnh OCR:', error);
@@ -1246,14 +1253,14 @@ export function setupGraphExtension() {
 
   function layout() {
     return {
-      title: { text: formula(model), font: { size: 14, color: '#1e293b' }, x: 0.52 },
-      xaxis: { title: { text: 'x', font: { size: 11 } }, zeroline: true, zerolinewidth: 1.3, zerolinecolor: '#64748b', gridcolor: '#edf2fa', autorange: false, range: model.kind === 'trig' ? [-2 * Math.PI, 2 * Math.PI] : [-10, 10] },
-      yaxis: { title: { text: 'y', font: { size: 11 } }, zeroline: true, zerolinewidth: 1.3, zerolinecolor: '#64748b', gridcolor: '#edf2fa', autorange: true },
-      margin: { l: 45, r: 12, t: 42, b: 40 },
+      title: { text: formula(model), font: { size: 13, color: '#18181b' }, x: 0.03, xanchor: 'left', y: 0.96 },
+      xaxis: { title: { text: 'x', font: { size: 11 } }, zeroline: true, zerolinewidth: 1.3, zerolinecolor: '#71717a', gridcolor: '#ece8df', autorange: false, range: model.kind === 'trig' ? [-2 * Math.PI, 2 * Math.PI] : [-10, 10] },
+      yaxis: { title: { text: 'y', font: { size: 11 } }, zeroline: true, zerolinewidth: 1.3, zerolinecolor: '#71717a', gridcolor: '#ece8df', autorange: true },
+      margin: { l: 46, r: 16, t: 54, b: 40 },
       showlegend: false, paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
       hovermode: 'closest', dragmode: 'pan',
       uirevision: viewRevision,
-      font: { family: 'Arial, sans-serif', size: 11 }
+      font: { family: 'Be Vietnam Pro, sans-serif', size: 11 }
     };
   }
 
@@ -1281,7 +1288,7 @@ export function setupGraphExtension() {
       const trace = {
         x: points.x, y: points.y, type: 'scatter', mode: 'lines',
         name: 'y=f(x)', connectgaps: false,
-        line: { color: '#253a91', width: 2.7 }
+        line: { color: '#14532d', width: 2.7 }
       };
       await plotly.react(graph, [trace], layout(), {
         displayModeBar: true, displaylogo: false,
