@@ -1,4 +1,4 @@
-import { Text, FabricImage } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
+import { Text, FabricImage, Path } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 import { $, fabricCanvas, state, ui, setStatus } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
@@ -19,6 +19,8 @@ let isAutoAiEnabled = false;
 let isRecognizing = false;
 let aiDebounceTimer = null;
 let currentAiResult = null;
+let recognizedStrokeObjects = [];
+let recognizedPageIndex = null;
 let aiRequestId = 0;
 let boardSocket = null;
 let wsRetryCount = 0;
@@ -26,6 +28,101 @@ let wsRetryTimer = null;
 let lastCapturedImageBase64 = null;
 let lastRecognizeMeta = null;
 let consecutiveRetryCount = 0;
+
+function rectsOverlap(a, b, margin = 12) {
+  return (
+    a.left <= b.left + b.width + margin &&
+    a.left + a.width + margin >= b.left &&
+    a.top <= b.top + b.height + margin &&
+    a.top + a.height + margin >= b.top
+  );
+}
+
+/**
+ * Quy đổi preprocess.bounding_box từ tọa độ ảnh (multiplier) về tọa độ Fabric Canvas.
+ */
+function mapPreprocessBoxToCanvas(preprocess) {
+  const bbox = preprocess?.bounding_box;
+  const origSize = preprocess?.original_size;
+  if (!bbox || !Array.isArray(origSize) || origSize[0] <= 0 || origSize[1] <= 0) {
+    return null;
+  }
+  const scaleX = fabricCanvas.getWidth() / origSize[0];
+  const scaleY = fabricCanvas.getHeight() / origSize[1];
+  return {
+    left: bbox.x * scaleX,
+    top: bbox.y * scaleY,
+    width: bbox.width * scaleX,
+    height: bbox.height * scaleY,
+  };
+}
+
+/**
+ * Xác định danh sách nét viết tay (Path) cần xóa và tọa độ chèn thay thế.
+ */
+function resolveStrokesAndRegionForReplacement(aiResult) {
+  const currentCanvasObjects = fabricCanvas.getObjects();
+  let activeHandwritingPaths = [];
+
+  if (recognizedPageIndex === null) {
+    activeHandwritingPaths = currentCanvasObjects.filter((obj) => obj instanceof Path);
+  } else if (recognizedPageIndex === state.pageIndex) {
+    const savedOnCanvas = recognizedStrokeObjects.filter((obj) => currentCanvasObjects.includes(obj));
+    activeHandwritingPaths =
+      savedOnCanvas.length > 0
+        ? savedOnCanvas
+        : currentCanvasObjects.filter((obj) => obj instanceof Path);
+  }
+
+  const mappedBox = mapPreprocessBoxToCanvas(aiResult?.preprocess);
+  let strokesToRemove = activeHandwritingPaths;
+
+  if (mappedBox && activeHandwritingPaths.length > 0) {
+    const overlapping = activeHandwritingPaths.filter((obj) =>
+      rectsOverlap(obj.getBoundingRect(), mappedBox, 16)
+    );
+    if (overlapping.length > 0) {
+      strokesToRemove = overlapping;
+    }
+  }
+
+  // Tính khung bao (bounding box) của đúng các nét viết tay sẽ bị thay thế
+  let region = { left: 40, top: 40, width: 320, height: 54 };
+  if (strokesToRemove.length > 0) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const obj of strokesToRemove) {
+      const r = obj.getBoundingRect();
+      minX = Math.min(minX, r.left);
+      minY = Math.min(minY, r.top);
+      maxX = Math.max(maxX, r.left + r.width);
+      maxY = Math.max(maxY, r.top + r.height);
+    }
+    if (Number.isFinite(minX) && Number.isFinite(minY)) {
+      const canvasW = fabricCanvas.getWidth();
+      const canvasH = fabricCanvas.getHeight();
+      const width = Math.max(160, maxX - minX);
+      const height = Math.max(44, maxY - minY);
+      region = {
+        left: Math.max(16, Math.min(minX, Math.max(16, canvasW - 180))),
+        top: Math.max(16, Math.min(minY, Math.max(16, canvasH - 64))),
+        width: Math.min(width, Math.max(180, canvasW - 32)),
+        height: Math.min(height, 140),
+      };
+    }
+  } else if (mappedBox && (recognizedPageIndex === null || recognizedPageIndex === state.pageIndex)) {
+    region = {
+      left: Math.max(16, mappedBox.left),
+      top: Math.max(16, mappedBox.top),
+      width: Math.max(180, mappedBox.width),
+      height: Math.max(48, mappedBox.height),
+    };
+  }
+
+  return { strokesToRemove, region };
+}
 
 const getAiElements = () => ({
   overlay: $('aiOverlayPanel'),
@@ -152,6 +249,10 @@ export async function performAIRecognition({
   try {
     let imageBase64 = cachedImageBase64;
     if (!imageBase64) {
+      // Lưu lại các nét viết tay (Path) hiện có tại thời điểm chụp ảnh để xóa chính xác khi dán kết quả
+      recognizedStrokeObjects = fabricCanvas.getObjects().filter((obj) => obj instanceof Path);
+      recognizedPageIndex = state.pageIndex;
+
       const prevBg = fabricCanvas.backgroundColor;
       if (!prevBg) {
         fabricCanvas.backgroundColor = '#ffffff';
@@ -475,14 +576,14 @@ export async function insertIllustrationToBoard(illuData, targetX = null, target
 }
 
 export async function insertAiResultToBoard() {
-  if (!currentAiResult) return;
+  if (!currentAiResult || state.ended || state.pageBusy) return;
   let textToInsert = currentAiResult.latex || currentAiResult.recognized_text;
 
-  const isEng = (currentAiResult.subject || '').toUpperCase().includes('ENG') || 
+  const isEng = (currentAiResult.subject || '').toUpperCase().includes('ENG') ||
                 (currentAiResult.subject || '').toUpperCase().includes('ANH');
-  const isBio = (currentAiResult.subject || '').toUpperCase().includes('SINH') || 
+  const isBio = (currentAiResult.subject || '').toUpperCase().includes('SINH') ||
                 (currentAiResult.subject || '').toUpperCase().includes('BIO');
-  const isGeo = (currentAiResult.subject || '').toUpperCase().includes('DIA') || 
+  const isGeo = (currentAiResult.subject || '').toUpperCase().includes('DIA') ||
                 (currentAiResult.subject || '').toUpperCase().includes('GEO');
 
   if (isEng && currentAiResult.subject_details) {
@@ -509,63 +610,97 @@ export async function insertAiResultToBoard() {
 
   if (!textToInsert && !currentAiResult.illustration) return;
 
-  const before = snapshot();
-  let textWidth = 260;
+  const targetPageAtStart = state.pageIndex;
 
+  // 1. Xác định các nét viết tay gốc & vị trí viết thực tế của giáo viên
+  const { region } = resolveStrokesAndRegionForReplacement(currentAiResult);
+  let insertedWidth = region.width || 260;
+  let objectToInsert = null;
+
+  // 2. Dựng sẵn đối tượng công thức LaTeX hoặc văn bản đã format trước khi thay đổi Canvas (tránh nháy hình khi chờ MathJax)
   if (textToInsert) {
-    let insertedFormulaImage = false;
     const shouldRenderLatex = !isEng && !isBio && !isGeo && Boolean(currentAiResult.latex);
     if (shouldRenderLatex) {
       try {
         const { createFormulaImage } = await import('../extensions/handwriting.js');
         const formulaImg = await createFormulaImage(currentAiResult.latex, {
-          left: 40,
-          top: 40,
-          width: 320,
-          height: 54,
+          left: region.left,
+          top: region.top,
+          width: Math.max(220, region.width),
+          height: Math.max(48, Math.min(84, region.height)),
         });
         const bounds = formulaImg.getBoundingRect();
+        const fH = bounds.height || 40;
+        const fW = bounds.width || 220;
         formulaImg._hitPoints = [
-          { x: 40, y: 40 + (bounds.height || 40) / 2 },
-          { x: 40 + (bounds.width || 220), y: 40 + (bounds.height || 40) / 2 },
+          { x: region.left, y: region.top + fH / 2 },
+          { x: region.left + fW, y: region.top + fH / 2 },
         ];
-        formulaImg._hitWidth = Math.max(28, bounds.height || 36);
-        fabricCanvas.add(formulaImg);
-        textWidth = Math.max(220, bounds.width || 260);
-        insertedFormulaImage = true;
+        formulaImg._hitWidth = Math.max(28, fH);
+        objectToInsert = formulaImg;
+        insertedWidth = Math.max(160, fW);
       } catch {
-        insertedFormulaImage = false;
+        objectToInsert = null;
       }
     }
 
-    if (!insertedFormulaImage) {
+    if (!objectToInsert) {
       const textObj = new Text(textToInsert, {
-        left: 40,
-        top: 40,
+        left: region.left,
+        top: region.top,
         fill: fabricCanvas.backgroundColor === '#111827' ? '#67e8f9' : '#1e3a8a',
         fontSize: 22,
         fontFamily: 'Arial, sans-serif',
         selectable: false,
-        evented: false
+        evented: false,
       });
-      textObj._hitPoints = [{ x: 40, y: 40 }, { x: 250, y: 40 }];
-      textObj._hitWidth = 30;
-      fabricCanvas.add(textObj);
-      textWidth = Math.max(220, textObj.width || 260);
+      const textW = Math.max(120, textObj.width || 220);
+      const textH = Math.max(28, textObj.height || 28);
+      textObj._hitPoints = [
+        { x: region.left, y: region.top + textH / 2 },
+        { x: region.left + textW, y: region.top + textH / 2 },
+      ];
+      textObj._hitWidth = Math.max(30, textH);
+      objectToInsert = textObj;
+      insertedWidth = textW;
     }
   }
 
-  // Task TF2850F: Tự động đặt hình minh họa nét phấn trắng bên cạnh từ vựng
+  if (state.ended || state.pageBusy || state.pageIndex !== targetPageAtStart) return;
+
+  // 3. Chụp trạng thái trước khi thay đổi để Ctrl+Z (Hoàn tác) khôi phục lại nét viết tay gốc trong 1 bước
+  const before = snapshot();
+
+  // Lấy lại danh sách nét viết tay còn tồn tại trên mặt bảng tại thời điểm commit
+  const { strokesToRemove } = resolveStrokesAndRegionForReplacement(currentAiResult);
+  if (strokesToRemove.length > 0) {
+    fabricCanvas.remove(...strokesToRemove);
+  }
+  recognizedStrokeObjects = [];
+  recognizedPageIndex = null;
+
+  if (objectToInsert) {
+    fabricCanvas.add(objectToInsert);
+  }
+
+  // 4. Nếu có hình minh họa nét phấn trắng, đặt gọn gàng ngay bên cạnh nội dung vừa chèn
   if (currentAiResult.illustration) {
-    const illuX = 40 + textWidth + 35; // Đặt cạnh từ vựng
-    const illuY = 40;
+    const canvasW = fabricCanvas.getWidth();
+    const illuW = currentAiResult.illustration.suggested_position?.width || 220;
+    const illuX = Math.min(region.left + insertedWidth + 30, Math.max(16, canvasW - illuW - 16));
+    const illuY = region.top;
     await insertIllustrationToBoard(currentAiResult.illustration, illuX, illuY);
   }
 
   fabricCanvas.requestRenderAll();
   remember(before);
   updateHint();
-  setStatus('Đã chèn kết quả AI và hình minh họa nét phấn vào bảng');
+  setStatus(
+    strokesToRemove.length > 0
+      ? `Đã thay thế ${strokesToRemove.length} nét viết tay bằng kết quả đã định dạng`
+      : 'Đã chèn kết quả AI vào mặt bảng'
+  );
+
   const aiElements = getAiElements();
   if (aiElements.overlay) aiElements.overlay.hidden = true;
 }

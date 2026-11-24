@@ -91,3 +91,24 @@ async def test_gemini_transient_timeout_recovers_on_retry_and_frontend_exports_p
         assert required_id in index_html
     for required_fn in ["export async function retryAIRecognition", "export async function reanalyzeCurrentCanvas"]:
         assert required_fn in ai_js
+
+
+def test_frontend_auto_replaces_handwriting_strokes_on_insert():
+    """Đảm bảo insertAiResultToBoard() tự động xóa nét Path cũ và chèn đúng vị trí thay vì hardcode (40, 40)."""
+    repo_root = Path(__file__).resolve().parents[2]
+    ai_js = (repo_root / "frontend" / "src" / "components" / "aiRecognition.js").read_text(encoding="utf-8")
+
+    assert "import { Text, FabricImage, Path }" in ai_js
+    assert "let recognizedStrokeObjects = [];" in ai_js
+    assert "function mapPreprocessBoxToCanvas(preprocess)" in ai_js
+    assert "function resolveStrokesAndRegionForReplacement(aiResult)" in ai_js
+    assert "fabricCanvas.remove(...strokesToRemove);" in ai_js
+
+    insert_section = ai_js.split("export async function insertAiResultToBoard()", 1)[1].split(
+        "export function initBoardWebSocket()", 1
+    )[0]
+    assert "left: region.left" in insert_section
+    assert "top: region.top" in insert_section
+    assert "left: 40" not in insert_section
+    assert "top: 40" not in insert_section
+
