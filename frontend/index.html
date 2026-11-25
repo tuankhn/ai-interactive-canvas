@@ -10,12 +10,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./style.css?v=20261125r9">
-  <link rel="stylesheet" href="./src/extensions/handwriting.css?v=20261125r9">
-  <link rel="stylesheet" href="./src/extensions/molecule3d.css?v=20261125r9">
-  <link rel="stylesheet" href="./src/components/geometry_3d_three.css?v=20261125r9">
-  <script src="./config.js?v=20261125r9"></script>
-  <script src="./src/utils/runtime_config.js?v=20261125r9"></script>
+  <link rel="stylesheet" href="./style.css?v=20261125r10">
+  <link rel="stylesheet" href="./src/extensions/handwriting.css?v=20261125r10">
+  <link rel="stylesheet" href="./src/extensions/molecule3d.css?v=20261125r10">
+  <link rel="stylesheet" href="./src/components/geometry_3d_three.css?v=20261125r10">
+  <script src="./config.js?v=20261125r10"></script>
+  <script src="./src/utils/runtime_config.js?v=20261125r10"></script>
   <script>
     try {
       const m = localStorage.getItem('ai-canvas:studio-theme:v2');
@@ -26,29 +26,29 @@
   <script type="importmap">
   {
     "imports": {
-      "./app.js": "./app.js?v=20261125r9",
-      "./src/pages/whiteboard.js": "./src/pages/whiteboard.js?v=20261125r9",
-      "./src/utils/context.js": "./src/utils/context.js?v=20261125r9",
-      "./src/utils/geometry.js": "./src/utils/geometry.js?v=20261125r9",
-      "./src/utils/pointer.js": "./src/utils/pointer.js?v=20261125r9",
-      "./src/utils/auth_client.js": "./src/utils/auth_client.js?v=20261125r9",
-      "./src/utils/offline_sync.js": "./src/utils/offline_sync.js?v=20261125r9",
-      "./src/utils/ui_feedback.js": "./src/utils/ui_feedback.js?v=20261125r9",
-      "./src/components/history.js": "./src/components/history.js?v=20261125r9",
-      "./src/components/toolbar.js": "./src/components/toolbar.js?v=20261125r9",
-      "./src/components/rulerOverlay.js": "./src/components/rulerOverlay.js?v=20261125r9",
-      "./src/components/drawingCanvas.js": "./src/components/drawingCanvas.js?v=20261125r9",
-      "./src/components/selectionManager.js": "./src/components/selectionManager.js?v=20261125r9",
-      "./src/components/propertyInspector.js": "./src/components/propertyInspector.js?v=20261125r9",
-      "./src/components/pageManager.js": "./src/components/pageManager.js?v=20261125r9",
-      "./src/components/boardDialogs.js": "./src/components/boardDialogs.js?v=20261125r9",
-      "./src/components/aiRecognition.js": "./src/components/aiRecognition.js?v=20261125r9",
-      "./src/components/examManager.js": "./src/components/examManager.js?v=20261125r9",
-      "./src/components/quiz_board.js": "./src/components/quiz_board.js?v=20261125r9",
-      "./src/components/student_score_sidebar.js": "./src/components/student_score_sidebar.js?v=20261125r9",
-      "./src/components/essayGradingManager.js": "./src/components/essayGradingManager.js?v=20261125r9",
-      "./src/components/questionVariantManager.js": "./src/components/questionVariantManager.js?v=20261125r9",
-      "./src/extensions/handwriting.js": "./src/extensions/handwriting.js?v=20261125r9"
+      "./app.js": "./app.js?v=20261125r10",
+      "./src/pages/whiteboard.js": "./src/pages/whiteboard.js?v=20261125r10",
+      "./src/utils/context.js": "./src/utils/context.js?v=20261125r10",
+      "./src/utils/geometry.js": "./src/utils/geometry.js?v=20261125r10",
+      "./src/utils/pointer.js": "./src/utils/pointer.js?v=20261125r10",
+      "./src/utils/auth_client.js": "./src/utils/auth_client.js?v=20261125r10",
+      "./src/utils/offline_sync.js": "./src/utils/offline_sync.js?v=20261125r10",
+      "./src/utils/ui_feedback.js": "./src/utils/ui_feedback.js?v=20261125r10",
+      "./src/components/history.js": "./src/components/history.js?v=20261125r10",
+      "./src/components/toolbar.js": "./src/components/toolbar.js?v=20261125r10",
+      "./src/components/rulerOverlay.js": "./src/components/rulerOverlay.js?v=20261125r10",
+      "./src/components/drawingCanvas.js": "./src/components/drawingCanvas.js?v=20261125r10",
+      "./src/components/selectionManager.js": "./src/components/selectionManager.js?v=20261125r10",
+      "./src/components/propertyInspector.js": "./src/components/propertyInspector.js?v=20261125r10",
+      "./src/components/pageManager.js": "./src/components/pageManager.js?v=20261125r10",
+      "./src/components/boardDialogs.js": "./src/components/boardDialogs.js?v=20261125r10",
+      "./src/components/aiRecognition.js": "./src/components/aiRecognition.js?v=20261125r10",
+      "./src/components/examManager.js": "./src/components/examManager.js?v=20261125r10",
+      "./src/components/quiz_board.js": "./src/components/quiz_board.js?v=20261125r10",
+      "./src/components/student_score_sidebar.js": "./src/components/student_score_sidebar.js?v=20261125r10",
+      "./src/components/essayGradingManager.js": "./src/components/essayGradingManager.js?v=20261125r10",
+      "./src/components/questionVariantManager.js": "./src/components/questionVariantManager.js?v=20261125r10",
+      "./src/extensions/handwriting.js": "./src/extensions/handwriting.js?v=20261125r10"
     }
   }
   </script>
@@ -630,8 +630,30 @@
         <input id="widthRange" class="width-range" type="range" min="1" max="24" value="4">
       </section>
 
-      <!-- BẢNG TUỲ CHỈNH THUỘC TÍNH BÊN TRÁI KIỂU EXCALIDRAW (Hiện khi chọn Bút / Hình / Chữ / Đối tượng) -->
+      <!-- BẢNG TUỲ CHỈNH THUỘC TÍNH BÊN TRÁI KIỂU EXCALIDRAW (Có nút ✕ thu gọn & nút mở lại gọn gàng trên Mobile) -->
+      <button
+        type="button"
+        id="reopenInspectorBtn"
+        class="reopen-inspector-btn"
+        title="Mở bảng tuỳ chỉnh màu &amp; nét"
+        aria-label="Mở bảng tuỳ chỉnh màu và nét"
+        hidden
+      >
+        <span class="reopen-color-dot" id="reopenInspectorDot"></span>
+        <span>Màu &amp; Nét</span>
+      </button>
+
       <aside id="contextPropertyPanel" class="context-inspector" aria-label="Tuỳ chỉnh nét vẽ, hình dạng và phông chữ">
+        <div class="insp-header">
+          <span class="insp-header-title">Tuỳ chỉnh nét</span>
+          <button
+            type="button"
+            class="insp-close-btn"
+            id="closeInspectorBtn"
+            title="Thu gọn bảng tuỳ chỉnh"
+            aria-label="Thu gọn bảng tuỳ chỉnh"
+          >✕</button>
+        </div>
         <div class="insp-group" id="propGroupStrokeColor">
           <span class="insp-label">Màu nét</span>
           <div class="insp-swatch-row">
@@ -1436,11 +1458,11 @@
 
   <div id="instantTooltip" class="instant-tooltip" role="tooltip" hidden></div>
 
-  <script defer src="./src/extensions/ai-correction-popup.js?v=20261125r9"></script>
-  <script type="module" src="./src/extensions/handwriting-entry.js?v=20261125r9"></script>
-  <script type="module" src="./src/extensions/molecule3d.js?v=20261125r9"></script>
-  <script type="module" src="./src/components/geometry_3d_three.js?v=20261125r9"></script>
-  <script type="module" src="./src/utils/performance_benchmark.js?v=20261125r9"></script>
+  <script defer src="./src/extensions/ai-correction-popup.js?v=20261125r10"></script>
+  <script type="module" src="./src/extensions/handwriting-entry.js?v=20261125r10"></script>
+  <script type="module" src="./src/extensions/molecule3d.js?v=20261125r10"></script>
+  <script type="module" src="./src/components/geometry_3d_three.js?v=20261125r10"></script>
+  <script type="module" src="./src/utils/performance_benchmark.js?v=20261125r10"></script>
 
 </body>
 </html>

@@ -1,17 +1,35 @@
-import { $, state, ui, shapeTools, setStatus } from '../utils/context.js';
+import { $, state, ui, surface, shapeTools, setStatus } from '../utils/context.js';
 import { getSelectedObjects, applyStyleToSelection, applyLayerActionToSelection } from './selectionManager.js';
 import { syncColorSelection, syncWidthSelection } from './toolbar.js';
+
+let inspectorCollapsed = typeof window !== 'undefined' && window.innerWidth <= 768;
 
 function isTextItem(obj) {
   return obj && typeof obj.text === 'string';
 }
 
+function isMobileViewport() {
+  return typeof window !== 'undefined' && window.innerWidth <= 960;
+}
+
+export function setInspectorCollapsed(collapsed) {
+  inspectorCollapsed = Boolean(collapsed);
+  syncPropertyInspectorVisibility();
+}
+
+export function togglePropertyInspector() {
+  inspectorCollapsed = !inspectorCollapsed;
+  syncPropertyInspectorVisibility();
+}
+
 export function syncPropertyInspectorVisibility() {
   const panel = $('contextPropertyPanel');
+  const reopenBtn = $('reopenInspectorBtn');
   if (!panel) return;
 
   if (state.ended) {
     panel.hidden = true;
+    if (reopenBtn) reopenBtn.hidden = true;
     return;
   }
 
@@ -25,9 +43,22 @@ export function syncPropertyInspectorVisibility() {
   const isShapeTool = shapeTools.has(tool);
   const isTextTool = tool === 'text';
 
-  const shouldShow = isDrawTool || isShapeTool || isTextTool || hasSelection;
-  panel.hidden = !shouldShow;
-  if (!shouldShow) return;
+  const isContextEligible = isDrawTool || isShapeTool || isTextTool || hasSelection;
+  if (!isContextEligible) {
+    panel.hidden = true;
+    if (reopenBtn) reopenBtn.hidden = true;
+    return;
+  }
+
+  if (inspectorCollapsed) {
+    panel.hidden = true;
+    if (reopenBtn) reopenBtn.hidden = false;
+    syncInspectorActiveControls();
+    return;
+  }
+
+  panel.hidden = false;
+  if (reopenBtn) reopenBtn.hidden = true;
 
   const showTextProps = isTextTool || (hasSelection && selHasText);
   const showShapeFill = isShapeTool || (hasSelection && selHasShape);
@@ -62,6 +93,10 @@ export function syncInspectorActiveControls() {
   const customStrokePreview = $('inspCustomColorBtn');
   if (customStrokePreview) {
     customStrokePreview.style.setProperty('--insp-custom-color', ui.color?.value || '#26231F');
+  }
+  const reopenDot = $('reopenInspectorDot');
+  if (reopenDot) {
+    reopenDot.style.setProperty('--reopen-dot-color', ui.color?.value || '#26231F');
   }
 
   const currentFill = state.shapeFill || 'transparent';
@@ -216,8 +251,29 @@ export function setupPropertyInspector() {
     });
   });
 
+  // Thu gọn / Mở lại bảng tuỳ chỉnh (đặc biệt hữu ích trên màn hình điện thoại)
+  $('closeInspectorBtn')?.addEventListener('click', () => {
+    setInspectorCollapsed(true);
+  });
+  $('reopenInspectorBtn')?.addEventListener('click', () => {
+    setInspectorCollapsed(false);
+  });
+
+  // Trên Mobile: khi người dùng chạm bút bắt đầu vẽ lên mặt bảng, tự động thu gọn bảng tuỳ chỉnh để không che nét viết
+  surface?.addEventListener('pointerdown', () => {
+    if (isMobileViewport() && !inspectorCollapsed) {
+      setInspectorCollapsed(true);
+    }
+  });
+
+  window.addEventListener('app:toggle-inspector', togglePropertyInspector);
   window.addEventListener('app:tool-changed', syncPropertyInspectorVisibility);
-  window.addEventListener('app:selection-changed', syncPropertyInspectorVisibility);
+  window.addEventListener('app:selection-changed', ({ detail }) => {
+    if (detail?.count > 0 && !isMobileViewport()) {
+      inspectorCollapsed = false;
+    }
+    syncPropertyInspectorVisibility();
+  });
   ui.color?.addEventListener('input', syncInspectorActiveControls);
   ui.width?.addEventListener('input', syncInspectorActiveControls);
 

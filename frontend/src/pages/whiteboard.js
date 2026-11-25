@@ -233,6 +233,8 @@ export async function initWhiteboard() {
     });
     const insp = $('contextPropertyPanel');
     if (insp) insp.hidden = true;
+    const reopenInsp = $('reopenInspectorBtn');
+    if (reopenInsp) reopenInsp.hidden = true;
     $('prevPage').disabled = true;
     $('nextPage').disabled = true;
     $('addPageButton').disabled = true;
