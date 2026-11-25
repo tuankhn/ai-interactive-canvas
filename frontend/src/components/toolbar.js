@@ -705,7 +705,14 @@ function setupInstantTooltipsAndGuides() {
 
 export function setupToolbar() {
   document.querySelectorAll('[data-tool]').forEach((button) => {
-    button.addEventListener('click', () => setTool(button.dataset.tool, { showGuide: true }));
+    button.addEventListener('click', () => {
+      const nextTool = button.dataset.tool;
+      const alreadyActive = state.tool === nextTool;
+      setTool(nextTool, { showGuide: !alreadyActive });
+      if (alreadyActive) {
+        window.dispatchEvent(new CustomEvent('app:toggle-inspector'));
+      }
+    });
   });
 
   $('lockBoardBtn')?.addEventListener('click', () => toggleBoardLock());
