@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -16,10 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -32,6 +30,27 @@ jobs:
         uses: actions/upload-pages-artifact@v4
         with:
           path: ./frontend
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Pages artifact metadata indexing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in 1 2 3 4 5 6; do
+            COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" --jq '.artifacts | map(select(.name == "github-pages" and .expired == false)) | length' 2>/dev/null || echo "0")
+            if [ "${COUNT:-0}" -ge 1 ]; then
+              echo "Verified github-pages artifact is indexed (count=${COUNT})."
+              exit 0
+            fi
+            echo "Waiting for GitHub artifact indexing (attempt ${i}/6)..."
+            sleep 2
+          done
 
       - name: Deploy to GitHub Pages
         id: deployment
