@@ -84,7 +84,8 @@ function buildSnapshotImageUrl(snapshotId, format = 'webp', download = false) {
   } else if (portalState.session?.access_token) {
     params.set('token', portalState.session.access_token);
   }
-  return `/api/v1/sessions/snapshots/${encodeURIComponent(snapshotId)}/image?${params.toString()}`;
+  const apiPrefix = (typeof window !== 'undefined' && window.__AI_CANVAS_API_BASE__) || '';
+  return `${apiPrefix}/api/v1/sessions/snapshots/${encodeURIComponent(snapshotId)}/image?${params.toString()}`;
 }
 
 function switchAuthTab(target) {
