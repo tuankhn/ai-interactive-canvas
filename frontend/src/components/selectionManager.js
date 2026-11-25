@@ -64,6 +64,7 @@ function computeUnionWorldBounds(objs) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const obj of objs) {
     if (!obj || !fabricCanvas.getObjects().includes(obj)) continue;
+    obj.setCoords?.();
     const b = obj.getBoundingRect();
     if (!b) continue;
     minX = Math.min(minX, b.left);
@@ -562,18 +563,24 @@ export function setupSelectionManager() {
     }
 
     if (gesture.mode === 'move') {
-      const dx = wp.x - gesture.lastWorld.x;
-      const dy = wp.y - gesture.lastWorld.y;
-      if (Math.hypot(dx, dy) < 0.2) return;
+      const totalDx = wp.x - gesture.startWorld.x;
+      const totalDy = wp.y - gesture.startWorld.y;
+      if (!gesture.changed && Math.hypot(totalDx, totalDy) < 0.3) return;
       gesture.lastWorld = wp;
       gesture.changed = true;
       for (const item of gesture.items) {
         item.obj.set({
-          left: (item.obj.left || 0) + dx,
-          top: (item.obj.top || 0) + dy,
+          left: item.left + totalDx,
+          top: item.top + totalDy,
         });
+        if (item.hitPoints) {
+          item.obj._hitPoints = item.hitPoints.map((pt) => ({
+            ...pt,
+            x: pt.x + totalDx,
+            y: pt.y + totalDy,
+          }));
+        }
         item.obj.setCoords?.();
-        translateObjectHitPoints(item.obj, dx, dy);
       }
       fabricCanvas.requestRenderAll();
       syncSelectionOverlay();
@@ -737,6 +744,7 @@ export function setupSelectionManager() {
   };
   boxEl.addEventListener('pointerup', endBoxGesture);
   boxEl.addEventListener('pointercancel', endBoxGesture);
+  boxEl.addEventListener('lostpointercapture', endBoxGesture);
 
   // Khoanh vùng trỏ chuột (Marquee Selection) hoặc Click chọn trên mặt bảng
   let marqueePointerId = null;
@@ -791,6 +799,7 @@ export function setupSelectionManager() {
             obj,
             left: obj.left || 0,
             top: obj.top || 0,
+            hitPoints: Array.isArray(obj._hitPoints) ? obj._hitPoints.map((p) => ({ ...p })) : null,
           })),
         };
         marqueePointerId = event.pointerId;
@@ -827,18 +836,24 @@ export function setupSelectionManager() {
     const wp = screenToWorld(sp.x, sp.y);
 
     if (gesture && gesture.mode === 'move') {
-      const dx = wp.x - gesture.lastWorld.x;
-      const dy = wp.y - gesture.lastWorld.y;
-      if (Math.hypot(dx, dy) < 0.25) return;
+      const totalDx = wp.x - gesture.startWorld.x;
+      const totalDy = wp.y - gesture.startWorld.y;
+      if (!gesture.changed && Math.hypot(totalDx, totalDy) < 0.3) return;
       gesture.lastWorld = wp;
       gesture.changed = true;
       for (const it of gesture.items) {
         it.obj.set({
-          left: (it.obj.left || 0) + dx,
-          top: (it.obj.top || 0) + dy,
+          left: it.left + totalDx,
+          top: it.top + totalDy,
         });
+        if (it.hitPoints) {
+          it.obj._hitPoints = it.hitPoints.map((pt) => ({
+            ...pt,
+            x: pt.x + totalDx,
+            y: pt.y + totalDy,
+          }));
+        }
         it.obj.setCoords?.();
-        translateObjectHitPoints(it.obj, dx, dy);
       }
       fabricCanvas.requestRenderAll();
       syncSelectionOverlay();
@@ -902,6 +917,18 @@ export function setupSelectionManager() {
   };
   surface.addEventListener('pointerup', finishSurfaceSelection);
   surface.addEventListener('pointercancel', finishSurfaceSelection);
+  surface.addEventListener('lostpointercapture', finishSurfaceSelection);
+
+  window.addEventListener('blur', () => {
+    if (gesture) {
+      if (gesture.changed) remember(gesture.before);
+      gesture = null;
+    }
+    marqueePointerId = null;
+    marqueeStartWorld = null;
+    if (marqueeEl) marqueeEl.hidden = true;
+    syncSelectionOverlay();
+  });
 
   document.addEventListener('keydown', (event) => {
     if (state.tool !== 'select' || state.ended) return;
@@ -935,7 +962,9 @@ export function setupSelectionManager() {
   });
 
   window.addEventListener('app:sync-viewport', syncSelectionOverlay);
+  window.addEventListener('app:viewport-changed', syncSelectionOverlay);
   window.addEventListener('app:selection-updated', syncSelectionOverlay);
+  fabricCanvas.on('after:render', syncSelectionOverlay);
   window.addEventListener('app:tool-changed', ({ detail }) => {
     if (detail?.tool !== 'select') {
       clearSelection({ silent: true });
