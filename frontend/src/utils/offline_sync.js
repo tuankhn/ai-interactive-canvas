@@ -484,9 +484,19 @@ export async function checkServerConnectivity() {
 export async function captureAndSaveSnapshot({ triggerType = 'MANUAL', pageNumber = state.pageIndex + 1, recognizedLatex = '' } = {}) {
   const meta = getSessionMeta();
   const imageBase64 = withOpaqueBoardExport(
-    () => fabricCanvas.toDataURL({ format: 'png', multiplier: 2 }),
-    '#f4f7f5',
-    '#121214'
+    () => {
+      const webpUrl = fabricCanvas.toDataURL({
+        format: 'webp',
+        quality: 0.9,
+        multiplier: 1.5,
+      });
+      if (typeof webpUrl === 'string' && webpUrl.startsWith('data:image/webp')) {
+        return webpUrl;
+      }
+      return fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 });
+    },
+    '#F4F0E8',
+    '#191816'
   );
   const autoLatex = recognizedLatex || extractBoardTextMetadata();
 

@@ -100,8 +100,8 @@ export const ui = {
   footer: $('footerStatus')
 };
 export const toolNames = {
-  hand: 'Kéo bảng', pen: 'Bút vẽ', highlighter: 'Bút dạ quang', eraser: 'Tẩy nét',
-  areaEraser: 'Tẩy vùng', line: 'Đường thẳng', triangle: 'Tam giác',
+  select: 'Chọn & Di chuyển', hand: 'Kéo bảng', pen: 'Bút vẽ', highlighter: 'Bút dạ quang', eraser: 'Tẩy nét',
+  areaEraser: 'Tẩy khoanh vùng', line: 'Đoạn thẳng', triangle: 'Tam giác',
   circle: 'Hình tròn', ellipse: 'Hình elip', ruler: 'Thước kẻ ảo', text: 'Chữ'
 };
 export const shapeTools = new Set(['line', 'triangle', 'circle', 'ellipse']);
@@ -119,12 +119,25 @@ export const blankPage = () => ({
       ? '#111827'
       : '#ffffff',
 });
+export const FONT_FAMILY_MAP = {
+  hand: "'Segoe Print', 'Bradley Hand', 'Chalkboard SE', 'Comic Sans MS', cursive",
+  sans: "'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, sans-serif",
+  mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+  serif: "'Georgia', 'Cambria', 'Times New Roman', serif",
+};
 export const state = {
   tool: 'pen', activePointer: null, penInUse: false,
   activePointerType: null, lastPenSeenAt: -Infinity,
   stroke: null, previewFrame: 0, lastInputTime: 0,
   undoStack: [], redoStack: [],
-  pages: [blankPage()], pageIndex: 0, pageBusy: false, ended: false
+  pages: [blankPage()], pageIndex: 0, pageBusy: false, ended: false,
+  boardLocked: false,
+  strokeStyle: 'solid', // 'solid' | 'dashed' | 'dotted'
+  shapeFill: 'transparent',
+  opacity: 100,
+  fontFamily: 'sans', // 'hand' | 'sans' | 'mono' | 'serif'
+  fontSize: 26, // S=18, M=26, L=36, XL=50
+  textAlign: 'left', // 'left' | 'center' | 'right'
 };
 export function setStatus(message) {
   ui.save.textContent = message;

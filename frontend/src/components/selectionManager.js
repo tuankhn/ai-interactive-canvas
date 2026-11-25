@@ -1,0 +1,699 @@
+import { FabricImage, Path, Text, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
+import { $, stage, surface, fabricCanvas, state, setStatus, FONT_FAMILY_MAP } from '../utils/context.js';
+import { getScreenPoint, screenToWorld } from '../utils/pointer.js';
+import { isNearObject, intersects, getDashArrayForStyle } from '../utils/geometry.js';
+import { snapshot, remember, updateHint } from './history.js';
+import { closePanels } from './toolbar.js';
+import { openDirectCanvasTextEditor } from './drawingCanvas.js';
+
+let selectedObjects = [];
+let marqueeStartWorld = null;
+let gesture = null;
+let cropModeActive = false;
+let lastClickInfo = { time: 0, x: 0, y: 0, obj: null };
+
+let overlayRoot = null;
+let marqueeEl = null;
+let boxEl = null;
+let actionBarEl = null;
+let cropToggleBtn = null;
+let editTextBtn = null;
+
+function isTextObject(obj) {
+  return obj instanceof Text || obj instanceof Textbox || typeof obj?.text === 'string';
+}
+
+function isCroppableImage(obj) {
+  return obj instanceof FabricImage;
+}
+
+function computeUnionWorldBounds(objs) {
+  if (!objs.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const obj of objs) {
+    if (!obj || !fabricCanvas.getObjects().includes(obj)) continue;
+    const b = obj.getBoundingRect();
+    if (!b) continue;
+    minX = Math.min(minX, b.left);
+    minY = Math.min(minY, b.top);
+    maxX = Math.max(maxX, b.left + b.width);
+    maxY = Math.max(maxY, b.top + b.height);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return {
+    left: minX,
+    top: minY,
+    width: Math.max(8, maxX - minX),
+    height: Math.max(8, maxY - minY),
+  };
+}
+
+function worldRectToScreen(rect) {
+  const vpt = fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+  const z = vpt[0] || 1;
+  return {
+    left: rect.left * z + vpt[4],
+    top: rect.top * z + vpt[5],
+    width: rect.width * z,
+    height: rect.height * z,
+  };
+}
+
+export function getSelectedObjects() {
+  selectedObjects = selectedObjects.filter((o) => o && fabricCanvas.getObjects().includes(o));
+  return selectedObjects.slice();
+}
+
+export function clearSelection({ silent = false } = {}) {
+  selectedObjects = [];
+  cropModeActive = false;
+  syncSelectionOverlay();
+  if (!silent) {
+    window.dispatchEvent(new CustomEvent('app:selection-changed', { detail: { count: 0 } }));
+  }
+}
+
+export function syncSelectionOverlay() {
+  if (!boxEl) return;
+  selectedObjects = selectedObjects.filter((o) => o && fabricCanvas.getObjects().includes(o));
+
+  if (state.tool !== 'select' || selectedObjects.length === 0 || state.ended) {
+    boxEl.hidden = true;
+    if (actionBarEl) actionBarEl.hidden = true;
+    return;
+  }
+
+  const worldBounds = computeUnionWorldBounds(selectedObjects);
+  if (!worldBounds) {
+    boxEl.hidden = true;
+    if (actionBarEl) actionBarEl.hidden = true;
+    return;
+  }
+
+  const pad = 6;
+  const s = worldRectToScreen(worldBounds);
+  boxEl.hidden = false;
+  boxEl.classList.toggle('is-crop-mode', cropModeActive);
+  Object.assign(boxEl.style, {
+    left: `${s.left - pad}px`,
+    top: `${s.top - pad}px`,
+    width: `${Math.max(16, s.width + pad * 2)}px`,
+    height: `${Math.max(16, s.height + pad * 2)}px`,
+  });
+
+  if (actionBarEl) {
+    const singleText = selectedObjects.length === 1 && isTextObject(selectedObjects[0]);
+    const singleImg = selectedObjects.length === 1 && isCroppableImage(selectedObjects[0]);
+    if (editTextBtn) editTextBtn.hidden = !singleText;
+    if (cropToggleBtn) {
+      cropToggleBtn.hidden = !singleImg;
+      cropToggleBtn.classList.toggle('is-active', cropModeActive);
+      cropToggleBtn.setAttribute('aria-pressed', String(cropModeActive));
+    }
+    actionBarEl.hidden = false;
+    const barTop = s.top - pad - 38 < 58 ? s.top + s.height + pad + 8 : s.top - pad - 36;
+    Object.assign(actionBarEl.style, {
+      left: `${Math.max(8, Math.min(s.left - pad, stage.clientWidth - 200))}px`,
+      top: `${Math.max(8, barTop)}px`,
+    });
+  }
+}
+
+function findTopObjectAtPoint(worldPt) {
+  const objs = fabricCanvas.getObjects();
+  const z = fabricCanvas.getZoom() || 1;
+  const hitPad = 8 / z;
+  for (let i = objs.length - 1; i >= 0; i--) {
+    const obj = objs[i];
+    if (!obj || obj.visible === false) continue;
+    const b = obj.getBoundingRect();
+    if (!b) continue;
+    if (
+      worldPt.x < b.left - hitPad ||
+      worldPt.x > b.left + b.width + hitPad ||
+      worldPt.y < b.top - hitPad ||
+      worldPt.y > b.top + b.height + hitPad
+    ) {
+      continue;
+    }
+    if (obj instanceof Path && Array.isArray(obj._hitPoints) && obj._hitPoints.length > 0) {
+      if (isNearObject(obj, worldPt, Math.max(10 / z, (obj._hitWidth || 4) / 2))) {
+        return obj;
+      }
+      continue;
+    }
+    return obj;
+  }
+  return null;
+}
+
+function translateObjectHitPoints(obj, dx, dy) {
+  if (Array.isArray(obj._hitPoints)) {
+    obj._hitPoints = obj._hitPoints.map((pt) => ({
+      ...pt,
+      x: pt.x + dx,
+      y: pt.y + dy,
+    }));
+  }
+}
+
+function scaleObjectHitPoints(obj, anchorX, anchorY, sx, sy) {
+  if (Array.isArray(obj._hitPoints)) {
+    obj._hitPoints = obj._hitPoints.map((pt) => ({
+      ...pt,
+      x: anchorX + (pt.x - anchorX) * sx,
+      y: anchorY + (pt.y - anchorY) * sy,
+    }));
+  }
+}
+
+export function deleteSelectedObjects() {
+  const current = getSelectedObjects();
+  if (!current.length || state.ended) return;
+  const before = snapshot();
+  fabricCanvas.remove(...current);
+  clearSelection();
+  fabricCanvas.requestRenderAll();
+  remember(before);
+  updateHint();
+  setStatus(`Đã xóa ${current.length} đối tượng đã chọn`);
+}
+
+export function applyStyleToSelection(patch = {}) {
+  const current = getSelectedObjects();
+  if (!current.length) return false;
+  const before = snapshot();
+
+  for (const obj of current) {
+    if (patch.color) {
+      if (isTextObject(obj)) {
+        obj.set('fill', patch.color);
+      } else if (obj instanceof Path && (!obj.stroke || obj.stroke === 'transparent')) {
+        obj.set('fill', patch.color);
+      } else if (obj.stroke) {
+        obj.set('stroke', patch.color);
+      }
+    }
+    if (patch.shapeFill !== undefined && !isTextObject(obj) && !(obj instanceof Path)) {
+      obj.set('fill', patch.shapeFill === 'transparent' ? 'rgba(0,0,0,0)' : patch.shapeFill);
+    }
+    if (patch.width !== undefined && !isTextObject(obj)) {
+      const w = Number(patch.width);
+      if (obj.stroke) {
+        obj.set('strokeWidth', w);
+        if (obj.meta?.strokeStyle) {
+          obj.set('strokeDashArray', getDashArrayForStyle(obj.meta.strokeStyle, w));
+        }
+      }
+      obj._hitWidth = w;
+    }
+    if (patch.strokeStyle && obj.stroke) {
+      const w = obj.strokeWidth || obj._hitWidth || 4;
+      obj.set('strokeDashArray', getDashArrayForStyle(patch.strokeStyle, w));
+      obj.meta = { ...(obj.meta || {}), strokeStyle: patch.strokeStyle };
+    }
+    if (patch.opacity !== undefined) {
+      obj.set('opacity', Math.max(0.1, Math.min(1, Number(patch.opacity) / 100)));
+    }
+    if (patch.fontFamily && isTextObject(obj)) {
+      const fam = FONT_FAMILY_MAP[patch.fontFamily] || FONT_FAMILY_MAP.sans;
+      obj.set('fontFamily', fam);
+      obj.meta = { ...(obj.meta || {}), fontKey: patch.fontFamily };
+    }
+    if (patch.fontSize && isTextObject(obj)) {
+      obj.set('fontSize', Number(patch.fontSize));
+    }
+    if (patch.textAlign && isTextObject(obj)) {
+      obj.set('textAlign', patch.textAlign);
+    }
+    obj.setCoords?.();
+  }
+
+  fabricCanvas.requestRenderAll();
+  remember(before);
+  syncSelectionOverlay();
+  return true;
+}
+
+export function applyLayerActionToSelection(action) {
+  const list = fabricCanvas.getObjects();
+  const current = getSelectedObjects();
+  const targets = current.length ? current : list.length ? [list[list.length - 1]] : [];
+  if (!targets.length) return;
+  const before = snapshot();
+
+  for (const obj of targets) {
+    const idx = list.indexOf(obj);
+    if (idx === -1) continue;
+    if (action === 'back') {
+      fabricCanvas.sendObjectToBack?.(obj);
+    } else if (action === 'front') {
+      fabricCanvas.bringObjectToFront?.(obj);
+    } else if (action === 'backward' && idx > 0) {
+      fabricCanvas.sendObjectBackwards?.(obj);
+    } else if (action === 'forward' && idx < list.length - 1) {
+      fabricCanvas.bringObjectForward?.(obj);
+    }
+  }
+  fabricCanvas.requestRenderAll();
+  remember(before);
+  setStatus('Đã cập nhật thứ tự lớp hiển thị');
+}
+
+function buildOverlayDOM() {
+  if (overlayRoot) return;
+  overlayRoot = document.createElement('div');
+  overlayRoot.id = 'selectionOverlayRoot';
+  overlayRoot.className = 'selection-overlay-root';
+
+  marqueeEl = document.createElement('div');
+  marqueeEl.id = 'selectionMarquee';
+  marqueeEl.className = 'selection-marquee';
+  marqueeEl.hidden = true;
+
+  boxEl = document.createElement('div');
+  boxEl.id = 'selectionBoundingBox';
+  boxEl.className = 'selection-bounding-box';
+  boxEl.hidden = true;
+  ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach((dir) => {
+    const h = document.createElement('span');
+    h.className = `sel-handle sel-${dir}`;
+    h.dataset.handle = dir;
+    boxEl.appendChild(h);
+  });
+
+  actionBarEl = document.createElement('div');
+  actionBarEl.id = 'selectionActionBar';
+  actionBarEl.className = 'selection-action-bar';
+  actionBarEl.hidden = true;
+
+  editTextBtn = document.createElement('button');
+  editTextBtn.type = 'button';
+  editTextBtn.className = 'sel-action-btn';
+  editTextBtn.textContent = 'Sửa chữ';
+  editTextBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const target = getSelectedObjects().find(isTextObject);
+    if (target) {
+      clearSelection();
+      openDirectCanvasTextEditor({ x: target.left, y: target.top }, target);
+    }
+  });
+
+  cropToggleBtn = document.createElement('button');
+  cropToggleBtn.type = 'button';
+  cropToggleBtn.className = 'sel-action-btn';
+  cropToggleBtn.textContent = 'Cắt khung (Crop)';
+  cropToggleBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    cropModeActive = !cropModeActive;
+    syncSelectionOverlay();
+    setStatus(cropModeActive ? 'Kéo các cạnh khung xanh để cắt (crop) vùng ảnh' : 'Đã tắt chế độ cắt ảnh');
+  });
+
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'sel-action-btn sel-action-danger';
+  delBtn.textContent = 'Xóa';
+  delBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    deleteSelectedObjects();
+  });
+
+  actionBarEl.append(editTextBtn, cropToggleBtn, delBtn);
+  overlayRoot.append(marqueeEl, boxEl, actionBarEl);
+  stage.appendChild(overlayRoot);
+}
+
+export function setupSelectionManager() {
+  buildOverlayDOM();
+
+  // Kéo di chuyển hoặc kéo 8 nút góc/cạnh trên khung chọn (#selectionBoundingBox)
+  boxEl.addEventListener('pointerdown', (event) => {
+    if (state.tool !== 'select' || state.ended || event.button !== 0) return;
+    const current = getSelectedObjects();
+    if (!current.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closePanels();
+
+    const sp = getScreenPoint(event);
+    const wp = screenToWorld(sp.x, sp.y);
+    const handle = event.target.closest('[data-handle]')?.dataset?.handle || null;
+
+    // Kiểm tra nhấp đúp trên đối tượng chữ đang chọn -> mở gõ sửa chữ trực tiếp
+    const now = performance.now();
+    if (!handle && current.length === 1 && isTextObject(current[0]) && now - lastClickInfo.time < 360) {
+      const targetText = current[0];
+      lastClickInfo = { time: 0, x: 0, y: 0, obj: null };
+      clearSelection();
+      openDirectCanvasTextEditor({ x: targetText.left, y: targetText.top }, targetText);
+      return;
+    }
+    lastClickInfo = { time: now, x: wp.x, y: wp.y, obj: current[0] };
+
+    const initBounds = computeUnionWorldBounds(current);
+    if (!initBounds) return;
+
+    gesture = {
+      pointerId: event.pointerId,
+      mode: handle ? (cropModeActive && current.length === 1 && isCroppableImage(current[0]) ? 'crop' : 'resize') : 'move',
+      handle,
+      startWorld: wp,
+      lastWorld: wp,
+      initBounds,
+      before: snapshot(),
+      changed: false,
+      items: current.map((obj) => ({
+        obj,
+        left: obj.left || 0,
+        top: obj.top || 0,
+        scaleX: obj.scaleX || 1,
+        scaleY: obj.scaleY || 1,
+        fontSize: obj.fontSize || 24,
+        cropX: obj.cropX || 0,
+        cropY: obj.cropY || 0,
+        width: obj.width || 100,
+        height: obj.height || 100,
+        hitPoints: Array.isArray(obj._hitPoints) ? obj._hitPoints.map((p) => ({ ...p })) : null,
+      })),
+    };
+    try { boxEl.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+  });
+
+  boxEl.addEventListener('pointermove', (event) => {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    event.preventDefault();
+    const sp = getScreenPoint(event);
+    const wp = screenToWorld(sp.x, sp.y);
+
+    if (gesture.mode === 'move') {
+      const dx = wp.x - gesture.lastWorld.x;
+      const dy = wp.y - gesture.lastWorld.y;
+      if (Math.hypot(dx, dy) < 0.2) return;
+      gesture.lastWorld = wp;
+      gesture.changed = true;
+      for (const item of gesture.items) {
+        item.obj.set({
+          left: (item.obj.left || 0) + dx,
+          top: (item.obj.top || 0) + dy,
+        });
+        item.obj.setCoords?.();
+        translateObjectHitPoints(item.obj, dx, dy);
+      }
+      fabricCanvas.requestRenderAll();
+      syncSelectionOverlay();
+      return;
+    }
+
+    const b = gesture.initBounds;
+    const h = gesture.handle || 'se';
+    let newLeft = b.left;
+    let newTop = b.top;
+    let newRight = b.left + b.width;
+    let newBottom = b.top + b.height;
+
+    if (h.includes('w')) newLeft = Math.min(newRight - 16, wp.x);
+    if (h.includes('e')) newRight = Math.max(newLeft + 16, wp.x);
+    if (h.includes('n')) newTop = Math.min(newBottom - 16, wp.y);
+    if (h.includes('s')) newBottom = Math.max(newTop + 16, wp.y);
+
+    const newW = Math.max(16, newRight - newLeft);
+    const newH = Math.max(16, newBottom - newTop);
+
+    if (gesture.mode === 'crop' && gesture.items.length === 1) {
+      const it = gesture.items[0];
+      const img = it.obj;
+      const sx = it.scaleX || 1;
+      const sy = it.scaleY || 1;
+      const deltaLeft = (newLeft - b.left) / sx;
+      const deltaTop = (newTop - b.top) / sy;
+      const nextCropX = Math.max(0, it.cropX + deltaLeft);
+      const nextCropY = Math.max(0, it.cropY + deltaTop);
+      const natW = img.getElement?.()?.naturalWidth || it.width + it.cropX;
+      const natH = img.getElement?.()?.naturalHeight || it.height + it.cropY;
+      const nextW = Math.max(20, Math.min(natW - nextCropX, newW / sx));
+      const nextH = Math.max(20, Math.min(natH - nextCropY, newH / sy));
+
+      img.set({
+        left: newLeft,
+        top: newTop,
+        cropX: nextCropX,
+        cropY: nextCropY,
+        width: nextW,
+        height: nextH,
+      });
+      img.setCoords?.();
+      gesture.changed = true;
+      fabricCanvas.requestRenderAll();
+      syncSelectionOverlay();
+      return;
+    }
+
+    // Co giãn (Resize) toàn bộ vùng chọn
+    const ratioX = newW / Math.max(1, b.width);
+    const ratioY = newH / Math.max(1, b.height);
+    gesture.changed = true;
+
+    for (const it of gesture.items) {
+      const relX = (it.left - b.left) / Math.max(1, b.width);
+      const relY = (it.top - b.top) / Math.max(1, b.height);
+      const targetLeft = newLeft + relX * newW;
+      const targetTop = newTop + relY * newH;
+
+      if (isTextObject(it.obj)) {
+        const uniformRatio = Math.max(0.35, (ratioX + ratioY) / 2);
+        it.obj.set({
+          left: targetLeft,
+          top: targetTop,
+          fontSize: Math.max(11, Math.round(it.fontSize * uniformRatio)),
+        });
+      } else {
+        it.obj.set({
+          left: targetLeft,
+          top: targetTop,
+          scaleX: it.scaleX * ratioX,
+          scaleY: it.scaleY * ratioY,
+        });
+      }
+      if (it.hitPoints) {
+        it.obj._hitPoints = it.hitPoints.map((pt) => ({
+          ...pt,
+          x: newLeft + ((pt.x - b.left) / Math.max(1, b.width)) * newW,
+          y: newTop + ((pt.y - b.top) / Math.max(1, b.height)) * newH,
+        }));
+      }
+      it.obj.setCoords?.();
+    }
+    fabricCanvas.requestRenderAll();
+    syncSelectionOverlay();
+  });
+
+  const endBoxGesture = (event) => {
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    if (gesture.changed) {
+      remember(gesture.before);
+      setStatus(gesture.mode === 'crop' ? 'Đã cắt (crop) vùng chọn' : 'Đã cập nhật vị trí / kích thước vùng chọn');
+    }
+    gesture = null;
+    syncSelectionOverlay();
+  };
+  boxEl.addEventListener('pointerup', endBoxGesture);
+  boxEl.addEventListener('pointercancel', endBoxGesture);
+
+  // Khoanh vùng trỏ chuột (Marquee Selection) hoặc Click chọn trên mặt bảng
+  let marqueePointerId = null;
+  surface.addEventListener('pointerdown', (event) => {
+    if (state.tool !== 'select' || state.ended || state.pageBusy) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (stage.classList.contains('is-panning') || stage.classList.contains('is-panning-active')) return;
+
+    event.preventDefault();
+    closePanels();
+    const sp = getScreenPoint(event);
+    const wp = screenToWorld(sp.x, sp.y);
+    const hitObj = findTopObjectAtPoint(wp);
+    const now = performance.now();
+
+    if (hitObj) {
+      // Nhấp đúp vào đối tượng chữ -> mở sửa chữ trực tiếp
+      if (isTextObject(hitObj) && lastClickInfo.obj === hitObj && now - lastClickInfo.time < 360) {
+        lastClickInfo = { time: 0, x: 0, y: 0, obj: null };
+        clearSelection();
+        openDirectCanvasTextEditor({ x: hitObj.left, y: hitObj.top }, hitObj);
+        return;
+      }
+      lastClickInfo = { time: now, x: wp.x, y: wp.y, obj: hitObj };
+
+      if (event.shiftKey) {
+        if (selectedObjects.includes(hitObj)) {
+          selectedObjects = selectedObjects.filter((o) => o !== hitObj);
+        } else {
+          selectedObjects.push(hitObj);
+        }
+      } else {
+        selectedObjects = [hitObj];
+      }
+      cropModeActive = false;
+      syncSelectionOverlay();
+      window.dispatchEvent(new CustomEvent('app:selection-changed', { detail: { count: selectedObjects.length } }));
+
+      // Cho phép nhấp và kéo di chuyển ngay trong 1 thao tác mượt mà
+      const initBounds = computeUnionWorldBounds(selectedObjects);
+      if (initBounds) {
+        gesture = {
+          pointerId: event.pointerId,
+          mode: 'move',
+          handle: null,
+          startWorld: wp,
+          lastWorld: wp,
+          initBounds,
+          before: snapshot(),
+          changed: false,
+          items: selectedObjects.map((obj) => ({
+            obj,
+            left: obj.left || 0,
+            top: obj.top || 0,
+          })),
+        };
+        marqueePointerId = event.pointerId;
+        try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+      }
+      return;
+    }
+
+    // Nhấp đúp vào vùng trống khi đang ở công cụ Chọn (V) -> gõ chữ trực tiếp giống Excalidraw!
+    if (!lastClickInfo.obj && now - lastClickInfo.time < 340 && Math.hypot(wp.x - lastClickInfo.x, wp.y - lastClickInfo.y) < 14) {
+      lastClickInfo = { time: 0, x: 0, y: 0, obj: null };
+      clearSelection();
+      openDirectCanvasTextEditor(wp, null);
+      return;
+    }
+    lastClickInfo = { time: now, x: wp.x, y: wp.y, obj: null };
+
+    clearSelection();
+    marqueePointerId = event.pointerId;
+    marqueeStartWorld = wp;
+    marqueeEl.hidden = false;
+    Object.assign(marqueeEl.style, {
+      left: `${sp.x}px`,
+      top: `${sp.y}px`,
+      width: '0px',
+      height: '0px',
+    });
+    try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+  });
+
+  surface.addEventListener('pointermove', (event) => {
+    if (state.tool !== 'select' || event.pointerId !== marqueePointerId) return;
+    const sp = getScreenPoint(event);
+    const wp = screenToWorld(sp.x, sp.y);
+
+    if (gesture && gesture.mode === 'move') {
+      const dx = wp.x - gesture.lastWorld.x;
+      const dy = wp.y - gesture.lastWorld.y;
+      if (Math.hypot(dx, dy) < 0.25) return;
+      gesture.lastWorld = wp;
+      gesture.changed = true;
+      for (const it of gesture.items) {
+        it.obj.set({
+          left: (it.obj.left || 0) + dx,
+          top: (it.obj.top || 0) + dy,
+        });
+        it.obj.setCoords?.();
+        translateObjectHitPoints(it.obj, dx, dy);
+      }
+      fabricCanvas.requestRenderAll();
+      syncSelectionOverlay();
+      return;
+    }
+
+    if (!marqueeStartWorld) return;
+    const sStart = worldRectToScreen({
+      left: Math.min(marqueeStartWorld.x, wp.x),
+      top: Math.min(marqueeStartWorld.y, wp.y),
+      width: Math.abs(wp.x - marqueeStartWorld.x),
+      height: Math.abs(wp.y - marqueeStartWorld.y),
+    });
+    Object.assign(marqueeEl.style, {
+      left: `${sStart.left}px`,
+      top: `${sStart.top}px`,
+      width: `${sStart.width}px`,
+      height: `${sStart.height}px`,
+    });
+  });
+
+  const finishSurfaceSelection = (event) => {
+    if (event.pointerId !== marqueePointerId) return;
+    marqueePointerId = null;
+
+    if (gesture) {
+      if (gesture.changed) {
+        remember(gesture.before);
+        setStatus('Đã di chuyển đối tượng');
+      }
+      gesture = null;
+      syncSelectionOverlay();
+      return;
+    }
+
+    if (!marqueeStartWorld) return;
+    const sp = getScreenPoint(event);
+    const wp = screenToWorld(sp.x, sp.y);
+    const box = {
+      left: Math.min(marqueeStartWorld.x, wp.x),
+      top: Math.min(marqueeStartWorld.y, wp.y),
+      width: Math.abs(wp.x - marqueeStartWorld.x),
+      height: Math.abs(wp.y - marqueeStartWorld.y),
+    };
+    marqueeStartWorld = null;
+    marqueeEl.hidden = true;
+
+    if (box.width < 4 && box.height < 4) return;
+
+    selectedObjects = fabricCanvas.getObjects().filter((obj) => {
+      if (!obj || obj.visible === false) return false;
+      const b = obj.getBoundingRect();
+      return b && intersects(b, box);
+    });
+    cropModeActive = false;
+    syncSelectionOverlay();
+    window.dispatchEvent(new CustomEvent('app:selection-changed', { detail: { count: selectedObjects.length } }));
+    if (selectedObjects.length > 0) {
+      setStatus(`Đã chọn ${selectedObjects.length} đối tượng trong vùng khoanh`);
+    }
+  };
+  surface.addEventListener('pointerup', finishSurfaceSelection);
+  surface.addEventListener('pointercancel', finishSurfaceSelection);
+
+  document.addEventListener('keydown', (event) => {
+    if (state.tool !== 'select' || state.ended) return;
+    const active = document.activeElement;
+    if (active && (active.matches('input,textarea,select') || active.isContentEditable)) return;
+    if (document.querySelector('dialog[open]:not([popover])')) return;
+
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (getSelectedObjects().length > 0) {
+        event.preventDefault();
+        deleteSelectedObjects();
+      }
+    } else if (event.key === 'Escape') {
+      clearSelection();
+    } else if (event.key === 'Enter' && getSelectedObjects().length === 1 && isTextObject(getSelectedObjects()[0])) {
+      event.preventDefault();
+      const tObj = getSelectedObjects()[0];
+      clearSelection();
+      openDirectCanvasTextEditor({ x: tObj.left, y: tObj.top }, tObj);
+    }
+  });
+
+  window.addEventListener('app:sync-viewport', syncSelectionOverlay);
+  window.addEventListener('app:selection-updated', syncSelectionOverlay);
+  window.addEventListener('app:tool-changed', ({ detail }) => {
+    if (detail?.tool !== 'select') {
+      clearSelection({ silent: true });
+    } else {
+      syncSelectionOverlay();
+    }
+  });
+}

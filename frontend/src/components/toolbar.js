@@ -157,13 +157,13 @@ export function togglePanel(name) {
       left = rect.right + 10;
       top = rect.top;
     } else if (isBottomDock) {
-      left = rect.left + rect.width / 2 - pw / 2;
+      left = name === 'aiStudio' ? rect.right - pw : rect.left + rect.width / 2 - pw / 2;
       top = rect.top - ph - 10;
       if (top < 62) {
         top = Math.max(62, vh - ph - 72);
       }
     } else {
-      left = rect.left + rect.width / 2 - pw / 2;
+      left = name === 'aiStudio' ? rect.right - pw : rect.left + rect.width / 2 - pw / 2;
       top = rect.bottom + 10;
     }
 
@@ -174,10 +174,16 @@ export function togglePanel(name) {
   });
 }
 
-export function setTool(next) {
+export function setTool(next, { showGuide = false } = {}) {
   if (state.ended) return;
+  if (next === 'hand' && state.boardLocked) {
+    showToolGuideBanner('Mặt bảng đang KHOÁ — Bấm biểu tượng ổ khoá 🔒 (hoặc phím Q) để mở khoá trước khi kéo trang.');
+    return;
+  }
   state.tool = next;
   stage?.classList.toggle('is-panning', next === 'hand');
+  stage?.classList.toggle('is-select-tool', next === 'select');
+  stage?.classList.toggle('is-text-tool', next === 'text');
   document.querySelectorAll('[data-tool]').forEach((button) => {
     const selected = button.dataset.tool === next;
     button.classList.toggle('is-active', selected);
@@ -186,8 +192,56 @@ export function setTool(next) {
   $('shapeMenu')?.classList.toggle('is-active', shapeTools.has(next));
   $('eraserMenu')?.classList.toggle('is-active', eraserTools.has(next));
   closePanels();
-  ui.input.textContent = `Đã chọn: ${toolNames[next]}`;
-  setStatus(`Đang dùng: ${toolNames[next]}`);
+  const friendlyName = toolNames[next] || next;
+  ui.input.textContent = `Đã chọn: ${friendlyName}`;
+  setStatus(`Đang dùng: ${friendlyName}`);
+  window.dispatchEvent(new CustomEvent('app:tool-changed', { detail: { tool: next } }));
+
+  if (showGuide) {
+    const btn =
+      document.querySelector(`#toolbar [data-tool="${next}"]`) ||
+      document.querySelector(`.tool-popover [data-tool="${next}"]`) ||
+      (eraserTools.has(next) ? $('eraserMenu') : null);
+    if (btn?.dataset?.guide) {
+      showToolGuideBanner(btn.dataset.guide);
+    }
+  }
+}
+
+let guideHideTimer = null;
+export function showToolGuideBanner(message) {
+  const pill = $('toolGuidePill');
+  if (!pill || !message) return;
+  pill.textContent = message;
+  pill.hidden = false;
+  if (guideHideTimer) clearTimeout(guideHideTimer);
+  guideHideTimer = setTimeout(() => {
+    pill.hidden = true;
+  }, 4200);
+}
+
+export function toggleBoardLock(forceValue) {
+  if (state.ended) return;
+  const nextLocked = typeof forceValue === 'boolean' ? forceValue : !state.boardLocked;
+  state.boardLocked = nextLocked;
+  const lockBtn = $('lockBoardBtn');
+  if (lockBtn) {
+    lockBtn.classList.toggle('is-active', nextLocked);
+    lockBtn.classList.toggle('is-locked', nextLocked);
+    lockBtn.setAttribute('aria-pressed', String(nextLocked));
+    const tipText = nextLocked ? 'Mở khoá di chuyển trang — Q' : 'Khoá di chuyển trang — Q';
+    lockBtn.dataset.tip = tipText;
+  }
+  stage?.classList.toggle('is-board-locked', nextLocked);
+  if (nextLocked && state.tool === 'hand') {
+    setTool('pen');
+  }
+  window.dispatchEvent(new CustomEvent('app:board-lock-changed', { detail: { locked: nextLocked } }));
+  const msg = nextLocked
+    ? 'Đã KHOÁ mặt bảng & phân trang — Tỳ tay viết thoải mái không lo bị trượt trang (Bấm Q để mở khoá)'
+    : 'Đã MỞ KHOÁ mặt bảng — Có thể kéo bảng vô hạn, thu phóng và chuyển trang bình thường';
+  setStatus(msg);
+  showToolGuideBanner(msg);
 }
 
 export function syncColorSelection() {
@@ -458,30 +512,36 @@ function setupExcalidrawKeyboardShortcuts() {
     if (document.querySelector('dialog[open]:not([popover])')) return;
 
     const key = event.key.toLowerCase();
-    if (key === 'v') {
+    if (key === 'q') {
       event.preventDefault();
-      setTool('hand');
-    } else if (key === 'p') {
+      toggleBoardLock();
+    } else if (key === 'v') {
       event.preventDefault();
-      setTool('pen');
+      setTool('select', { showGuide: true });
     } else if (key === 'h') {
       event.preventDefault();
-      setTool('highlighter');
+      setTool('hand', { showGuide: true });
+    } else if (key === 'p') {
+      event.preventDefault();
+      setTool('pen', { showGuide: true });
+    } else if (key === 'g') {
+      event.preventDefault();
+      setTool('highlighter', { showGuide: true });
     } else if (key === 'e') {
       event.preventDefault();
-      setTool('eraser');
+      setTool('eraser', { showGuide: true });
     } else if (key === 's') {
       event.preventDefault();
       togglePanel('shapes');
+    } else if (key === 'l') {
+      event.preventDefault();
+      setTool('line', { showGuide: true });
     } else if (key === 'r') {
       event.preventDefault();
       toggleRuler();
-    } else if (key === 'c') {
-      event.preventDefault();
-      togglePanel('colors');
     } else if (key === 't') {
       event.preventDefault();
-      setTool('text');
+      setTool('text', { showGuide: true });
     } else if (key === 'o') {
       event.preventDefault();
       $('handwritingTool')?.click();
@@ -489,16 +549,139 @@ function setupExcalidrawKeyboardShortcuts() {
   });
 }
 
+function setupInstantTooltipsAndGuides() {
+  const tipEl = $('instantTooltip');
+  let showTimer = null;
+  let activeAnchor = null;
+
+  function resolveTooltipText(el) {
+    if (!el) return '';
+    if (el.getAttribute('title')) {
+      el.dataset.tip = el.getAttribute('title');
+      el.removeAttribute('title');
+    }
+    return el.dataset.tip || '';
+  }
+
+  function hideInstantTooltip() {
+    if (showTimer) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+    activeAnchor = null;
+    if (tipEl) tipEl.hidden = true;
+  }
+
+  function positionInstantTooltip(anchor) {
+    if (!tipEl || !anchor) return;
+    const text = resolveTooltipText(anchor);
+    if (!text) {
+      hideInstantTooltip();
+      return;
+    }
+    tipEl.textContent = text;
+    tipEl.hidden = false;
+
+    const r = anchor.getBoundingClientRect();
+    const tw = tipEl.offsetWidth || 120;
+    const th = tipEl.offsetHeight || 28;
+    const margin = 8;
+    let left = r.left + r.width / 2 - tw / 2;
+    let top = r.bottom + 8;
+
+    // Nếu nút nằm sát đáy màn hình hoặc bên trong cột tuỳ chỉnh trái, đặt tooltip hợp lý để không che mất con trỏ
+    if (anchor.closest('#contextPropertyPanel')) {
+      left = r.right + 10;
+      top = r.top + r.height / 2 - th / 2;
+    } else if (top + th + margin > window.innerHeight) {
+      top = r.top - th - 8;
+    }
+
+    left = Math.max(margin, Math.min(left, window.innerWidth - tw - margin));
+    top = Math.max(margin, Math.min(top, window.innerHeight - th - margin));
+    tipEl.style.left = `${Math.round(left)}px`;
+    tipEl.style.top = `${Math.round(top)}px`;
+  }
+
+  document.addEventListener('pointerover', (event) => {
+    if (event.pointerType === 'touch') return;
+    const target = event.target.closest?.('button, [data-tip], [title]');
+    if (!target || target.disabled) {
+      hideInstantTooltip();
+      return;
+    }
+    const text = resolveTooltipText(target);
+    if (!text) {
+      hideInstantTooltip();
+      return;
+    }
+    if (target === activeAnchor) return;
+    if (showTimer) clearTimeout(showTimer);
+    activeAnchor = target;
+    showTimer = setTimeout(() => {
+      if (activeAnchor === target) {
+        positionInstantTooltip(target);
+      }
+    }, 55);
+  });
+
+  document.addEventListener('pointerout', (event) => {
+    if (activeAnchor && !activeAnchor.contains(event.relatedTarget)) {
+      hideInstantTooltip();
+    }
+  });
+
+  document.addEventListener('focusin', (event) => {
+    const target = event.target.closest?.('button, [data-tip], [title]');
+    if (target && target.matches(':focus-visible')) {
+      activeAnchor = target;
+      positionInstantTooltip(target);
+    }
+  });
+
+  document.addEventListener('focusout', hideInstantTooltip);
+  document.addEventListener('pointerdown', hideInstantTooltip);
+  window.addEventListener('scroll', hideInstantTooltip, true);
+
+  // Hướng dẫn trực quan ngay khi người dùng nhấp vào bất kỳ nút chức năng nào có [data-guide]
+  document.addEventListener('click', (event) => {
+    const btn = event.target.closest?.('[data-guide]');
+    if (!btn || btn.disabled || btn.id === 'lockBoardBtn') return;
+    if (btn.dataset.guide) {
+      showToolGuideBanner(btn.dataset.guide);
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') hideInstantTooltip();
+  });
+}
+
 export function setupToolbar() {
   document.querySelectorAll('[data-tool]').forEach((button) => {
-    button.addEventListener('click', () => setTool(button.dataset.tool));
+    button.addEventListener('click', () => setTool(button.dataset.tool, { showGuide: true }));
   });
-  $('eraserMenu')?.addEventListener('click', () => togglePanel('erasers'));
+
+  $('lockBoardBtn')?.addEventListener('click', () => toggleBoardLock());
+
+  // Bấm nút Tẩy lần 1 -> kích hoạt ngay Tẩy từng phần; đang dùng Tẩy mà bấm thêm lần 2 -> mở menu chọn Tẩy khoanh vùng
+  $('eraserMenu')?.addEventListener('click', () => {
+    if (!eraserTools.has(state.tool)) {
+      setTool('eraser', { showGuide: true });
+    } else {
+      togglePanel('erasers');
+    }
+  });
+
   $('shapeMenu')?.addEventListener('click', () => togglePanel('shapes'));
   $('colorMenu')?.addEventListener('click', () => togglePanel('colors'));
   $('aiStudioMenuBtn')?.addEventListener('click', () => togglePanel('aiStudio'));
+  $('openGeo3dFromMoreBtn')?.addEventListener('click', () => {
+    closePanels();
+    $('geometry3dTool')?.click();
+  });
 
-  // Đóng menu Học tập AI khi chọn một tính năng mở hộp thoại (giữ mở khi bật/tắt công tắc Tự động)
+  // Đóng menu mở rộng (⋮) khi chọn tính năng (giữ mở khi bật/tắt công tắc Tự động)
   $('aiToolsPopover')?.addEventListener('click', (event) => {
     const btn = event.target.closest('button');
     if (btn && btn.id !== 'autoAiToggle') {
@@ -506,8 +689,8 @@ export function setupToolbar() {
     }
   });
 
-  ui.color.addEventListener('input', syncColorSelection);
-  ui.width.addEventListener('input', syncWidthSelection);
+  ui.color?.addEventListener('input', syncColorSelection);
+  ui.width?.addEventListener('input', syncWidthSelection);
   document.querySelectorAll('[data-color]').forEach((button) => {
     button.addEventListener('click', () => {
       ui.color.value = button.dataset.color;
@@ -524,7 +707,11 @@ export function setupToolbar() {
     button.addEventListener('click', () => setBackground(button.dataset.background));
   });
   document.addEventListener('pointerdown', (event) => {
-    if (!toolbar.contains(event.target)) closePanels();
+    const clickedInsideToolbar = toolbar?.contains(event.target);
+    const clickedInsidePopover = Boolean(event.target.closest?.('.tool-popover'));
+    if (!clickedInsideToolbar && !clickedInsidePopover) {
+      closePanels();
+    }
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
@@ -545,4 +732,5 @@ export function setupToolbar() {
   setupSystemPopoverPositioning();
   setupToolbarErgonomicDock();
   setupExcalidrawKeyboardShortcuts();
+  setupInstantTooltipsAndGuides();
 }

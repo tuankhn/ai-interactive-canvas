@@ -3,6 +3,8 @@ import { setTool, closePanels, syncColorSelection, syncWidthSelection, setupTool
 import { syncBackgroundButtons, updateHint, setupHistoryShortcuts } from '../components/history.js';
 import { refreshPages, restoreSavedPages, persistPages, setupPageControls } from '../components/pageManager.js';
 import { finishStroke, setupDrawingCanvas } from '../components/drawingCanvas.js';
+import { setupSelectionManager } from '../components/selectionManager.js';
+import { setupPropertyInspector } from '../components/propertyInspector.js';
 import { setupBoardDialogs } from '../components/boardDialogs.js';
 import { setupAIRecognition } from '../components/aiRecognition.js';
 import { setupOfflineSync } from '../utils/offline_sync.js';
@@ -183,6 +185,8 @@ export async function initWhiteboard() {
   setupHistoryShortcuts();
   setupPageControls();
   setupDrawingCanvas();
+  setupSelectionManager();
+  setupPropertyInspector();
   setupBoardDialogs();
   setupAIRecognition();
   setupOfflineSync();
@@ -224,6 +228,11 @@ export async function initWhiteboard() {
     toolbar.querySelectorAll('button,input').forEach((control) => {
       if (control.id !== 'captureButton') control.disabled = true;
     });
+    document.querySelectorAll('.tool-popover button, .tool-popover input, #contextPropertyPanel button, #contextPropertyPanel input').forEach((control) => {
+      control.disabled = true;
+    });
+    const insp = $('contextPropertyPanel');
+    if (insp) insp.hidden = true;
     $('prevPage').disabled = true;
     $('nextPage').disabled = true;
     $('addPageButton').disabled = true;

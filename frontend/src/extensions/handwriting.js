@@ -782,10 +782,11 @@ function setupBoardGraphEditor() {
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.id = 'plotlyEditTool';
-  toggle.className = 'tool-button pg-edit-tool';
+  toggle.className = 'tool-button pg-edit-tool more-menu-item';
   toggle.dataset.tool = 'graphEdit';
-  toggle.textContent = 'Chỉnh đồ thị';
-  toggle.title = 'Chọn đồ thị đã lưu trên bảng, kéo để di chuyển, kéo góc để phóng to/thu nhỏ';
+  toggle.textContent = 'Chỉnh sửa đồ thị trên bảng';
+  toggle.title = 'Chọn đồ thị đã chèn trên bảng để kéo di chuyển hoặc phóng to/thu nhỏ';
+  toggle.dataset.guide = 'Chỉnh đồ thị — Nhấp vào ảnh đồ thị đã chèn trên bảng để kéo di chuyển hoặc nắm 4 góc thu phóng.';
   toggle.setAttribute('aria-label', toggle.title);
   toggle.setAttribute('aria-pressed', 'false');
   $('plotlyGraphTool').insertAdjacentElement('afterend', toggle);
@@ -1031,6 +1032,11 @@ function setupBoardGraphEditor() {
       deactivate();
     }
   });
+  window.addEventListener('app:tool-changed', ({ detail }) => {
+    if (detail?.tool !== 'graphEdit' && !layer.hidden) {
+      deactivate();
+    }
+  });
   for (const id of ['prevPage', 'nextPage', 'addPageButton', 'deletePageButton', 'clearButton', 'endSession']) {
     $(id)?.addEventListener('click', () => { if (!layer.hidden) deactivate(); });
   }
@@ -1060,9 +1066,10 @@ export function setupGraphExtension() {
   const button = document.createElement('button');
   button.id = 'plotlyGraphTool';
   button.type = 'button';
-  button.className = 'tool-button';
-  button.textContent = 'Đồ thị';
-  button.title = 'Vẽ đồ thị Plotly từ phương trình hoặc kết quả chữ viết tay';
+  button.className = 'tool-button more-menu-item';
+  button.textContent = 'Đồ thị hàm số 2D';
+  button.title = 'Vẽ đồ thị hàm số 2D Plotly từ phương trình hoặc chữ viết tay';
+  button.dataset.guide = 'Đồ thị 2D — Nhập hàm số y = f(x) để vẽ đường cong tương tác, trượt hệ số và chèn vào mặt bảng.';
   button.setAttribute('aria-label', 'Mở công cụ vẽ đồ thị 2D');
   $('handwritingTool').insertAdjacentElement('afterend', button);
   const boardEditor = setupBoardGraphEditor();
