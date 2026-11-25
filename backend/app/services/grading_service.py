@@ -1,12 +1,140 @@
-from typing import Any, Dict, List, Optional
+import ast
+import asyncio
+import json
+import logging
+import operator
 import re
+import sys
 import uuid
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 from app.schemas.quiz import (
     GradeMCQResponse,
     GradeEssayStepResponse,
     GradeEssaySolutionResponse,
 )
+
+logger = logging.getLogger(__name__)
+
+_SAFE_AST_BIN_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+}
+_SAFE_AST_UNARY_OPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+_VN_NUMBER_WORDS: Dict[str, int] = {
+    "không": 0,
+    "một": 1,
+    "mốt": 1,
+    "hai": 2,
+    "ba": 3,
+    "bốn": 4,
+    "tư": 4,
+    "năm": 5,
+    "lăm": 5,
+    "sáu": 6,
+    "bảy": 7,
+    "bẩy": 7,
+    "tám": 8,
+    "chín": 9,
+    "mười": 10,
+}
+
+
+def _safe_eval_math_expr(expr: str, var_map: Optional[Dict[str, float]] = None) -> Optional[float]:
+    """Tính giá trị biểu thức số học an toàn bằng AST (không dùng eval)."""
+    cleaned = (expr or "").strip()
+    if not cleaned or len(cleaned) > 160:
+        return None
+    cleaned = (
+        cleaned.replace("×", "*")
+        .replace("⋅", "*")
+        .replace("·", "*")
+        .replace("÷", "/")
+        .replace(":", "/")
+        .replace("^", "**")
+        .replace("²", "**2")
+        .replace("³", "**3")
+        .replace("−", "-")
+        .replace("–", "-")
+    )
+    # Hỗ trợ nhân ẩn cơ bản như 2x, 3(x+1)
+    cleaned = re.sub(r"(\d)\s*([a-zA-Z_(])", r"\1*\2", cleaned)
+    cleaned = re.sub(r"(\))\s*(\d|[a-zA-Z_(])", r"\1*\2", cleaned)
+    try:
+        tree = ast.parse(cleaned, mode="eval")
+    except Exception:
+        return None
+
+    variables = var_map or {}
+
+    def _eval_node(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return _eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name):
+            if node.id in variables:
+                return float(variables[node.id])
+            raise ValueError(f"Unknown symbol: {node.id}")
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_AST_UNARY_OPS:
+            return _SAFE_AST_UNARY_OPS[type(node.op)](_eval_node(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_AST_BIN_OPS:
+            left_v = _eval_node(node.left)
+            right_v = _eval_node(node.right)
+            if isinstance(node.op, ast.Pow) and abs(right_v) > 20:
+                raise ValueError("Exponent too large")
+            return _SAFE_AST_BIN_OPS[type(node.op)](left_v, right_v)
+        raise ValueError("Unsupported AST node")
+
+    try:
+        val = _eval_node(tree)
+        if val != val or abs(val) == float("inf"):
+            return None
+        return float(val)
+    except Exception:
+        return None
+
+
+def _extract_option_numeric_value(raw_opt: str) -> Optional[float]:
+    """Trích xuất giá trị số duy nhất từ nội dung phương án A/B/C/D (VD: '5308', '5 308', '3,14', '3/4', '72 cm')."""
+    s = (raw_opt or "").strip()
+    if not s:
+        return None
+    # Loại bỏ tiền tố x = ..., ? = ..., y = ...
+    s = re.sub(r"^[xXyY?]\s*=\s*", "", s).strip()
+    # Bỏ hậu tố đơn vị đo thông dụng ở cuối nếu chỉ có 1 con số ở đầu
+    m_frac = re.match(r"^([+-]?\d+)\s*/\s*(\d+)(?:\s*[a-zA-ZÀ-ỹ%/²³^0-9]*)?$", s)
+    if m_frac:
+        den = int(m_frac.group(2))
+        return (int(m_frac.group(1)) / den) if den != 0 else None
+
+    # Chuẩn hóa số viết cách hàng nghìn "5 308" hoặc "5.308" (khi có đúng 3 chữ số sau dấu chấm)
+    s_num = re.match(r"^([+-]?(?:\d{1,3}(?:[\s.]\d{3})+|\d+(?:[.,]\d+)?))(?:\s*[a-zA-ZÀ-ỹ%°/²³^0-9]*)?$", s)
+    if not s_num:
+        return None
+    token = s_num.group(1).replace(" ", "")
+    if re.match(r"^[+-]?\d{1,3}(?:\.\d{3})+$", token):
+        token = token.replace(".", "")
+    else:
+        token = token.replace(",", ".")
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
+
+def _format_num_clean(val: float) -> str:
+    if abs(val - round(val)) < 1e-9:
+        return str(int(round(val)))
+    return f"{val:.4f}".rstrip("0").rstrip(".")
 
 
 class GradingService:
@@ -109,6 +237,288 @@ class GradingService:
     }
 
     @classmethod
+    def infer_mcq_correct_option_deterministic(
+        cls,
+        question_content: Optional[str],
+        options: Optional[List[Dict[str, Any]]],
+    ) -> Optional[Tuple[str, str]]:
+        """
+        Giải tự động chính xác (< 1ms) các dạng câu hỏi trắc nghiệm Toán học phổ biến khi đề tải lên không đính kèm đáp án:
+        1. Cấu tạo số thập phân / tự nhiên (VD: 'Số gồm 5 nghìn, 3 trăm và 8 đơn vị' -> 5308)
+        2. Tìm thành phần chưa biết / phương trình 1 ẩn ('? × 6 = 432', '432 : x = 6', '2x - 4 = 0')
+        3. Tính giá trị biểu thức số học ('848 : 4', '125 + 375 × 2', 'tổng/hiệu/tích/thương', 'số liền sau/trước')
+        4. Tìm số lớn nhất / số bé nhất trong các phương án.
+        Trả về (correct_label, explanation) nếu xác định chắc chắn duy nhất 1 đáp án đúng, ngược lại trả về None.
+        """
+        if not question_content or not options or len(options) < 2:
+            return None
+
+        stem = question_content.strip()
+        stem_lower = stem.lower()
+
+        numeric_opts: List[Tuple[str, float, str]] = []
+        for opt in options:
+            lbl = str(opt.get("label", "")).strip().upper()
+            txt = str(opt.get("content", "")).strip()
+            val = _extract_option_numeric_value(txt)
+            if lbl and val is not None:
+                numeric_opts.append((lbl, val, txt))
+
+        if len(numeric_opts) < 2:
+            return None
+
+        def _match_unique_value(target_val: float) -> Optional[Tuple[str, str]]:
+            matched = [item for item in numeric_opts if abs(item[1] - target_val) < 1e-6]
+            if len(matched) == 1:
+                return matched[0][0], matched[0][2]
+            return None
+
+        # 1. Cấu tạo số theo hàng (tỉ, triệu, trăm nghìn, chục nghìn, nghìn/ngàn, trăm, chục, đơn vị, phần mười/trăm/nghìn)
+        place_units = [
+            (r"trăm\s+triệu", 100_000_000.0, "trăm triệu"),
+            (r"chục\s+triệu", 10_000_000.0, "chục triệu"),
+            (r"triệu", 1_000_000.0, "triệu"),
+            (r"trăm\s+(?:nghìn|ngàn)", 100_000.0, "trăm nghìn"),
+            (r"(?:chục\s+(?:nghìn|ngàn)|vạn)", 10_000.0, "chục nghìn"),
+            (r"(?:nghìn|ngàn)", 1_000.0, "nghìn"),
+            (r"phần\s+(?:nghìn|ngàn)", 0.001, "phần nghìn"),
+            (r"phần\s+trăm", 0.01, "phần trăm"),
+            (r"phần\s+mười", 0.1, "phần mười"),
+            (r"trăm", 100.0, "trăm"),
+            (r"chục", 10.0, "chục"),
+            (r"đơn\s+vị", 1.0, "đơn vị"),
+        ]
+        if any(kw in stem_lower for kw in ("số gồm", "gồm có", "viết số", "được viết là")) and any(
+            u in stem_lower for u in ("nghìn", "ngàn", "trăm", "chục", "đơn vị", "triệu")
+        ):
+            working = stem_lower
+            total_place_val = 0.0
+            parts_desc: List[str] = []
+            matched_count = 0
+            word_alts = "|".join(sorted(_VN_NUMBER_WORDS.keys(), key=len, reverse=True))
+            for unit_pat, mult, unit_label in place_units:
+                pat = re.compile(rf"(?<!\w)(\d+|{word_alts})\s+{unit_pat}(?!\w)")
+                for m in list(pat.finditer(working)):
+                    raw_qty = m.group(1)
+                    qty = float(raw_qty) if raw_qty.isdigit() else float(_VN_NUMBER_WORDS.get(raw_qty, 0))
+                    total_place_val += qty * mult
+                    parts_desc.append(f"{_format_num_clean(qty)} {unit_label} ({_format_num_clean(qty * mult)})")
+                    matched_count += 1
+                working = pat.sub(" ", working)
+            if matched_count >= 2:
+                hit = _match_unique_value(total_place_val)
+                if hit:
+                    lbl, _ = hit
+                    clean_total = _format_num_clean(total_place_val)
+                    return (
+                        lbl,
+                        f"Ta có: {' + '.join(parts_desc)} = {clean_total}. Vậy đáp án đúng là {lbl} ({clean_total}).",
+                    )
+
+        # 2. Tìm ẩn chưa biết (? / x / y) bằng cách thế trực tiếp từng phương án vào phương trình LHS = RHS
+        if "=" in stem:
+            # Ưu tiên lấy biểu thức sau dấu ':' cuối cùng trước dấu '=' (nhưng cẩn thận ':' cũng là phép chia!)
+            # Cắt bỏ phần chữ tiếng Việt mở đầu câu hỏi đến ký tự toán học đầu tiên của phương trình
+            eq_candidates: List[str] = []
+            for seg in re.split(r"[;\n]", stem):
+                if "=" not in seg:
+                    continue
+                # Tìm đoạn chứa phép toán + dấu '=' ở cuối câu
+                m_eq = re.search(
+                    r"([?□xXyY0-9(\-+][?□xXyY0-9\s+\-*/×⋅·÷:^²³(),.]*=\s*[?□xXyY0-9\s+\-*/×⋅·÷:^²³(),.\-]+)",
+                    seg,
+                )
+                if m_eq:
+                    eq_candidates.append(m_eq.group(1).strip().rstrip(".:?"))
+
+            for eq_raw in eq_candidates:
+                if eq_raw.count("=") != 1:
+                    continue
+                lhs_raw, rhs_raw = [p.strip() for p in eq_raw.split("=", 1)]
+                if not lhs_raw or not rhs_raw:
+                    continue
+
+                has_qmark = ("?" in eq_raw) or ("□" in eq_raw)
+                # Nếu dùng '?' làm ẩn thì chữ 'x'/'X' đứng giữa 2 hạng tử là dấu nhân '×'
+                def _prep_side(side_s: str) -> str:
+                    s_out = side_s.replace(",", ".")
+                    if has_qmark:
+                        s_out = re.sub(r"(?<=[\d?□)\s])[xX](?=[\d?□(\s])", "*", s_out)
+                        s_out = s_out.replace("?", "_u_").replace("□", "_u_")
+                    else:
+                        # Nếu cả x và dấu nhân chữ x: ưu tiên biến x/y
+                        s_out = re.sub(r"\b[xX]\b", "_u_", s_out)
+                        s_out = re.sub(r"(\d)[xX]\b", r"\1*_u_", s_out)
+                        s_out = re.sub(r"\b[yY]\b", "_u_", s_out)
+                        s_out = re.sub(r"(\d)[yY]\b", r"\1*_u_", s_out)
+                    return s_out
+
+                lhs_p = _prep_side(lhs_raw)
+                rhs_p = _prep_side(rhs_raw)
+                if "_u_" in lhs_p or "_u_" in rhs_p:
+                    satisfying: List[Tuple[str, float, str]] = []
+                    for lbl, val, raw_txt in numeric_opts:
+                        lv = _safe_eval_math_expr(lhs_p, {"_u_": val})
+                        rv = _safe_eval_math_expr(rhs_p, {"_u_": val})
+                        if lv is not None and rv is not None and abs(lv - rv) < 1e-6:
+                            satisfying.append((lbl, val, raw_txt))
+                    if len(satisfying) == 1:
+                        lbl, val, _ = satisfying[0]
+                        val_s = _format_num_clean(val)
+                        pretty_eq = eq_raw.replace("?", val_s).replace("□", val_s)
+                        return (
+                            lbl,
+                            f"Thay {val_s} vào phép tính: {pretty_eq} (thoả mãn hai vế bằng nhau). Vậy đáp án đúng là {lbl} ({val_s}).",
+                        )
+
+        # 3. Tính giá trị biểu thức số học trực tiếp (VD: 'Kết quả của phép chia 848 : 4 là:', '1 + 1 bằng mấy?')
+        expr_clean = re.sub(r"=\s*\??\s*$", "", stem)
+        # Bỏ chữ 'Câu 1:' nếu có
+        expr_clean = re.sub(r"^(?:câu|bài|question)\s*\d+\s*[:.]\s*", "", expr_clean, flags=re.IGNORECASE)
+        # Dạng lời văn cơ bản: số liền sau / số liền trước
+        m_after = re.search(r"số\s+liền\s+sau\s+(?:của\s+)?(?:số\s+)?(\d+)", stem_lower)
+        if m_after:
+            target = float(m_after.group(1)) + 1
+            hit = _match_unique_value(target)
+            if hit:
+                return hit[0], f"Số liền sau của {m_after.group(1)} là {_format_num_clean(target)} (cộng thêm 1). Đáp án đúng là {hit[0]}."
+        m_before = re.search(r"số\s+liền\s+trước\s+(?:của\s+)?(?:số\s+)?(\d+)", stem_lower)
+        if m_before:
+            target = float(m_before.group(1)) - 1
+            hit = _match_unique_value(target)
+            if hit:
+                return hit[0], f"Số liền trước của {m_before.group(1)} là {_format_num_clean(target)} (trừ đi 1). Đáp án đúng là {hit[0]}."
+
+        # Tìm các cụm biểu thức toán học có ít nhất 1 toán tử (+, -, *, ×, :, ÷, /, ^)
+        expr_matches = re.findall(
+            r"(?<![A-Za-zÀ-ỹ])(\(?\d+(?:[.,]\d+)?\)?(?:\s*[+\-*/×⋅·÷:^]\s*\(?\d+(?:[.,]\d+)?\)?)+)(?![A-Za-zÀ-ỹ])",
+            expr_clean.replace(" x ", " × "),
+        )
+        if expr_matches:
+            # Lấy biểu thức dài nhất trong đề bài
+            candidate_expr = max(expr_matches, key=len).strip()
+            norm_expr = candidate_expr.replace(",", ".")
+            val = _safe_eval_math_expr(norm_expr)
+            if val is not None:
+                hit = _match_unique_value(val)
+                if hit:
+                    lbl, _ = hit
+                    val_s = _format_num_clean(val)
+                    return (
+                        lbl,
+                        f"Thực hiện phép tính: {candidate_expr} = {val_s}. Vậy đáp án đúng là {lbl} ({val_s}).",
+                    )
+
+        # 4. So sánh lớn nhất / bé nhất (nhỏ nhất) trong các phương án
+        if len(numeric_opts) == len(options):
+            if re.search(r"số\s+(?:nào\s+)?lớn\s+nhất", stem_lower) and "không" not in stem_lower:
+                best_opt = max(numeric_opts, key=lambda x: x[1])
+                return best_opt[0], f"Trong các số đã cho, {best_opt[2]} là số lớn nhất. Vậy đáp án đúng là {best_opt[0]}."
+            if re.search(r"số\s+(?:nào\s+)?(?:bé|nhỏ)\s+nhất", stem_lower) and "không" not in stem_lower:
+                best_opt = min(numeric_opts, key=lambda x: x[1])
+                return best_opt[0], f"Trong các số đã cho, {best_opt[2]} là số bé nhất. Vậy đáp án đúng là {best_opt[0]}."
+
+        return None
+
+    @classmethod
+    async def solve_mcqs_batch_with_ai(
+        cls,
+        questions: List[Dict[str, Any]],
+        subject: str = "TOAN",
+        timeout: float = 10.0,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Dùng Gemini AI giải nhanh danh sách câu hỏi trắc nghiệm chưa có đáp án trong file đề tải lên.
+        Trả về map theo question_id: { q_id: {"correct_option": "C", "explanation": "...", "distractors": {...}} }.
+        """
+        if not questions or "pytest" in sys.modules:
+            return {}
+
+        from app.ai.gemini_service import gemini_service
+        if not gemini_service.ensure_configured():
+            return {}
+
+        items_payload = []
+        for q in questions[:25]:
+            opts = [
+                {"label": str(o.get("label", "")).upper(), "content": str(o.get("content", ""))}
+                for o in (q.get("options") or [])
+            ]
+            if len(opts) >= 2:
+                items_payload.append({
+                    "id": str(q.get("id", "")),
+                    "number": q.get("number", 1),
+                    "question": str(q.get("content", "")),
+                    "options": opts,
+                })
+        if not items_payload:
+            return {}
+
+        prompt = (
+            f"Bạn là giáo viên chấm thi chính xác tuyệt đối môn {subject}.\n"
+            "Hãy giải cẩn thận từng câu trắc nghiệm dưới đây và xác định đáp án đúng (A, B, C hoặc D) kèm lời giải ngắn gọn, dễ hiểu.\n"
+            "Trả về DUY NHẤT một mảng JSON hợp lệ (không markdown thừa) theo mẫu:\n"
+            '[{"id": "...", "correct_option": "C", "explanation": "Lời giải ngắn gọn chính xác"}]\n\n'
+            f"Danh sách câu hỏi:\n{json.dumps(items_payload, ensure_ascii=False)}"
+        )
+
+        def _call_sync() -> str:
+            model_name = gemini_service.active_model_name or "gemini-3.5-flash"
+            if gemini_service._client_type == "google-genai":
+                resp = gemini_service.client.models.generate_content(model=model_name, contents=prompt)
+                return resp.text or ""
+            resp = gemini_service.model.generate_content(prompt)
+            return resp.text or ""
+
+        try:
+            raw_text = await asyncio.wait_for(asyncio.to_thread(_call_sync), timeout=timeout)
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw_text.strip(), flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            parsed = json.loads(cleaned)
+            out: Dict[str, Dict[str, Any]] = {}
+            if isinstance(parsed, list):
+                for entry in parsed:
+                    qid = str(entry.get("id", "")).strip()
+                    corr = str(entry.get("correct_option", "")).strip().upper()
+                    if qid and corr in ("A", "B", "C", "D"):
+                        out[qid] = {
+                            "correct_option": corr,
+                            "explanation": str(entry.get("explanation") or "").strip() or None,
+                        }
+            return out
+        except Exception as exc:
+            logger.warning("Không thể giải batch MCQ bằng Gemini AI: %s", exc)
+            return {}
+
+    @classmethod
+    async def resolve_correct_answer(
+        cls,
+        question_content: Optional[str],
+        options: Optional[List[Dict[str, Any]]],
+        subject: str = "TOAN",
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Xác định đáp án đúng khi câu hỏi chưa có sẵn key:
+        1) Giải tất định tức thời (< 1ms) cho Toán số học / cấu tạo số / phương trình.
+        2) Nếu là câu lý thuyết / đọc hiểu / Lý - Hoá - Anh phức tạp: hỏi nhanh Gemini AI.
+        """
+        det = cls.infer_mcq_correct_option_deterministic(question_content, options)
+        if det:
+            return det[0], det[1]
+
+        if question_content and options and len(options) >= 2:
+            ai_map = await cls.solve_mcqs_batch_with_ai(
+                [{"id": "_single", "number": 1, "content": question_content, "options": options}],
+                subject=subject,
+                timeout=7.5,
+            )
+            if "_single" in ai_map:
+                hit = ai_map["_single"]
+                return hit.get("correct_option"), hit.get("explanation")
+
+        return None, None
+
+    @classmethod
     def analyze_distractor(
         cls,
         selected_label: str,
@@ -116,6 +526,8 @@ class GradingService:
         subject: str = "TOAN",
         question_content: Optional[str] = None,
         custom_distractor_map: Optional[Dict[str, str]] = None,
+        options: Optional[List[Dict[str, Any]]] = None,
+        correct_explanation: Optional[str] = None,
     ) -> Dict[str, str]:
         """
         Phân tích chuyên sâu tại sao phương án học sinh chọn lại sai (phương án gây nhiễu).
@@ -168,6 +580,28 @@ class GradingService:
                 "category": "EXTRANEOUS_ROOT",
             }
 
+        # 2B. Nếu có danh sách phương án cụ thể (từ đề tải lên / bảng trắc nghiệm), giải thích sát đúng nội dung câu hỏi thực tế
+        if options and question_content:
+            opt_lookup = {
+                str(o.get("label", "")).strip().upper(): str(o.get("content", "")).strip()
+                for o in options
+            }
+            sel_val_txt = opt_lookup.get(sel, "")
+            corr_val_txt = opt_lookup.get(corr, "")
+            if sel_val_txt or corr_val_txt:
+                sel_disp = f"{sel} ({sel_val_txt})" if sel_val_txt else sel
+                corr_disp = f"{corr} ({corr_val_txt})" if corr_val_txt else corr
+                guide_detail = (
+                    f"💡 Gợi ý: {correct_explanation}"
+                    if correct_explanation and "theo định luật và số liệu bài toán" not in correct_explanation
+                    else f"💡 Gợi ý: Kiểm tra lại phép tính và dữ kiện đề bài để suy ra đáp án đúng là {corr_disp}."
+                )
+                return {
+                    "reason": f"Giá trị ở phương án {sel_disp} chưa thoả mãn yêu cầu hoặc phép tính của đề bài (kết quả đúng phải là {corr_disp}).",
+                    "guidance": guide_detail,
+                    "category": "CALCULATION_ERROR",
+                }
+
         # 3. Phân tích theo từ điển lỗi bộ môn
         subj_dict = cls.SUBJECT_DISTRACTORS.get(subj, cls.SUBJECT_DISTRACTORS["TOAN"])
         fallback = subj_dict.get(sel, {
@@ -190,6 +624,7 @@ class GradingService:
         subject: str = "TOAN",
         session_id: Optional[str] = None,
         student_id: Optional[str] = None,
+        options: Optional[List[Dict[str, Any]]] = None,
     ) -> GradeMCQResponse:
         """
         Chấm bài trắc nghiệm khoanh tròn trên bảng hoặc click chọn phương án.
@@ -224,6 +659,8 @@ class GradingService:
                 subject=subject,
                 question_content=question_content,
                 custom_distractor_map=distractor_map,
+                options=options,
+                correct_explanation=correct_explanation,
             )
 
             reason_text = analysis.get("reason", f"Phương án {sel} không chính xác.")

@@ -73,6 +73,7 @@ async def upload_exam_file(
         text_content = file_bytes.decode("utf-8", errors="ignore")
         raw_parsed = exam_service.parse_text(text_content, title=exam_title)
 
+    await exam_service.enrich_missing_answers(raw_parsed)
     filtered_result = exam_service.filter_by_mode(raw_parsed, mode=mode)
     return filtered_result
 
@@ -96,6 +97,7 @@ async def parse_direct_text(
         )
 
     raw_parsed = exam_service.parse_text(payload.raw_text, title=payload.title or "Đề bài trực tiếp")
+    await exam_service.enrich_missing_answers(raw_parsed, subject=payload.subject or "TOAN")
     filtered_result = exam_service.filter_by_mode(raw_parsed, mode=payload.mode or "STUDENT")
     return filtered_result
 
@@ -157,10 +159,32 @@ async def grade_mcq_choice(payload: GradeMCQRequest):
         )
 
     stored_key = in_memory_exam_answer_keys.get(payload.question_id, {})
-    resolved_correct = stored_key.get("correct_option") or payload.correct_label or "A"
+    effective_content = payload.question_content or stored_key.get("content")
+    effective_options = payload.options or stored_key.get("options")
+    resolved_correct = stored_key.get("correct_option") or payload.correct_label
+    resolved_explanation = stored_key.get("explanation") or payload.explanation
+
+    if not resolved_correct:
+        inferred_corr, inferred_exp = await grading_service.resolve_correct_answer(
+            question_content=effective_content,
+            options=effective_options,
+            subject=payload.subject or "TOAN",
+        )
+        if inferred_corr:
+            resolved_correct = inferred_corr
+            if not resolved_explanation and inferred_exp:
+                resolved_explanation = inferred_exp
+            if payload.question_id:
+                in_memory_exam_answer_keys[payload.question_id] = {
+                    "correct_option": resolved_correct,
+                    "explanation": resolved_explanation,
+                    "content": effective_content,
+                    "options": effective_options,
+                }
+
+    resolved_correct = resolved_correct or "A"
     resolved_explanation = (
-        stored_key.get("explanation")
-        or payload.explanation
+        resolved_explanation
         or "Phương án chính xác theo định luật và số liệu bài toán."
     )
 
@@ -170,10 +194,11 @@ async def grade_mcq_choice(payload: GradeMCQRequest):
         correct_label=resolved_correct,
         correct_explanation=resolved_explanation,
         distractor_map=payload.distractor_map,
-        question_content=payload.question_content,
+        question_content=effective_content,
         subject=payload.subject or "TOAN",
         session_id=payload.session_id,
         student_id=payload.student_id,
+        options=effective_options,
     )
     return result
 
@@ -300,10 +325,32 @@ async def submit_circled_answer_core(payload: CircleAnswerSubmitRequest) -> Circ
         )
 
     stored_key = in_memory_exam_answer_keys.get(payload.question_id, {})
-    resolved_correct = stored_key.get("correct_option") or payload.correct_label or "A"
+    effective_content = payload.question_content or stored_key.get("content")
+    effective_options = payload.options or stored_key.get("options")
+    resolved_correct = stored_key.get("correct_option") or payload.correct_label
+    resolved_explanation = stored_key.get("explanation") or payload.explanation
+
+    if not resolved_correct:
+        inferred_corr, inferred_exp = await grading_service.resolve_correct_answer(
+            question_content=effective_content,
+            options=effective_options,
+            subject=payload.subject or "TOAN",
+        )
+        if inferred_corr:
+            resolved_correct = inferred_corr
+            if not resolved_explanation and inferred_exp:
+                resolved_explanation = inferred_exp
+            if payload.question_id:
+                in_memory_exam_answer_keys[payload.question_id] = {
+                    "correct_option": resolved_correct,
+                    "explanation": resolved_explanation,
+                    "content": effective_content,
+                    "options": effective_options,
+                }
+
+    resolved_correct = resolved_correct or "A"
     resolved_explanation = (
-        stored_key.get("explanation")
-        or payload.explanation
+        resolved_explanation
         or "Phương án chính xác theo định luật và số liệu bài toán."
     )
 
@@ -313,10 +360,11 @@ async def submit_circled_answer_core(payload: CircleAnswerSubmitRequest) -> Circ
         correct_label=resolved_correct,
         correct_explanation=resolved_explanation,
         distractor_map=payload.distractor_map,
-        question_content=payload.question_content,
+        question_content=effective_content,
         subject=payload.subject or "TOAN",
         session_id=payload.session_id,
         student_id=payload.student_id,
+        options=effective_options,
     )
 
     submission_id = f"circle_{uuid.uuid4().hex[:12]}"
