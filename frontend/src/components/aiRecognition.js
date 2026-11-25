@@ -21,6 +21,7 @@ let isAutoAiEnabled = false;
 let isRecognizing = false;
 let aiDebounceTimer = null;
 let currentAiResult = null;
+let pendingMultiClusters = [];
 let recognizedStrokeObjects = [];
 let recognizedRegion = null;
 let recognizedPageIndex = null;
@@ -64,10 +65,113 @@ function isRawHandwritingStroke(obj) {
   if (!(obj instanceof Path)) return false;
   const meta = obj.meta || {};
   if (meta.aiState === 'graded' || meta.aiState === 'formatted') return false;
-  if (['question', 'answer_formatted', 'question_badge', 'grading_overlay'].includes(meta.dataRole)) {
+  if (['question', 'answer_formatted', 'question_badge', 'grading_overlay', 'answer_zone', 'answer_zone_label'].includes(meta.dataRole)) {
     return false;
   }
   return true;
+}
+
+/**
+ * Phân cụm không gian 2D (Union-Find / BFS) các nét viết tay mới:
+ * - Tách các đề viết ngang cạnh nhau (gapX > 48px) hoặc viết thành nhiều dòng rời nhau (gapY > 36px)
+ *   thành các cụm độc lập để nhận diện & gắn nhãn riêng từng đề.
+ */
+function clusterRawStrokes2D(strokes) {
+  if (!Array.isArray(strokes) || strokes.length <= 1) {
+    if (!strokes || strokes.length === 0) return [];
+    const reg = computeBoundingRegion(strokes);
+    return reg ? [{ strokes: strokes.slice(), region: reg }] : [];
+  }
+
+  const items = strokes
+    .map((obj) => ({ obj, r: obj.getBoundingRect() }))
+    .filter((it) => it.r && Number.isFinite(it.r.left));
+
+  const n = items.length;
+  if (n === 0) return [];
+  const parent = Array.from({ length: n }, (_, idx) => idx);
+
+  function find(x) {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  }
+
+  function union(a, b) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  }
+
+  for (let i = 0; i < n; i += 1) {
+    const a = items[i].r;
+    const aRight = a.left + a.width;
+    const aBottom = a.top + a.height;
+    for (let j = i + 1; j < n; j += 1) {
+      const b = items[j].r;
+      const bRight = b.left + b.width;
+      const bBottom = b.top + b.height;
+
+      const gapX = Math.max(0, Math.max(a.left, b.left) - Math.min(aRight, bRight));
+      const gapY = Math.max(0, Math.max(a.top, b.top) - Math.min(aBottom, bBottom));
+
+      // Hai nét thuộc cùng 1 biểu thức nếu sát ngang <= 48px và cùng dòng dọc <= 32px
+      if (gapX <= 48 && gapY <= 32) {
+        union(i, j);
+      }
+    }
+  }
+
+  const groups = new Map();
+  for (let i = 0; i < n; i += 1) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(items[i].obj);
+  }
+
+  return Array.from(groups.values())
+    .map((grpStrokes) => ({
+      strokes: grpStrokes,
+      region: computeBoundingRegion(grpStrokes),
+    }))
+    .filter((c) => Boolean(c.region))
+    .sort((a, b) => {
+      const sameRow = Math.abs(a.region.top - b.region.top) <= 38;
+      return sameRow ? a.region.left - b.region.left : a.region.top - b.region.top;
+    });
+}
+
+/**
+ * Tách dự phòng chuỗi chứa nhiều biểu thức toán học ngăn bởi dấu ',' hoặc ';' ở cấp ngoặc ngoài cùng
+ * (VD: "(x+5)^2, (x+9)^2, (3x+6)^2"), không tách cặp tọa độ như "(2, -1)".
+ */
+function splitTopLevelMathExpressions(rawStr) {
+  const s = String(rawStr || '').trim();
+  if (!s || (!s.includes(',') && !s.includes(';'))) return [s].filter(Boolean);
+
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && (ch === ',' || ch === ';')) {
+      parts.push(s.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  parts.push(s.slice(start).trim());
+  const cleaned = parts.map((p) => p.replace(/^\\quad\s*|\s*\\quad$/g, '').trim()).filter(Boolean);
+  if (cleaned.length < 2) return [s];
+
+  // Chỉ tách khi mỗi vế đều là biểu thức độc lập thực sự (chứa phép toán/mũ/dấu '=' hoặc độ dài >= 4)
+  const allLookLikeIndependentExprs = cleaned.every(
+    (item) => item.length >= 3 && /[+\-*/=^²³()xXyYaAbB]/.test(item)
+  );
+  return allLookLikeIndependentExprs ? cleaned : [s];
 }
 
 function computeBoundingRegion(objects) {
@@ -146,7 +250,7 @@ function captureRawStrokesCroppedWebP(targetStrokes, region) {
 
     const webpUrl = fabricCanvas.toDataURL({
       format: 'webp',
-      quality: 0.85,
+      quality: 0.82,
       left: cropLeft,
       top: cropTop,
       width: cropWidth,
@@ -340,6 +444,7 @@ export async function performAIRecognition({
 
   try {
     let imageBase64 = cachedImageBase64;
+    let detectedClusters = [];
     if (!imageBase64) {
       const rawStrokes = fabricCanvas.getObjects().filter((obj) => isRawHandwritingStroke(obj));
       if (rawStrokes.length === 0) {
@@ -357,15 +462,20 @@ export async function performAIRecognition({
         }
         return;
       }
+      detectedClusters = clusterRawStrokes2D(rawStrokes);
       const targetRegion = computeBoundingRegion(rawStrokes);
       recognizedStrokeObjects = rawStrokes;
       recognizedRegion = targetRegion;
       recognizedPageIndex = state.pageIndex;
-      imageBase64 = captureRawStrokesCroppedWebP(rawStrokes, targetRegion);
+      if (detectedClusters.length <= 1) {
+        pendingMultiClusters = [];
+        imageBase64 = captureRawStrokesCroppedWebP(rawStrokes, targetRegion);
+      }
+    } else {
+      pendingMultiClusters = [];
     }
     const subject = cachedMeta?.subject || (aiElements.subjectSelect ? aiElements.subjectSelect.value : 'TOAN');
 
-    lastCapturedImageBase64 = imageBase64;
     lastRecognizeMeta = {
       session_id: cachedMeta?.session_id || $('sessionId')?.textContent?.trim() || 'session-10a1',
       room_id: cachedMeta?.room_id || $('roomId')?.textContent?.trim() || 'room-10a1',
@@ -373,33 +483,103 @@ export async function performAIRecognition({
       page_number: cachedMeta?.page_number || (state.pageIndex + 1),
     };
 
-    const payload = {
-      session_id: lastRecognizeMeta.session_id,
-      room_id: lastRecognizeMeta.room_id,
-      subject: lastRecognizeMeta.subject,
-      page_number: lastRecognizeMeta.page_number,
-      image_base64: imageBase64,
-      debounce_ms: 800,
-      provider: 'auto'
-    };
-
     const startTime = performance.now();
-    const response = await authFetch('/api/v1/recognize', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      signal: abortCtrl.signal,
-      body: JSON.stringify(payload)
-    });
+    let data = null;
 
-    const elapsed = Math.round(performance.now() - startTime);
+    if (!cachedImageBase64 && detectedClusters.length > 1) {
+      const clusterCaptures = detectedClusters.map((cluster) => ({
+        ...cluster,
+        imageBase64: captureRawStrokesCroppedWebP(cluster.strokes, cluster.region),
+      }));
+      lastCapturedImageBase64 = clusterCaptures[0]?.imageBase64 || null;
 
-    if (!response.ok) {
-      throw new Error(`Máy chủ trả về HTTP ${response.status}`);
+      const clusterResults = await Promise.all(
+        clusterCaptures.map(async (cItem) => {
+          const resp = await authFetch('/api/v1/recognize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: abortCtrl.signal,
+            body: JSON.stringify({
+              session_id: lastRecognizeMeta.session_id,
+              room_id: lastRecognizeMeta.room_id,
+              subject: lastRecognizeMeta.subject,
+              page_number: lastRecognizeMeta.page_number,
+              image_base64: cItem.imageBase64,
+              debounce_ms: 800,
+              provider: 'auto',
+              already_cropped: true,
+              fast_mode: true,
+            }),
+          });
+          if (!resp.ok) {
+            throw new Error(`Máy chủ trả về HTTP ${resp.status}`);
+          }
+          const resJson = await resp.json();
+          return {
+            strokes: cItem.strokes,
+            region: cItem.region,
+            aiResult: resJson,
+          };
+        })
+      );
+
+      const validClusterResults = clusterResults.filter((cr) => {
+        const r = cr.aiResult;
+        const err =
+          r?.subject_details?.status === 'error' ||
+          (Boolean(r?.degraded_reason) && !String(r?.recognized_text || '').trim() && !String(r?.latex || '').trim());
+        return !err && Boolean(String(r?.latex || r?.recognized_text || '').trim());
+      });
+
+      if (validClusterResults.length === 0) {
+        data = clusterResults[0]?.aiResult || {};
+        pendingMultiClusters = [];
+      } else {
+        pendingMultiClusters = validClusterResults;
+        const combinedLatex = validClusterResults
+          .map((cr) => cr.aiResult.latex || cr.aiResult.recognized_text)
+          .join(' \\;\\; | \\;\\; ');
+        const combinedText = validClusterResults
+          .map((cr, idx) => `[Cụm ${idx + 1}] ${cr.aiResult.recognized_text || cr.aiResult.latex}`)
+          .join('\n');
+        data = {
+          ...validClusterResults[0].aiResult,
+          recognized_text: combinedText,
+          latex: combinedLatex,
+          explanation: `Đã tách & nhận diện độc lập ${validClusterResults.length} cụm viết tay riêng biệt. Bấm "Chèn vào mặt bảng" để đặt từng khối vào đúng vị trí!`,
+        };
+      }
+    } else {
+      lastCapturedImageBase64 = imageBase64;
+      const payload = {
+        session_id: lastRecognizeMeta.session_id,
+        room_id: lastRecognizeMeta.room_id,
+        subject: lastRecognizeMeta.subject,
+        page_number: lastRecognizeMeta.page_number,
+        image_base64: imageBase64,
+        debounce_ms: 800,
+        provider: 'auto',
+        already_cropped: !cachedImageBase64,
+        fast_mode: true,
+      };
+
+      const response = await authFetch('/api/v1/recognize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        signal: abortCtrl.signal,
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Máy chủ trả về HTTP ${response.status}`);
+      }
+
+      data = await response.json();
     }
 
-    const data = await response.json();
+    const elapsed = Math.round(performance.now() - startTime);
 
     // KIỂM SOÁT LỆCH PHA (RACE CONDITION) & TRÁNH LỖI DOMINO:
     if (thisRequestId !== aiRequestId || state.pageIndex !== thisPage || state.ended) {
@@ -682,23 +862,59 @@ export async function insertIllustrationToBoard(illuData, targetX = null, target
  */
 export function attachEssayRoleMetadata(targetObj, rawLatexText, region) {
   const allObjects = fabricCanvas.getObjects();
-  const existingQuestions = allObjects
-    .filter((obj) => obj?.meta?.dataRole === 'question')
-    .map((obj) => ({ obj, bbox: obj.getBoundingRect() }))
-    .sort((a, b) => a.bbox.top - b.bbox.top);
+  const cx = region.left + (region.width || 120) / 2;
+  const cy = region.top + (region.height || 36) / 2;
+
+  // 1. Kiểm tra nếu công thức nằm bên trong khung nét đứt Vùng làm bài (answer_zone) của câu tự luận từ Kho đề
+  const hitAnswerZone = allObjects.find((obj) => {
+    if (obj?.meta?.dataRole !== 'answer_zone' || !obj?.meta?.linkedGroupId) return false;
+    const zb = obj.getBoundingRect();
+    return (
+      zb &&
+      cx >= zb.left - 8 &&
+      cx <= zb.left + zb.width + 8 &&
+      cy >= zb.top - 8 &&
+      cy <= zb.top + zb.height + 8
+    );
+  });
 
   const trimmed = String(rawLatexText || '').trim();
   const looksLikeAnswerStep = /^(=|=>|->|⇔|⇒|-|\+|ta có|suy ra|vậy|bước)/i.test(trimmed);
 
   let isQuestion = false;
-  if (existingQuestions.length === 0) {
-    isQuestion = true;
+  let linkedQuestionGroupId = null;
+
+  if (hitAnswerZone) {
+    isQuestion = false;
+    linkedQuestionGroupId = hitAnswerZone.meta.linkedGroupId;
   } else {
-    const lastQuestion = existingQuestions[existingQuestions.length - 1];
-    const lastIsGraded = lastQuestion.obj?.meta?.aiState === 'graded';
-    const farBelowLast = region.top - (lastQuestion.bbox.top + lastQuestion.bbox.height) > 95;
-    if (!looksLikeAnswerStep && (lastIsGraded || farBelowLast)) {
-      isQuestion = true;
+    const existingQuestions = allObjects
+      .filter((obj) => obj !== targetObj && obj?.meta?.dataRole === 'question')
+      .map((obj) => ({ obj, bbox: obj.getBoundingRect() }))
+      .filter((q) => Boolean(q.bbox))
+      .sort((a, b) => a.bbox.top - b.bbox.top);
+
+    if (existingQuestions.length === 0) {
+      isQuestion = !looksLikeAnswerStep;
+    } else {
+      // Kiểm tra có câu hỏi tự luận nào nằm ngay phía trên cùng cột ngang X không
+      const parentQuestionAbove = existingQuestions
+        .filter((q) => {
+          if (q.obj?.meta?.questionType === 'MCQ') return false;
+          const qBottom = q.bbox.top + q.bbox.height;
+          const dy = region.top - qBottom;
+          const inHorizBand =
+            cx >= q.bbox.left - 80 && cx <= q.bbox.left + Math.max(240, q.bbox.width) + 200;
+          return dy >= -12 && dy <= 140 && inHorizBand && q.obj?.meta?.aiState !== 'graded';
+        })
+        .pop();
+
+      if (parentQuestionAbove) {
+        isQuestion = false;
+        linkedQuestionGroupId = parentQuestionAbove.obj?.meta?.questionGroupId || null;
+      } else if (!looksLikeAnswerStep) {
+        isQuestion = true;
+      }
     }
   }
 
@@ -711,6 +927,8 @@ export function attachEssayRoleMetadata(targetObj, rawLatexText, region) {
     dataRole: role,
     rawLatex: trimmed,
     questionGroupId: groupId,
+    stepOwnerId: groupId,
+    ...(linkedQuestionGroupId ? { linkedQuestionGroupId } : {}),
   };
 
   const badgeLeft = region.left;
@@ -738,8 +956,58 @@ export function attachEssayRoleMetadata(targetObj, rawLatexText, region) {
     aiState: 'formatted',
     dataRole: 'question_badge',
     linkedGroupId: groupId,
+    linkedStepOwnerId: groupId,
   };
   fabricCanvas.add(badgeText);
+}
+
+async function buildFormattedBoardObject(latexStr, plainStr, targetReg, shouldRenderLatex) {
+  let objOut = null;
+  let wOut = targetReg.width || 220;
+  if (shouldRenderLatex && latexStr) {
+    try {
+      const { createFormulaImage } = await import('../extensions/handwriting.js');
+      const formulaImg = await createFormulaImage(latexStr, {
+        left: targetReg.left,
+        top: targetReg.top,
+        width: Math.max(160, targetReg.width),
+        height: Math.max(44, Math.min(84, targetReg.height)),
+      });
+      const bounds = formulaImg.getBoundingRect();
+      const fH = bounds.height || 38;
+      const fW = bounds.width || 180;
+      formulaImg._hitPoints = [
+        { x: targetReg.left, y: targetReg.top + fH / 2 },
+        { x: targetReg.left + fW, y: targetReg.top + fH / 2 },
+      ];
+      formulaImg._hitWidth = Math.max(28, fH);
+      objOut = formulaImg;
+      wOut = Math.max(140, fW);
+    } catch {
+      objOut = null;
+    }
+  }
+  if (!objOut) {
+    const textObj = new Text(plainStr || latexStr, {
+      left: targetReg.left,
+      top: targetReg.top,
+      fill: isDarkBoardActive() ? '#ECE7DF' : '#26231F',
+      fontSize: 22,
+      fontFamily: 'Be Vietnam Pro, sans-serif',
+      selectable: false,
+      evented: false,
+    });
+    const textW = Math.max(110, textObj.width || 180);
+    const textH = Math.max(28, textObj.height || 28);
+    textObj._hitPoints = [
+      { x: targetReg.left, y: targetReg.top + textH / 2 },
+      { x: targetReg.left + textW, y: targetReg.top + textH / 2 },
+    ];
+    textObj._hitWidth = Math.max(30, textH);
+    objOut = textObj;
+    wOut = textW;
+  }
+  return { object: objOut, width: wOut };
 }
 
 export async function insertAiResultToBoard() {
@@ -781,12 +1049,54 @@ export async function insertAiResultToBoard() {
 
   // 1. Xác định các nét viết tay gốc & vị trí viết thực tế của giáo viên
   const { region } = resolveStrokesAndRegionForReplacement(currentAiResult);
+  const shouldRenderLatex = !isEng && !isBio && !isGeo && Boolean(currentAiResult.latex);
+
+  // Trường hợp nhiều cụm độc lập (hoặc 1 cụm chứa nhiều biểu thức ngăn bởi ',' / ';')
+  const multiItemsToBuild = [];
+  if (pendingMultiClusters.length > 1) {
+    for (const cl of pendingMultiClusters) {
+      const fStr = cl.aiResult.latex || cl.aiResult.recognized_text || '';
+      const pStr = cl.aiResult.recognized_text || cl.aiResult.latex || '';
+      if (fStr || pStr) {
+        multiItemsToBuild.push({
+          latex: fStr,
+          plain: pStr,
+          region: { ...cl.region, top: Math.max(36, cl.region.top) },
+        });
+      }
+    }
+  } else if (!isEng && !isBio && !isGeo) {
+    const splitExprs = splitTopLevelMathExpressions(currentAiResult.latex || textToInsert);
+    if (splitExprs.length > 1) {
+      const stepW = Math.max(180, Math.floor((region.width || 480) / splitExprs.length));
+      splitExprs.forEach((exprPart, idx) => {
+        multiItemsToBuild.push({
+          latex: exprPart,
+          plain: exprPart,
+          region: {
+            left: region.left + idx * (stepW + 28),
+            top: region.top,
+            width: stepW,
+            height: region.height,
+          },
+        });
+      });
+    }
+  }
+
   let insertedWidth = region.width || 260;
   let objectToInsert = null;
+  let builtMultiObjects = [];
 
-  // 2. Dựng sẵn đối tượng công thức LaTeX hoặc văn bản đã format trước khi thay đổi Canvas (tránh nháy hình khi chờ MathJax)
-  if (textToInsert) {
-    const shouldRenderLatex = !isEng && !isBio && !isGeo && Boolean(currentAiResult.latex);
+  if (multiItemsToBuild.length > 1) {
+    builtMultiObjects = await Promise.all(
+      multiItemsToBuild.map(async (item) => {
+        const built = await buildFormattedBoardObject(item.latex, item.plain, item.region, !isEng && !isBio && !isGeo);
+        return { ...item, object: built.object, width: built.width };
+      })
+    );
+  } else if (textToInsert) {
+    // 2. Dựng sẵn đối tượng công thức LaTeX hoặc văn bản đã format trước khi thay đổi Canvas
     if (shouldRenderLatex) {
       try {
         const { createFormulaImage } = await import('../extensions/handwriting.js');
@@ -797,7 +1107,7 @@ export async function insertAiResultToBoard() {
           height: Math.max(48, Math.min(84, region.height)),
         });
         const bounds = formulaImg.getBoundingRect();
-        const fH = bounds.height || 40;
+        const fH = bounds.height || 38;
         const fW = bounds.width || 220;
         formulaImg._hitPoints = [
           { x: region.left, y: region.top + fH / 2 },
@@ -843,11 +1153,19 @@ export async function insertAiResultToBoard() {
   if (strokesToRemove.length > 0) {
     fabricCanvas.remove(...strokesToRemove);
   }
+  pendingMultiClusters = [];
   recognizedStrokeObjects = [];
   recognizedRegion = null;
   recognizedPageIndex = null;
 
-  if (objectToInsert) {
+  if (builtMultiObjects.length > 1) {
+    for (const entry of builtMultiObjects) {
+      if (entry.object) {
+        fabricCanvas.add(entry.object);
+        attachEssayRoleMetadata(entry.object, entry.latex || entry.plain, entry.region);
+      }
+    }
+  } else if (objectToInsert) {
     fabricCanvas.add(objectToInsert);
     attachEssayRoleMetadata(objectToInsert, currentAiResult.latex || textToInsert, region);
   }

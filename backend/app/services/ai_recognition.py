@@ -3,6 +3,9 @@
 # (TASK TF28508) - Phụ trách: Nguyễn Ngọc Gia Bảo (AI / Backend)
 # ==============================================================================
 
+import asyncio
+from collections import OrderedDict
+import hashlib
 import logging
 import re
 import time
@@ -22,6 +25,14 @@ from app.schemas.canvas_schema import (
 
 
 logger = logging.getLogger(__name__)
+
+_RECOGNITION_CACHE: "OrderedDict[str, Tuple[float, RecognizeResponse]]" = OrderedDict()
+_RECOGNITION_CACHE_MAX = 64
+_RECOGNITION_CACHE_TTL_SEC = 60.0
+
+
+def clear_recognition_cache() -> None:
+    _RECOGNITION_CACHE.clear()
 
 # ==============================================================================
 # KHO CÔNG THỨC CHUẨN PHỔ THÔNG (TASK TF28522 BENCHMARK & CURRICULUM RECOGNITION)
@@ -372,9 +383,42 @@ class AIRecognitionService:
         """
         start_time = time.perf_counter()
 
-        # BƯỚC 1: Tiền xử lý ảnh Canvas bằng OpenCV / Pillow
-        # Cắt sát vùng có nét bút, loại bỏ khoảng trắng 4K/FHD giúp giảm kích thước payload gửi lên AI
-        preprocess_res = preprocess_canvas_image(request.image_base64)
+        orig_subject = (request.subject or "TOAN").strip()
+        subject_norm = self._normalize_subject(orig_subject)
+        display_subject = orig_subject.upper() if orig_subject.upper() in ["MATH", "PHYS", "CHEM", "ENG", "BIO", "TOAN", "VAT_LY", "HOA_HOC", "TIENG_ANH"] else subject_norm
+        provider_choice = (request.provider or "auto").lower()
+
+        # Kiểm tra bộ nhớ đệm ngắn hạn (TTL 60s) cho cùng ảnh + môn học + trạng thái client hiện hành
+        img_digest = hashlib.sha256((request.image_base64 or "").encode("utf-8")).hexdigest()
+        cache_key = (
+            f"{img_digest}:{display_subject}:{provider_choice}:{request.stroke_hint or ''}:"
+            f"{int(bool(self.gemini.is_configured))}:{id(self.gemini.client)}:"
+            f"{int(bool(self.mathpix.is_configured))}"
+        )
+        now_mono = time.monotonic()
+        cached_entry = _RECOGNITION_CACHE.get(cache_key)
+        if cached_entry is not None:
+            ts_saved, cached_resp = cached_entry
+            if now_mono - ts_saved <= _RECOGNITION_CACHE_TTL_SEC:
+                _RECOGNITION_CACHE.move_to_end(cache_key)
+                elapsed_ms = max(1, int((time.perf_counter() - start_time) * 1000))
+                return cached_resp.model_copy(
+                    update={
+                        "session_id": request.session_id,
+                        "room_id": request.room_id,
+                        "page_number": request.page_number,
+                        "latency_ms": elapsed_ms,
+                    }
+                )
+            _RECOGNITION_CACHE.pop(cache_key, None)
+
+        # BƯỚC 1: Tiền xử lý ảnh Canvas trên worker thread để không chặn Event Loop khi nhận diện song song nhiều cụm
+        preprocess_res = await asyncio.to_thread(
+            preprocess_canvas_image,
+            request.image_base64,
+            22,
+            bool(getattr(request, "already_cropped", False)),
+        )
         processed_b64 = preprocess_res["processed_base64"]
 
         # Chuẩn bị thông tin tiền xử lý
@@ -391,13 +435,6 @@ class AIRecognitionService:
             processed_base64=processed_b64,
             size_reduction_percent=preprocess_res["size_reduction_percent"],
         )
-
-        orig_subject = (request.subject or "TOAN").strip()
-        subject_norm = self._normalize_subject(orig_subject)
-        # Giữ đúng mã môn theo yêu cầu của client (ví dụ client gửi MATH thì trả MATH)
-        display_subject = orig_subject.upper() if orig_subject.upper() in ["MATH", "PHYS", "CHEM", "ENG", "BIO", "TOAN", "VAT_LY", "HOA_HOC", "TIENG_ANH"] else subject_norm
-
-        provider_choice = (request.provider or "auto").lower()
 
         # BƯỚC 2: Điều phối gọi API Gemini và Mathpix
         recognized_text = ""
@@ -439,6 +476,7 @@ class AIRecognitionService:
                         processed_b64,
                         subject=subject_norm,
                         grade_level=request.grade_level or "THPT",
+                        fast_mode=bool(getattr(request, "fast_mode", False)),
                     )
                     if self.gemini.ensure_configured()
                     else self.gemini._mock_result(subject_norm, processed_b64, degraded_reason=degraded_reason)
@@ -461,6 +499,7 @@ class AIRecognitionService:
                 processed_b64,
                 subject=subject_norm,
                 grade_level=request.grade_level or "THPT",
+                fast_mode=bool(getattr(request, "fast_mode", False)),
             )
             recognized_text = g_res.recognized_text
             latex_formula = g_res.latex or g_res.recognized_text
@@ -616,7 +655,7 @@ class AIRecognitionService:
         if needs_correction and not suggestions:
             suggestions = ["x", "\\times", "+", "t", "sin", "cos"]
 
-        return RecognizeResponse(
+        final_response = RecognizeResponse(
             session_id=request.session_id,
             room_id=request.room_id,
             page_number=request.page_number,
@@ -637,6 +676,14 @@ class AIRecognitionService:
             illustration=illustration_dict,
             degraded_reason=degraded_reason,
         )
+
+        if not degraded_reason and (recognized_text.strip() or latex_formula.strip()):
+            _RECOGNITION_CACHE[cache_key] = (time.monotonic(), final_response)
+            _RECOGNITION_CACHE.move_to_end(cache_key)
+            while len(_RECOGNITION_CACHE) > _RECOGNITION_CACHE_MAX:
+                _RECOGNITION_CACHE.popitem(last=False)
+
+        return final_response
 
     def _normalize_subject(self, subject: str) -> str:
         """Chuẩn hóa mã môn học theo hệ thống."""

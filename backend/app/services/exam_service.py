@@ -5,6 +5,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.database import in_memory_exam_answer_keys
 
 
+SUPERSCRIPT_MAP = str.maketrans("0123456789+-=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ")
+SUBSCRIPT_MAP = str.maketrans("0123456789+-=()", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎")
+
+
 class ExamService:
     """
     Dịch vụ bóc tách đề thi từ DOCX/PDF/Văn bản thô và quản lý chế độ hiển thị Học sinh / Giáo viên.
@@ -17,7 +21,7 @@ class ExamService:
     )
 
     OPTION_REGEX = re.compile(
-        r"(?:\n|\s|^)([*•]?\s*\[?[xXvV]?\]?\s*([A-D|a-d])[\.\)]\s*(.*?))(?=(?:\n|\s)[*•]?\s*\[?[xXvV]?\]?\s*[A-D|a-d][\.\)]|$)",
+        r"(?:\n|\s|^)([*•]?\s*\[?[xXvV]?\]?\s*([A-Da-d])[\.\)]\s*(.*?))(?=(?:\n|\s)[*•]?\s*\[?[xXvV]?\]?\s*[A-Da-d][\.\)]|$)",
         re.DOTALL,
     )
 
@@ -93,67 +97,195 @@ class ExamService:
         }
 
     # -------------------------------------------------------------
-    # 2. Bóc tách từ file DOCX (.docx)
+    # 2. Bóc tách từ file DOCX (.docx) — Hỗ trợ cả Paragraph, Bảng 2x2/1x4, Bảng Đáp Án ngang & Số mũ Superscript
     # -------------------------------------------------------------
+    @staticmethod
+    def _extract_paragraph_with_scripts(paragraph) -> str:
+        """Đọc nội dung đoạn văn Word và chuyển các run superscript/subscript sang ký tự Unicode mũ/chỉ số."""
+        parts: List[str] = []
+        for run in getattr(paragraph, "runs", []) or []:
+            txt = run.text or ""
+            if not txt:
+                continue
+            try:
+                if run.font and run.font.superscript:
+                    parts.append(txt.translate(SUPERSCRIPT_MAP))
+                elif run.font and run.font.subscript:
+                    parts.append(txt.translate(SUBSCRIPT_MAP))
+                else:
+                    parts.append(txt)
+            except Exception:
+                parts.append(txt)
+        if parts:
+            return "".join(parts).strip()
+        return (getattr(paragraph, "text", "") or "").strip()
+
+    @staticmethod
+    def _iter_block_items(doc):
+        """Duyệt tuần tự Paragraph và Table đúng thứ tự xuất hiện trong file .docx."""
+        from docx.oxml.table import CT_Tbl
+        from docx.oxml.text.paragraph import CT_P
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
+        body = doc.element.body
+        for child in body.iterchildren():
+            if isinstance(child, CT_P):
+                yield Paragraph(child, doc)
+            elif isinstance(child, CT_Tbl):
+                yield Table(child, doc)
+
+    @staticmethod
+    def _collect_runs_style_flags(paragraph, q_key: str, colored_by_q: Dict[str, set], underlined_by_q: Dict[str, set], bold_by_q: Dict[str, set]) -> None:
+        for run in getattr(paragraph, "runs", []) or []:
+            if not run.text:
+                continue
+            run_txt = run.text.strip()
+            opt_matches = re.findall(r"(?:^|\s|\n)([A-Da-d])[\.\)]", " " + run_txt)
+            if not opt_matches:
+                continue
+
+            has_color = False
+            try:
+                if run.font and run.font.highlight_color is not None:
+                    has_color = True
+                elif run.font and run.font.color and run.font.color.rgb is not None:
+                    rgb_hex = str(run.font.color.rgb).upper()
+                    if rgb_hex not in ("000000", "222222", "333333", "111111"):
+                        has_color = True
+            except Exception:
+                has_color = False
+
+            for lbl_raw in opt_matches:
+                lbl = lbl_raw.upper()
+                if has_color:
+                    colored_by_q.setdefault(q_key, set()).add(lbl)
+                if run.underline:
+                    underlined_by_q.setdefault(q_key, set()).add(lbl)
+                if run.bold:
+                    bold_by_q.setdefault(q_key, set()).add(lbl)
+
     def parse_docx(self, file_bytes: bytes, filename: str = "de_thi.docx") -> Dict[str, Any]:
         """
-        Đọc và phân tích cấu trúc đề thi từ file DOCX.
-        Hỗ trợ nhận diện đáp án đúng bằng định dạng in đậm (bold), gạch chân (underline) của Word run.
+        Đọc và phân tích cấu trúc đề thi từ file DOCX:
+        - Duyệt tuần tự cả Paragraph lẫn Table (bảng phương án 2x2/1x4, bảng đáp án ngang 2 dòng).
+        - Bảo toàn số mũ (superscript ²) và chỉ số dưới (subscript ₂).
+        - Chỉ nhận diện in đậm/gạch chân/tô màu là đáp án đúng khi DUY NHẤT 1 phương án trong câu có định dạng đó.
         """
         try:
             import docx
+            from docx.table import Table
+            from docx.text.paragraph import Paragraph
             doc = docx.Document(io.BytesIO(file_bytes))
-        except Exception as e:
-            # Fallback nếu file lỗi hoặc dùng định dạng text
+        except Exception:
             return self.parse_text(file_bytes.decode("utf-8", errors="ignore"), title=filename)
 
-        full_paragraphs = []
+        full_paragraphs: List[str] = []
         colored_by_q: Dict[str, set] = {}
         underlined_by_q: Dict[str, set] = {}
         bold_by_q: Dict[str, set] = {}
+        docx_table_keys: Dict[str, str] = {}
 
         current_q_key = "1"
-        for p in doc.paragraphs:
-            text = p.text.strip()
-            if not text:
-                continue
+        seen_first_question = False
 
-            # Kiểm tra xem đoạn này có mở đầu câu hỏi không
-            q_match = re.match(r"^(?:Câu|Bài|Question)\s*(\d+)[:.]", text, re.IGNORECASE)
-            if q_match:
-                current_q_key = q_match.group(1)
-
-            # Quét các run trong paragraph: chỉ coi in đậm/gạch chân/tô màu là đáp án đúng nếu DUY NHẤT 1 phương án trong câu có định dạng đó
-            # (Tránh lỗi phổ biến khi đề Word in đậm cả 4 chữ cái A., B., C., D. làm hệ thống tưởng nhầm mọi câu đều đáp án A!)
-            for run in p.runs:
-                if not run.text:
-                    continue
-                run_txt = run.text.strip()
-                opt_matches = re.findall(r"(?:^|\s|\n)([A-D])[\.\)]", " " + run_txt)
-                if not opt_matches:
+        for block in self._iter_block_items(doc):
+            if isinstance(block, Paragraph):
+                text = self._extract_paragraph_with_scripts(block)
+                if not text:
                     continue
 
-                has_color = False
-                try:
-                    if run.font and run.font.highlight_color is not None:
-                        has_color = True
-                    elif run.font and run.font.color and run.font.color.rgb is not None:
-                        rgb_hex = str(run.font.color.rgb).upper()
-                        if rgb_hex not in ("000000", "222222", "333333", "111111"):
-                            has_color = True
-                except Exception:
-                    has_color = False
+                q_match = re.match(r"^(?:Câu|Bài|Question)\s*(\d+)[:.]", text, re.IGNORECASE)
+                if q_match:
+                    current_q_key = q_match.group(1)
+                    seen_first_question = True
+                elif not seen_first_question:
+                    # Bỏ qua dòng hành chính đầu trang trước Câu 1 (Họ và tên, Lớp, Điểm, Thời gian...)
+                    if re.match(
+                        r"^(?:Họ\s*và\s*tên|Lớp|Điểm|Trường|Môn\s*:|Thời\s*gian|ĐỀ\s+(?:KIỂM\s+TRA|TRẮC\s+NGHIỆM|THI))\b",
+                        text,
+                        re.IGNORECASE,
+                    ):
+                        continue
 
-                for lbl_raw in opt_matches:
-                    lbl = lbl_raw.upper()
-                    if has_color:
-                        colored_by_q.setdefault(current_q_key, set()).add(lbl)
-                    if run.underline:
-                        underlined_by_q.setdefault(current_q_key, set()).add(lbl)
-                    if run.bold:
-                        bold_by_q.setdefault(current_q_key, set()).add(lbl)
+                self._collect_runs_style_flags(block, current_q_key, colored_by_q, underlined_by_q, bold_by_q)
+                full_paragraphs.append(text)
 
-            full_paragraphs.append(text)
+            elif isinstance(block, Table):
+                rows_matrix: List[List[Tuple[str, List[Any]]]] = []
+                for row in block.rows:
+                    seen_tc = set()
+                    row_cells: List[Tuple[str, List[Any]]] = []
+                    for cell in row.cells:
+                        if id(cell._tc) in seen_tc:
+                            continue
+                        seen_tc.add(id(cell._tc))
+                        p_list = list(cell.paragraphs)
+                        cell_lines = [self._extract_paragraph_with_scripts(p) for p in p_list]
+                        cell_txt = "\n".join(line for line in cell_lines if line).strip()
+                        row_cells.append((cell_txt, p_list))
+                    if any(ct for ct, _ in row_cells):
+                        rows_matrix.append(row_cells)
+
+                if not rows_matrix:
+                    continue
+
+                # 1) Kiểm tra BẢNG ĐÁP ÁN ngang (Hàng trên là Câu 1, 2, 3... | Hàng dưới là Đáp án a, b, c, d...)
+                is_answer_key_table = False
+                for r_idx in range(len(rows_matrix) - 1):
+                    top_row = [c[0].strip() for c in rows_matrix[r_idx]]
+                    bot_row = [c[0].strip() for c in rows_matrix[r_idx + 1]]
+                    if len(top_row) >= 2 and len(top_row) == len(bot_row):
+                        pairs_found = 0
+                        temp_pairs: Dict[str, str] = {}
+                        for t_cell, b_cell in zip(top_row, bot_row):
+                            m_q = re.fullmatch(r"(?:Câu\s*)?(\d{1,3})", t_cell, re.IGNORECASE)
+                            m_a = re.fullmatch(r"([A-Da-d])[\.\)]?", b_cell)
+                            if m_q and m_a:
+                                temp_pairs[m_q.group(1)] = m_a.group(1).upper()
+                                pairs_found += 1
+                        if pairs_found >= 1 and (
+                            pairs_found >= 2
+                            or any(re.search(r"câu|đáp\s*án|key", x, re.IGNORECASE) for x in top_row + bot_row)
+                        ):
+                            docx_table_keys.update(temp_pairs)
+                            is_answer_key_table = True
+                if is_answer_key_table:
+                    continue
+
+                # Kiểm tra bảng đáp án dạng ô "1.C | 2.A | 3.D"
+                flat_cells = [c for r in rows_matrix for c in r]
+                inline_key_pairs: Dict[str, str] = {}
+                non_key_cells = 0
+                for c_txt, _ in flat_cells:
+                    if not c_txt:
+                        continue
+                    m_ik = re.fullmatch(r"(?:Câu\s*)?(\d{1,3})\s*[\.\-:]\s*([A-Da-d])", c_txt.strip(), re.IGNORECASE)
+                    if m_ik:
+                        inline_key_pairs[m_ik.group(1)] = m_ik.group(2).upper()
+                    elif not re.fullmatch(r"(?:BẢNG\s*)?ĐÁP\s*ÁN|ANSWER\s*KEY|CÂU", c_txt.strip(), re.IGNORECASE):
+                        non_key_cells += 1
+                if len(inline_key_pairs) >= 2 and non_key_cells == 0:
+                    docx_table_keys.update(inline_key_pairs)
+                    continue
+
+                # 2) Bỏ qua bảng banner tiêu đề 1 ô ở đầu đề trước Câu 1
+                if len(flat_cells) == 1 and not seen_first_question:
+                    only_txt = flat_cells[0][0]
+                    if not re.search(r"(?:Câu|Bài|Question)\s*\d+[:.]", only_txt, re.IGNORECASE):
+                        continue
+
+                # 3) Bảng phương án trắc nghiệm (2x2 hoặc 1x4 chứa a. / b. / c. / d.) hoặc bảng chứa nội dung câu hỏi
+                for c_txt, c_paras in flat_cells:
+                    if not c_txt:
+                        continue
+                    q_in_cell = re.match(r"^(?:Câu|Bài|Question)\s*(\d+)[:.]", c_txt, re.IGNORECASE)
+                    if q_in_cell:
+                        current_q_key = q_in_cell.group(1)
+                        seen_first_question = True
+                    for p_obj in c_paras:
+                        self._collect_runs_style_flags(p_obj, current_q_key, colored_by_q, underlined_by_q, bold_by_q)
+                    full_paragraphs.append(c_txt)
 
         bold_options_detected: Dict[str, str] = {}
         all_q_keys = set(colored_by_q) | set(underlined_by_q) | set(bold_by_q)
@@ -169,15 +301,16 @@ class ExamService:
         result = self.parse_text(raw_text, title=filename)
         result["source_type"] = "DOCX"
 
-        # Bổ sung đáp án đúng nhận diện được từ định dạng bold/underline vào câu hỏi
+        # Ưu tiên 1: Bảng đáp án cuối đề trong Table Word -> Ưu tiên 2: Định dạng nổi bật duy nhất (bold/underline/color)
         for q in result["questions"]:
             q_num_str = str(q.get("number", ""))
-            if q_num_str in bold_options_detected and not q.get("correct_option"):
-                detected_key = bold_options_detected[q_num_str]
-                q["correct_option"] = detected_key
+            resolved_docx_key = docx_table_keys.get(q_num_str) or (
+                bold_options_detected.get(q_num_str) if not q.get("correct_option") else None
+            )
+            if resolved_docx_key:
+                q["correct_option"] = resolved_docx_key
                 for opt in q.get("options", []):
-                    if opt["label"] == detected_key:
-                        opt["is_correct"] = True
+                    opt["is_correct"] = (opt["label"] == resolved_docx_key)
 
         return result
 
@@ -607,9 +740,17 @@ class ExamService:
         raw_options = []
         first_opt_idx = len(body)
 
-        # Quét vị trí xuất hiện của các phương án
+        # Cắt bỏ mọi phần từ BẢNG ĐÁP ÁN trở về sau nếu vô tình lọt vào thân câu cuối
+        body = re.sub(
+            r"\n?\s*(?:BẢNG\s*ĐÁP\s*ÁN|ĐÁP\s*ÁN\s*CHI\s*TIẾT|HƯỚNG\s*DẪN\s*CHẤM|ANSWER\s*KEY)\b.*$",
+            "",
+            body,
+            flags=re.DOTALL | re.IGNORECASE,
+        ).strip()
+
+        # Quét vị trí xuất hiện của các phương án (hỗ trợ cả a., b., c., d. chữ thường lẫn A., B., C., D. chữ hoa)
         opt_matches = list(re.finditer(
-            r"(?:^|\n|\s)([*•]?\s*\[?[xXvV]?\]?\s*([A-D|a-d])[\.\)])\s*(.*?)(?=(?:(?:\n|\s)[*•]?\s*\[?[xXvV]?\]?\s*[A-D|a-d][\.\)])|$)",
+            r"(?:^|\n|\s)([*•]?\s*\[?[xXvV]?\]?\s*([A-Da-d])[\.\)])\s*(.*?)(?=(?:(?:\n|\s)[*•]?\s*\[?[xXvV]?\]?\s*[A-Da-d][\.\)])|$)",
             body,
             re.DOTALL
         ))

@@ -52,7 +52,11 @@ def _composite_rgba_preserving_strokes(img: Image.Image) -> Image.Image:
     return Image.alpha_composite(white_bg, rgba).convert("RGB")
 
 
-def preprocess_canvas_image(image_base64: str, padding: int = 22) -> Dict[str, Any]:
+def preprocess_canvas_image(
+    image_base64: str,
+    padding: int = 22,
+    already_cropped: bool = False,
+) -> Dict[str, Any]:
     """
     Sprint 1 - Task 6: Tiền xử lý ảnh vùng vẽ bằng OpenCV và Pillow trước khi gửi AI.
     Các bước:
@@ -62,6 +66,32 @@ def preprocess_canvas_image(image_base64: str, padding: int = 22) -> Dict[str, A
       3. Giữ nguyên biên dạng mượt (anti-aliased) và ruột nét đặc để Gemini Vision / Mathpix đọc chuẩn xác nhất.
     """
     img, raw_len = decode_base64_image(image_base64)
+    orig_w, orig_h = img.size
+
+    # Đường tắt tốc độ cao: Nếu Frontend đã tự crop sát cụm nét vẽ trên nền đặc và nén WebP/PNG nhỏ gọn,
+    # bỏ qua vòng quét contour & nén lại lần 2 để tiết kiệm CPU và độ trễ.
+    if (
+        already_cropped
+        and img.mode == "RGB"
+        and max(orig_w, orig_h) <= 768
+        and raw_len < 120_000
+    ):
+        clean_raw_b64 = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
+        mime_prefix = "data:image/webp;base64," if image_base64.startswith("data:image/webp") else "data:image/png;base64,"
+        return {
+            "original_size": [orig_w, orig_h],
+            "cropped_size": [orig_w, orig_h],
+            "bounding_box": {
+                "x": 0,
+                "y": 0,
+                "width": int(orig_w),
+                "height": int(orig_h),
+            },
+            "processed_base64": f"{mime_prefix}{clean_raw_b64}",
+            "raw_base64": clean_raw_b64,
+            "size_reduction_percent": 0.0,
+        }
+
     composed = _composite_rgba_preserving_strokes(img)
 
     orig_w, orig_h = composed.size
@@ -126,10 +156,10 @@ def preprocess_canvas_image(image_base64: str, padding: int = 22) -> Dict[str, A
 
         cropped_img = enhanced.crop((x0, y0, x1, y1))
 
-    # Giới hạn cạnh lớn nhất 1024px và nén WebP nhẹ để tăng tốc độ gửi Gemini < 1s
+    # Giới hạn cạnh lớn nhất 768px và nén WebP nhẹ để giảm ~44% pixel gửi Gemini Vision API (< 1s)
     max_side = max(cropped_img.width, cropped_img.height)
-    if max_side > 1024:
-        ratio = 1024.0 / max_side
+    if max_side > 768:
+        ratio = 768.0 / max_side
         new_size = (max(1, int(cropped_img.width * ratio)), max(1, int(cropped_img.height * ratio)))
         cropped_img = cropped_img.resize(new_size, Image.Resampling.LANCZOS)
 

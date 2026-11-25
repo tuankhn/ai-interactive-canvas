@@ -5,6 +5,7 @@ import { isNearObject, intersects, getDashArrayForStyle } from '../utils/geometr
 import { snapshot, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
 import { openDirectCanvasTextEditor } from './drawingCanvas.js';
+import { removeObjectsWithCascade } from '../utils/cascadeDelete.js';
 
 let selectedObjects = [];
 let marqueeStartWorld = null;
@@ -171,7 +172,7 @@ export function deleteSelectedObjects() {
   const current = getSelectedObjects();
   if (!current.length || state.ended) return;
   const before = snapshot();
-  fabricCanvas.remove(...current);
+  removeObjectsWithCascade(current);
   clearSelection();
   fabricCanvas.requestRenderAll();
   remember(before);

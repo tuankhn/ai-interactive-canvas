@@ -122,6 +122,7 @@ class GeminiAIService:
         subject: str = "MATH",
         grade_level: Optional[str] = "THPT",
         timeout: float = 18.0,
+        fast_mode: bool = False,
     ) -> RecognizeCanvasResponse:
         """
         Phân tích ảnh vùng nét vẽ bằng Gemini Vision:
@@ -193,17 +194,23 @@ class GeminiAIService:
                             )
                             break
 
-                        per_attempt_timeout = min(remaining, 7.5 if mod_idx == 0 else 6.0)
+                        per_attempt_timeout = min(remaining, 4.5 if mod_idx == 0 else 4.0)
 
                         try:
                             gen_config = None
                             try:
                                 from google.genai import types
-                                gen_config = types.GenerateContentConfig(
-                                    response_mime_type="application/json",
-                                    temperature=0.1,
-                                    max_output_tokens=700,
-                                )
+                                cfg_kwargs: Dict[str, Any] = {
+                                    "response_mime_type": "application/json",
+                                    "temperature": 0.1,
+                                    "max_output_tokens": 350 if fast_mode else 550,
+                                }
+                                if hasattr(types, "ThinkingConfig"):
+                                    try:
+                                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                                    except Exception:
+                                        pass
+                                gen_config = types.GenerateContentConfig(**cfg_kwargs)
                             except Exception:
                                 pass
 

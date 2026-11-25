@@ -6,6 +6,7 @@ import { snapshot, restore, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
 import { scheduleAIDebounce, cancelAIDebounce } from './aiRecognition.js';
 import { snapPointToRuler } from './rulerOverlay.js';
+import { removeObjectsWithCascade } from '../utils/cascadeDelete.js';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5.0;
@@ -474,12 +475,13 @@ function eraseAt(prevPoint, point, radius) {
   let changed = false;
   const currentList = fabricCanvas.getObjects().slice();
   for (const object of currentList) {
+    if (!fabricCanvas.getObjects().includes(object)) continue;
     // Tẩy từng phần thực sự ("đưa đến đâu xoá đến đó") trên mọi nét bút và hình vẽ
     const splitPieces = splitObjectByEraserSweep(object, prevPoint || point, point, radius);
     if (splitPieces !== null) {
       const idx = fabricCanvas.getObjects().indexOf(object);
-      fabricCanvas.remove(object);
       if (splitPieces.length > 0) {
+        fabricCanvas.remove(object);
         if (idx >= 0) {
           splitPieces.forEach((piece, offset) => {
             fabricCanvas.insertAt(idx + offset, piece);
@@ -487,14 +489,16 @@ function eraseAt(prevPoint, point, radius) {
         } else {
           fabricCanvas.add(...splitPieces);
         }
+      } else {
+        removeObjectsWithCascade([object]);
       }
       changed = true;
       continue;
     }
 
-    // Các đối tượng không tách điểm được (như nhãn nhỏ / chữ ngắn) nếu bị chà trực tiếp cũng được xoá
+    // Các đối tượng không tách điểm được (như công thức ảnh / nhãn nhỏ / chữ) nếu bị chà trực tiếp sẽ xoá kèm phần tử phụ thuộc
     if (!(object instanceof Path) && isNearObject(object, point, radius * 0.85)) {
-      fabricCanvas.remove(object);
+      removeObjectsWithCascade([object]);
       changed = true;
     }
   }
@@ -601,9 +605,12 @@ export function finishStroke(commit) {
       height: Math.abs(first.y - last.y)
     };
     if (rect.width > 2 || rect.height > 2) {
-      fabricCanvas.getObjects().slice().forEach((object) => {
-        if (intersects(object.getBoundingRect(), rect)) fabricCanvas.remove(object);
-      });
+      const hitObjs = fabricCanvas
+        .getObjects()
+        .filter((object) => intersects(object.getBoundingRect(), rect));
+      if (hitObjs.length > 0) {
+        removeObjectsWithCascade(hitObjs);
+      }
     }
   } else if (state.tool === 'ruler' && points.length > 1) {
     const ruler = makeRuler(first, last, finished.color);
