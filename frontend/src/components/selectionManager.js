@@ -167,13 +167,51 @@ export function syncSelectionOverlay() {
 
     const unionScreen = worldRectToScreen(worldBounds);
     actionBarEl.hidden = false;
-    const barTop =
-      unionScreen.top - pad - 62 < 58
-        ? unionScreen.top + unionScreen.height + pad + 12
-        : unionScreen.top - pad - 60;
+
+    const barW = actionBarEl.offsetWidth || 128;
+    const barH = actionBarEl.offsetHeight || 34;
+    const boxCx = s.left + s.width / 2;
+    const boxCy = s.top + s.height / 2;
+    const boxHalfH = Math.max(8, s.height / 2 + pad);
+    const activeDeg = singleObj && !cropModeActive ? singleAngle : 0;
+    const rotPt = rotatePointAround(
+      { x: boxCx, y: boxCy - boxHalfH - 30 },
+      { x: boxCx, y: boxCy },
+      (activeDeg * Math.PI) / 180,
+    );
+
+    const visualTop = Math.min(unionScreen.top - pad, cropModeActive ? Infinity : rotPt.y - 14);
+    const visualBottom = Math.max(
+      unionScreen.top + unionScreen.height + pad,
+      cropModeActive ? -Infinity : rotPt.y + 14,
+    );
+    const stageH = stage.clientHeight || 720;
+    const stageW = stage.clientWidth || 1024;
+    const gap = 16;
+
+    let barTop;
+    if (!cropModeActive && rotPt.y <= boxCy) {
+      // Nút xoay ↻ đang nằm phía trên -> đặt thanh [Sửa chữ | Xóa] thoáng ở phía dưới khung chọn
+      const belowCandidate = unionScreen.top + unionScreen.height + pad + gap;
+      if (belowCandidate + barH <= stageH - 64) {
+        barTop = belowCandidate;
+      } else {
+        barTop = Math.max(10, visualTop - barH - gap);
+      }
+    } else {
+      // Nút xoay ↻ đang chúc xuống dưới (xoay ~180°) hoặc đang Crop -> đặt thanh ở phía trên khung chọn
+      const aboveCandidate = unionScreen.top - pad - barH - gap;
+      if (aboveCandidate >= 64) {
+        barTop = aboveCandidate;
+      } else {
+        barTop = Math.min(stageH - barH - 10, visualBottom + gap);
+      }
+    }
+
+    const centeredLeft = Math.round(unionScreen.left + unionScreen.width / 2 - barW / 2);
     Object.assign(actionBarEl.style, {
-      left: `${Math.max(8, Math.min(unionScreen.left - pad, stage.clientWidth - 260))}px`,
-      top: `${Math.max(8, barTop)}px`,
+      left: `${Math.max(10, Math.min(centeredLeft, stageW - barW - 10))}px`,
+      top: `${Math.round(Math.max(10, barTop))}px`,
     });
   }
 }
