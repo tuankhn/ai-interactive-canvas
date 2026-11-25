@@ -5,6 +5,7 @@
  * mô hình tương ứng được mở tự động.
  */
 import { $, toolbar, fabricCanvas, state } from '../utils/context.js';
+import { makePanelDraggable } from '../utils/floating_drag.js';
 
 // Chỉ đăng ký sau khi bảng vẽ đã hoàn tất khởi tạo.
 await import('../../app.js');
@@ -123,6 +124,7 @@ panel.innerHTML = `
   <p class="mol3d-help">Kéo chuột để xoay · Lăn chuột để phóng to/thu nhỏ</p>
 `;
 document.body.append(panel);
+makePanelDraggable(panel, panel.querySelector('.mol3d-heading'));
 
 const input = $('mol3dInput');
 const status = $('mol3dStatus');

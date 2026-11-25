@@ -1180,7 +1180,7 @@ export function setupGraphExtension() {
     const boxWidth = panel.offsetWidth;
     const boxHeight = panel.offsetHeight;
     if (!anchor) {
-      moveWithinViewport(Math.max(8, width - boxWidth - 20), Math.max(8, Math.min(70, height - boxHeight - 8)));
+      moveWithinViewport(Math.max(8, width - boxWidth - 20), Math.max(8, Math.min(132, height - boxHeight - 8)));
       return;
     }
     let left = stageBox.left + anchor.left + anchor.width + 12;

@@ -8,7 +8,8 @@ import { snapshot, remember, updateHint } from './history.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
 import { showAppToast } from '../utils/ui_feedback.js';
-import { Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
+import { computeCleanBoardPlacement, panViewportToShowWorldRect } from '../utils/floating_drag.js';
+import { Group, Line, Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 const VARIANT_ENDPOINT = '/api/v1/exam/generate-variant';
 
@@ -292,6 +293,9 @@ export function extractQuestionTextFromBoard() {
   // Ưu tiên các thẻ câu hỏi được đánh dấu
   for (const obj of objects) {
     if (obj.meta && (obj.meta.quizCardManaged || obj.meta.variantCardManaged || obj.meta.examQuestion)) {
+      if (typeof obj.meta.rawQuestionText === 'string' && obj.meta.rawQuestionText.trim()) {
+        return cleanQuestionText(obj.meta.rawQuestionText);
+      }
       if (typeof obj.text === 'string' && obj.text.trim()) {
         return cleanQuestionText(obj.text);
       }
@@ -320,7 +324,7 @@ function cleanQuestionText(text) {
 }
 
 /**
- * Chèn một Card bài tập đẹp mắt do AI tạo lên mặt bảng vẽ Fabric.js.
+ * Chèn một Card bài tập thoáng đẹp, tự căn vị trí trống bên dưới đồ thị/nội dung cũ trên mặt bảng (không đè nội dung, không kẹt khung chọn xanh).
  */
 export function insertVariantCardToCanvas(variantItem) {
   if (!fabricCanvas || !variantItem) return;
@@ -329,64 +333,155 @@ export function insertVariantCardToCanvas(variantItem) {
   const isDark = isDarkBoardActive();
   const isAdv = variantItem.variant_type === 'ADVANCED';
 
-  const cardWidth = Math.min(680, Math.max(420, fabricCanvas.getWidth() - 120));
-  const left = 60;
-  const top = 80;
+  const padX = 26;
+  const padY = 22;
+  const innerWidth = Math.min(660, Math.max(320, (fabricCanvas.getWidth() || 960) - 180));
+  const totalCardWidth = innerWidth + padX * 2;
 
-  const headerTitle = isAdv
-    ? '【BÀI TẬP NÂNG CAO - HỌC SINH KHÁ GIỎI】'
-    : '【BÀI TẬP TƯƠNG TỰ - ĐỔI SỐ LIỆU】';
+  const { left: cardLeft, top: cardTop } = computeCleanBoardPlacement(totalCardWidth, 42);
 
-  const fullText = `${headerTitle}\n${variantItem.question_content}\n\n` +
-    (variantItem.changed_parameters ? `• Số liệu đổi: ${variantItem.changed_parameters}\n` : '') +
-    (variantItem.added_conditions ? `• Điều kiện: ${variantItem.added_conditions}\n` : '') +
-    (variantItem.advanced_hint ? `• Gợi ý: ${variantItem.advanced_hint}` : '');
-
-  const strokeColor = isAdv ? '#7c3aed' : '#16a34a';
+  const accentColor = isAdv
+    ? (isDark ? '#E89274' : '#9C3F23')
+    : (isDark ? '#78A87B' : '#2F6F3E');
+  const strokeColor = isAdv
+    ? (isDark ? 'rgba(232, 146, 116, 0.55)' : '#D89B84')
+    : (isDark ? 'rgba(120, 168, 123, 0.55)' : '#94C29A');
   const bgColor = isDark
-    ? (isAdv ? 'rgba(76, 29, 149, 0.25)' : 'rgba(20, 83, 45, 0.25)')
-    : (isAdv ? '#f5f3ff' : '#f0fdf4');
+    ? (isAdv ? 'rgba(48, 34, 29, 0.94)' : 'rgba(27, 42, 31, 0.94)')
+    : (isAdv ? '#FDF6F2' : '#F4FBF5');
+  const primaryInk = isDark ? '#ECE7DF' : '#26231F';
+  const secondaryInk = isDark ? '#C5BEB3' : '#4E4840';
+  const dividerStroke = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(38,35,31,0.10)';
 
-  const cardBox = new Rect({
-    left: left - 12,
-    top: top - 12,
-    width: cardWidth + 24,
-    height: 160, // Sẽ được cập nhật sau khi tính chiều cao chữ
+  const headerLabel = isAdv
+    ? 'BÀI TẬP NÂNG CAO · PHÂN HÓA KHÁ GIỎI'
+    : 'BÀI TẬP TƯƠNG TỰ · ĐỔI SỐ LIỆU';
+
+  let cursorY = cardTop + padY;
+  const childObjects = [];
+
+  const badgeText = new Textbox(headerLabel, {
+    left: cardLeft + padX,
+    top: cursorY,
+    width: innerWidth,
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+    fill: accentColor,
+    lineHeight: 1.35,
+    selectable: false,
+    evented: false,
+  });
+  const badgeH = Math.max(20, badgeText.calcTextHeight?.() || badgeText.height || 20);
+  childObjects.push(badgeText);
+  cursorY += badgeH + 12;
+
+  const stemText = new Textbox(String(variantItem.question_content || '').trim(), {
+    left: cardLeft + padX,
+    top: cursorY,
+    width: innerWidth,
+    fontSize: 18,
+    fontWeight: '600',
+    fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+    fill: primaryInk,
+    lineHeight: 1.55,
+    selectable: false,
+    evented: false,
+  });
+  const stemH = Math.max(28, stemText.calcTextHeight?.() || stemText.height || 28);
+  childObjects.push(stemText);
+  cursorY += stemH;
+
+  const metaLines = [];
+  if (variantItem.changed_parameters) {
+    metaLines.push(`• Số liệu đổi: ${variantItem.changed_parameters}`);
+  }
+  if (variantItem.added_conditions) {
+    metaLines.push(`• Điều kiện: ${variantItem.added_conditions}`);
+  }
+  if (variantItem.advanced_hint) {
+    metaLines.push(`• Gợi ý tư duy: ${variantItem.advanced_hint}`);
+  }
+
+  if (metaLines.length > 0) {
+    cursorY += 16;
+    const sepLine = new Line(
+      [cardLeft + padX, cursorY, cardLeft + padX + innerWidth, cursorY],
+      {
+        stroke: dividerStroke,
+        strokeWidth: 1,
+        selectable: false,
+        evented: false,
+      }
+    );
+    childObjects.push(sepLine);
+    cursorY += 14;
+
+    for (let i = 0; i < metaLines.length; i += 1) {
+      const noteTb = new Textbox(metaLines[i], {
+        left: cardLeft + padX,
+        top: cursorY,
+        width: innerWidth,
+        fontSize: 14.5,
+        fontWeight: '400',
+        fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+        fill: secondaryInk,
+        lineHeight: 1.55,
+        selectable: false,
+        evented: false,
+      });
+      const noteH = Math.max(22, noteTb.calcTextHeight?.() || noteTb.height || 22);
+      childObjects.push(noteTb);
+      cursorY += noteH + (i < metaLines.length - 1 ? 8 : 0);
+    }
+  }
+
+  const totalCardHeight = Math.max(120, cursorY - cardTop + padY);
+
+  const cardBg = new Rect({
+    left: cardLeft,
+    top: cardTop,
+    width: totalCardWidth,
+    height: totalCardHeight,
     rx: 12,
     ry: 12,
     fill: bgColor,
     stroke: strokeColor,
-    strokeWidth: 2,
+    strokeWidth: 1.8,
     strokeDashArray: isAdv ? [6, 4] : null,
-    selectable: true,
-    evented: true,
+    selectable: false,
+    evented: false,
   });
 
-  const cardText = new Textbox(fullText, {
-    left: left,
-    top: top,
-    width: cardWidth,
-    fontSize: 16,
-    lineHeight: 1.35,
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-    fill: isDark ? '#f8fafc' : '#0f172a',
-    selectable: true,
-    evented: true,
+  const variantGroup = new Group([cardBg, ...childObjects], {
+    selectable: false,
+    evented: false,
+    objectCaching: false,
   });
 
-  // Cập nhật chiều cao khung nền theo chiều cao chữ
-  const textBounds = cardText.getBoundingRect();
-  cardBox.set('height', (textBounds.height || 140) + 24);
+  variantGroup._hitPoints = [
+    { x: cardLeft + 16, y: cardTop + totalCardHeight / 2 },
+    { x: cardLeft + totalCardWidth - 16, y: cardTop + totalCardHeight / 2 },
+  ];
+  variantGroup._hitWidth = totalCardHeight;
+  variantGroup.meta = {
+    variantCardManaged: true,
+    variantId: variantItem.id,
+    type: 'variant_card_group',
+    rawQuestionText: String(variantItem.question_content || '').trim(),
+    aiState: 'formatted',
+  };
 
-  cardBox.meta = { variantCardManaged: true, variantId: variantItem.id, type: 'bg' };
-  cardText.meta = { variantCardManaged: true, variantId: variantItem.id, type: 'text' };
-
-  fabricCanvas.add(cardBox);
-  fabricCanvas.add(cardText);
-  fabricCanvas.setActiveObject(cardText);
-  fabricCanvas.renderAll();
+  fabricCanvas.add(variantGroup);
+  panViewportToShowWorldRect({
+    left: cardLeft,
+    top: cardTop,
+    width: totalCardWidth,
+    height: totalCardHeight,
+  });
+  fabricCanvas.requestRenderAll();
   remember(before);
   updateHint();
 
-  setStatus(`Đã chiếu "${variantItem.title}" lên bảng vẽ`);
+  setStatus(`Đã chiếu "${variantItem.title}" lên vùng trống bảng vẽ`);
 }
