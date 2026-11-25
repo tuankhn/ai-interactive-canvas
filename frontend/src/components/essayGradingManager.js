@@ -103,25 +103,41 @@ function clusterStrokesIntoLines(strokeObjects) {
  * Chụp riêng vùng 1 dòng nét viết tay theo tọa độ World trên Infinite Canvas
  * và gọi /api/v1/recognize để đọc nội dung chính xác ở mọi mức zoom/pan.
  */
-async function recognizeLineCluster(lineBbox, subject) {
+async function recognizeLineCluster(clusterObjects, lineBbox, subject) {
   const pad = 16;
+  const allObjects = fabricCanvas.getObjects();
+  const targetSet = new Set(clusterObjects);
+  const prevVisibility = new Map();
   const prevBg = fabricCanvas.backgroundColor;
   const prevVpt = (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice();
   let imageBase64 = '';
 
   try {
+    for (const obj of allObjects) {
+      if (!targetSet.has(obj)) {
+        prevVisibility.set(obj, obj.visible);
+        obj.visible = false;
+      }
+    }
     fabricCanvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
     fabricCanvas.backgroundColor = isDarkBoardActive() ? '#191816' : '#FFFFFF';
     fabricCanvas.renderAll();
-    imageBase64 = fabricCanvas.toDataURL({
-      format: 'png',
+    const cropOpts = {
       left: Math.floor(lineBbox.left - pad),
       top: Math.floor(lineBbox.top - pad),
       width: Math.max(24, Math.ceil(lineBbox.width + pad * 2)),
       height: Math.max(24, Math.ceil(lineBbox.height + pad * 2)),
-      multiplier: 2,
-    });
+      multiplier: 1,
+    };
+    const webpUrl = fabricCanvas.toDataURL({ format: 'webp', quality: 0.85, ...cropOpts });
+    imageBase64 =
+      typeof webpUrl === 'string' && webpUrl.startsWith('data:image/webp')
+        ? webpUrl
+        : fabricCanvas.toDataURL({ format: 'png', ...cropOpts });
   } finally {
+    for (const [obj, vis] of prevVisibility.entries()) {
+      obj.visible = vis;
+    }
     fabricCanvas.backgroundColor = prevBg || '';
     fabricCanvas.setViewportTransform(prevVpt);
     fabricCanvas.renderAll();
@@ -153,7 +169,21 @@ async function recognizeLineCluster(lineBbox, subject) {
 /**
  * Vẽ dấu tích xanh (✓) hoặc gạch chân đỏ đất + nút gợi ý (✕ Gợi ý) trực tiếp lên dòng bài làm.
  */
-function renderOnBoardStepOverlay(stepEval, bbox) {
+function clearGradingOverlaysForQuestion(questionGroupId) {
+  if (!fabricCanvas || !questionGroupId) return;
+  const overlays = fabricCanvas
+    .getObjects()
+    .filter(
+      (obj) =>
+        obj?.meta?.dataRole === 'grading_overlay' &&
+        obj?.meta?.gradedQuestionId === questionGroupId
+    );
+  if (overlays.length > 0) {
+    fabricCanvas.remove(...overlays);
+  }
+}
+
+function renderOnBoardStepOverlay(stepEval, bbox, questionGroupId = '') {
   const isCorrect = Boolean(stepEval.is_step_correct);
   const isDark = isDarkBoardActive();
   const rightX = bbox.left + bbox.width + 16;
@@ -171,7 +201,7 @@ function renderOnBoardStepOverlay(stepEval, bbox) {
       evented: false,
       objectCaching: false,
     });
-    checkObj.meta = { dataRole: 'grading_overlay', stepNumber: stepEval.step_number };
+    checkObj.meta = { dataRole: 'grading_overlay', gradedQuestionId: questionGroupId, stepNumber: stepEval.step_number };
     fabricCanvas.add(checkObj);
     return;
   }
@@ -186,7 +216,7 @@ function renderOnBoardStepOverlay(stepEval, bbox) {
     evented: false,
     objectCaching: false,
   });
-  redLine.meta = { dataRole: 'grading_overlay', stepNumber: stepEval.step_number };
+  redLine.meta = { dataRole: 'grading_overlay', gradedQuestionId: questionGroupId, stepNumber: stepEval.step_number };
 
   const hintObj = new FabricText(' ✕ Gợi ý ', {
     left: rightX,
@@ -202,6 +232,7 @@ function renderOnBoardStepOverlay(stepEval, bbox) {
   });
   hintObj.meta = {
     dataRole: 'grading_overlay',
+    gradedQuestionId: questionGroupId,
     isHintTrigger: true,
     stepNumber: stepEval.step_number,
     feedback: stepEval.feedback || '',
@@ -252,7 +283,6 @@ export async function gradeEssayDirectlyOnBoard() {
 
   const subject = $('subjectSelect')?.value || $('essaySubjectSelect')?.value || 'TOAN';
   cleanupOrphanQuestionBadges();
-  clearGradingOverlays();
 
   const allObjects = fabricCanvas
     .getObjects()
@@ -265,7 +295,9 @@ export async function gradeEssayDirectlyOnBoard() {
 
   const freehandLines =
     questions.length === 0
-      ? clusterStrokesIntoLines(allObjects.filter((obj) => obj instanceof Path))
+      ? clusterStrokesIntoLines(
+          allObjects.filter((obj) => obj instanceof Path && obj?.meta?.aiState !== 'graded')
+        )
       : [];
 
   if (questions.length === 0 && freehandLines.length < 2) {
@@ -275,17 +307,19 @@ export async function gradeEssayDirectlyOnBoard() {
   isDirectGradingBusy = true;
   const gradeBtn = $('gradeEssayBtn');
   if (gradeBtn) gradeBtn.disabled = true;
-  showEssayFloatingPill('Đang quét & chấm từng dòng trên bảng...', false);
+  showEssayFloatingPill('Đang quét & chấm từng dòng mới trên bảng...', false);
   setStatus('AI đang chấm trực tiếp từng dòng bài làm trên bảng...');
 
   const before = snapshot();
   let totalCheckedSteps = 0;
   let totalErrors = 0;
+  let skippedGradedQuestions = 0;
 
   try {
     if (questions.length > 0) {
       for (let i = 0; i < questions.length; i += 1) {
         const q = questions[i];
+        const qGroupId = q.obj.meta.questionGroupId || `board_q_${i + 1}`;
         const minY = q.bbox.top + q.bbox.height - 6;
         const maxY = i + 1 < questions.length ? questions[i + 1].bbox.top : Infinity;
 
@@ -296,20 +330,43 @@ export async function gradeEssayDirectlyOnBoard() {
           return centerY >= minY && centerY < maxY;
         });
 
+        const hasNewRawStrokes = regionObjects.some(
+          (obj) => obj instanceof Path && obj?.meta?.aiState !== 'graded'
+        );
+        const hasNewFormattedSteps = regionObjects.some(
+          (obj) => obj?.meta?.dataRole === 'answer_formatted' && obj?.meta?.aiState !== 'graded'
+        );
+        if (q.obj?.meta?.aiState === 'graded' && !hasNewRawStrokes && !hasNewFormattedSteps) {
+          skippedGradedQuestions += 1;
+          continue;
+        }
+
+        clearGradingOverlaysForQuestion(qGroupId);
+
         const formattedSteps = regionObjects
           .filter((obj) => obj?.meta?.dataRole === 'answer_formatted')
           .map((obj) => ({
             writtenText: String(obj.meta.rawLatex || '').trim(),
             bbox: obj.getBoundingRect(),
+            sourceObjects: [obj],
           }));
 
         const rawStrokes = regionObjects.filter((obj) => obj instanceof Path);
         const lineClusters = clusterStrokesIntoLines(rawStrokes);
         const ocrSteps = await Promise.all(
-          lineClusters.map(async (cluster) => ({
-            writtenText: await recognizeLineCluster(cluster.bbox, subject),
-            bbox: cluster.bbox,
-          }))
+          lineClusters.map(async (cluster) => {
+            const cachedText =
+              cluster.objects.every((o) => o?.meta?.aiState === 'graded' && o?.meta?.recognizedText) &&
+              cluster.objects[0]?.meta?.recognizedText;
+            const writtenText = cachedText
+              ? String(cachedText)
+              : await recognizeLineCluster(cluster.objects, cluster.bbox, subject);
+            return {
+              writtenText,
+              bbox: cluster.bbox,
+              sourceObjects: cluster.objects,
+            };
+          })
         );
 
         const orderedSteps = [...formattedSteps, ...ocrSteps]
@@ -322,7 +379,7 @@ export async function gradeEssayDirectlyOnBoard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            question_id: q.obj.meta.questionGroupId || `board_q_${i + 1}`,
+            question_id: qGroupId,
             question_content: q.obj.meta.rawLatex || '',
             subject,
             steps: orderedSteps.map((s) => s.writtenText),
@@ -342,18 +399,28 @@ export async function gradeEssayDirectlyOnBoard() {
         evaluations.forEach((stepEval, idx) => {
           const targetLine = orderedSteps[idx];
           if (targetLine) {
-            renderOnBoardStepOverlay(stepEval, targetLine.bbox);
+            renderOnBoardStepOverlay(stepEval, targetLine.bbox, qGroupId);
             totalCheckedSteps += 1;
             if (!stepEval.is_step_correct) totalErrors += 1;
+            targetLine.sourceObjects.forEach((srcObj) => {
+              srcObj.meta = {
+                ...(srcObj.meta || {}),
+                aiState: 'graded',
+                gradedQuestionId: qGroupId,
+                recognizedText: targetLine.writtenText,
+              };
+            });
           }
         });
+        q.obj.meta = { ...(q.obj.meta || {}), aiState: 'graded' };
       }
     } else {
-      // Chấm thẳng từ các dòng viết tay tự do: dòng đầu làm đề bài, các dòng dưới làm bước giải
+      const freehandId = `board_freehand_${Date.now()}`;
       const ocrLines = await Promise.all(
         freehandLines.map(async (cluster) => ({
-          writtenText: await recognizeLineCluster(cluster.bbox, subject),
+          writtenText: await recognizeLineCluster(cluster.objects, cluster.bbox, subject),
           bbox: cluster.bbox,
+          sourceObjects: cluster.objects,
         }))
       );
       const validLines = ocrLines.filter((l) => l.writtenText.length > 0);
@@ -364,7 +431,7 @@ export async function gradeEssayDirectlyOnBoard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            question_id: 'board_freehand_q1',
+            question_id: freehandId,
             question_content: problemLine.writtenText,
             subject,
             steps: answerLines.map((s) => s.writtenText),
@@ -378,12 +445,23 @@ export async function gradeEssayDirectlyOnBoard() {
         const evaluations = Array.isArray(gradeData.steps_evaluation)
           ? gradeData.steps_evaluation
           : [];
+        problemLine.sourceObjects.forEach((srcObj) => {
+          srcObj.meta = { ...(srcObj.meta || {}), aiState: 'graded', gradedQuestionId: freehandId };
+        });
         evaluations.forEach((stepEval, idx) => {
           const targetLine = answerLines[idx];
           if (targetLine) {
-            renderOnBoardStepOverlay(stepEval, targetLine.bbox);
+            renderOnBoardStepOverlay(stepEval, targetLine.bbox, freehandId);
             totalCheckedSteps += 1;
             if (!stepEval.is_step_correct) totalErrors += 1;
+            targetLine.sourceObjects.forEach((srcObj) => {
+              srcObj.meta = {
+                ...(srcObj.meta || {}),
+                aiState: 'graded',
+                gradedQuestionId: freehandId,
+                recognizedText: targetLine.writtenText,
+              };
+            });
           }
         });
       }
@@ -393,11 +471,14 @@ export async function gradeEssayDirectlyOnBoard() {
     updateHint();
     remember(before);
 
-    if (totalCheckedSteps === 0) {
+    if (totalCheckedSteps === 0 && skippedGradedQuestions > 0) {
+      showEssayFloatingPill('Tất cả các câu trên bảng đã được chấm xong. Hãy viết câu mới để chấm tiếp.', false);
+      setStatus('Các câu trên bảng đã chấm xong.');
+    } else if (totalCheckedSteps === 0) {
       showEssayFloatingPill('Chưa thấy dòng bài làm nào bên dưới đề bài.', true);
       setStatus('Chưa phát hiện dòng bài làm nào bên dưới khối ĐỀ BÀI.');
     } else if (totalErrors === 0) {
-      showEssayFloatingPill(`✓ Đúng hoàn toàn ${totalCheckedSteps}/${totalCheckedSteps} bước trên bảng!`, false);
+      showEssayFloatingPill(`✓ Đúng hoàn toàn ${totalCheckedSteps}/${totalCheckedSteps} bước mới!`, false);
       setStatus(`✓ Đã chấm trực tiếp ${totalCheckedSteps} bước trên bảng: Đúng hoàn toàn!`);
     } else {
       showEssayFloatingPill(

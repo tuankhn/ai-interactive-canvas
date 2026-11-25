@@ -1,7 +1,7 @@
 import { Path, Text } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
-import { $, stage, surface, previewCanvas, previewContext, fabricCanvas, ui, state, toolNames, shapeTools, setStatus, isDarkBoardActive } from '../utils/context.js';
+import { $, stage, surface, previewCanvas, previewContext, fabricCanvas, ui, state, toolNames, shapeTools, setStatus, isDarkBoardActive, FONT_FAMILY_MAP } from '../utils/context.js';
 import { isPalmTouch, getPoint, getScreenPoint, screenToWorld } from '../utils/pointer.js';
-import { createPath, drawRuler, previewShape, isNearObject, intersects, makeShape, makeRuler } from '../utils/geometry.js';
+import { createPath, createCenterlinePathData, getDashArrayForStyle, drawRuler, previewShape, isNearObject, intersects, makeShape, makeRuler, splitObjectByEraserSweep } from '../utils/geometry.js';
 import { snapshot, restore, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
 import { scheduleAIDebounce, cancelAIDebounce } from './aiRecognition.js';
@@ -92,6 +92,7 @@ export function setViewportTransformClean(nextVpt) {
 }
 
 export function panBy(dx, dy) {
+  if (state.boardLocked) return;
   const vpt = (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice();
   vpt[4] += dx;
   vpt[5] += dy;
@@ -99,6 +100,7 @@ export function panBy(dx, dy) {
 }
 
 export function zoomAt(targetZoom, anchorScreenX, anchorScreenY) {
+  if (state.boardLocked) return;
   const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetZoom));
   const vpt = (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice();
   const oldZoom = vpt[0] || 1;
@@ -157,80 +159,190 @@ export function scrollBackToContent() {
   setStatus('Đã đưa nội dung về giữa bảng');
 }
 
-function openInlineTextEditor(point) {
+/**
+ * Gõ chữ trực tiếp không khung viền ngay tại vị trí nhấp chuột trên mặt bảng (chuẩn Excalidraw).
+ * Hỗ trợ nhiều dòng (Enter xuống dòng, Esc / Ctrl+Enter hoặc nhấp ra ngoài để hoàn tất)
+ * và hỗ trợ nhấp đúp sửa trực tiếp đối tượng chữ đã có trên bảng.
+ */
+export function openDirectCanvasTextEditor(point, existingTextObj = null) {
   if (activeInlineTextInput) {
     activeInlineTextInput.blur();
   }
-  const fontSize = Math.max(18, Number(ui.width.value) * 5);
-  const strokeColor = ui.color.value;
-  const isDarkBoard = isDarkBoardActive();
-  const sx = Number.isFinite(point.screenX) ? point.screenX : point.x;
-  const sy = Number.isFinite(point.screenY) ? point.screenY : point.y;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.placeholder = 'Nhập chữ lên bảng (Enter để chèn, Esc để hủy)...';
-  input.setAttribute('aria-label', 'Nhập nội dung chữ lên bảng');
-  Object.assign(input.style, {
+
+  const vpt = fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+  const zoom = vpt[0] || 1;
+
+  const worldX = existingTextObj ? existingTextObj.left : point.x;
+  const worldY = existingTextObj ? existingTextObj.top : point.y;
+  const sx = worldX * zoom + vpt[4];
+  const sy = worldY * zoom + vpt[5];
+
+  const fontKey = existingTextObj?.meta?.fontKey || state.fontFamily || 'sans';
+  const resolvedFontFamily = existingTextObj?.fontFamily || FONT_FAMILY_MAP[fontKey] || FONT_FAMILY_MAP.sans;
+  const baseFontSize = existingTextObj ? (existingTextObj.fontSize || 26) : (state.fontSize || 26);
+  const strokeColor = existingTextObj ? (existingTextObj.fill || ui.color.value) : ui.color.value;
+  const align = existingTextObj ? (existingTextObj.textAlign || state.textAlign || 'left') : (state.textAlign || 'left');
+  const textOpacity = existingTextObj ? (existingTextObj.opacity ?? 1) : ((state.opacity ?? 100) / 100);
+
+  if (existingTextObj) {
+    existingTextObj.visible = false;
+    fabricCanvas.requestRenderAll();
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.rows = 1;
+  textarea.spellcheck = false;
+  textarea.value = existingTextObj ? (existingTextObj.text || '') : '';
+  textarea.setAttribute('aria-label', 'Gõ chữ trực tiếp lên bảng');
+  textarea.className = 'direct-canvas-textarea';
+
+  const scaledFontPx = Math.max(12, baseFontSize * zoom);
+  Object.assign(textarea.style, {
     position: 'absolute',
-    left: `${Math.max(8, Math.min(sx, Math.max(8, stage.clientWidth - 260)))}px`,
-    top: `${Math.max(8, Math.min(sy - 6, Math.max(8, stage.clientHeight - 48)))}px`,
-    minWidth: '240px',
-    maxWidth: `${Math.max(160, stage.clientWidth - 24)}px`,
-    padding: '6px 10px',
-    fontSize: `${Math.min(28, fontSize)}px`,
-    fontFamily: "'Be Vietnam Pro', system-ui, -apple-system, sans-serif",
-    color: strokeColor,
-    background: isDarkBoard ? 'rgba(35, 33, 30, 0.96)' : 'rgba(250, 248, 244, 0.98)',
-    border: '1.5px solid var(--accent-primary)',
-    borderRadius: '6px',
-    boxShadow: '0 8px 20px rgba(38, 35, 31, 0.14)',
+    left: `${sx}px`,
+    top: `${sy}px`,
+    minWidth: '24px',
+    minHeight: `${Math.ceil(scaledFontPx * 1.35)}px`,
+    padding: '0',
+    margin: '0',
+    border: '0',
+    borderRadius: '0',
     outline: 'none',
-    zIndex: '25',
+    boxShadow: 'none',
+    background: 'transparent',
+    resize: 'none',
+    overflow: 'hidden',
+    whiteSpace: 'pre',
+    fontSize: `${scaledFontPx}px`,
+    lineHeight: '1.32',
+    fontFamily: resolvedFontFamily,
+    textAlign: align,
+    color: strokeColor,
+    caretColor: strokeColor,
+    opacity: String(textOpacity),
+    zIndex: '28',
   });
+
+  const autoResize = () => {
+    const lines = (textarea.value || ' ').split('\n');
+    const longest = Math.max(2, ...lines.map((l) => l.length + 1));
+    textarea.style.width = '1px';
+    textarea.style.height = '1px';
+    const nextW = Math.max(Math.ceil(scaledFontPx * 0.65 * longest), textarea.scrollWidth + 8);
+    const nextH = Math.max(Math.ceil(scaledFontPx * 1.35 * lines.length), textarea.scrollHeight + 2);
+    textarea.style.width = `${nextW}px`;
+    textarea.style.height = `${nextH}px`;
+  };
 
   let finalized = false;
   const finalize = (commitText) => {
     if (finalized) return;
     finalized = true;
-    if (activeInlineTextInput === input) activeInlineTextInput = null;
-    const val = input.value.trim();
-    input.remove();
-    if (!commitText || !val || state.ended) return;
+    if (activeInlineTextInput === textarea) activeInlineTextInput = null;
+    const rawVal = textarea.value.replace(/\s+$/g, '');
+    textarea.remove();
+
+    if (state.ended) {
+      if (existingTextObj) {
+        existingTextObj.visible = true;
+        fabricCanvas.requestRenderAll();
+      }
+      return;
+    }
+
+    if (!commitText) {
+      if (existingTextObj) {
+        existingTextObj.visible = true;
+        fabricCanvas.requestRenderAll();
+      }
+      setStatus('Đã hủy gõ chữ');
+      return;
+    }
+
     const before = snapshot();
-    const textObj = new Text(val, {
-      left: point.x,
-      top: point.y,
+    if (existingTextObj) {
+      if (!rawVal.trim()) {
+        fabricCanvas.remove(existingTextObj);
+        setStatus('Đã xóa dòng chữ trống');
+      } else {
+        existingTextObj.visible = true;
+        existingTextObj.set({
+          text: rawVal,
+          fill: strokeColor,
+          fontSize: baseFontSize,
+          fontFamily: resolvedFontFamily,
+          textAlign: align,
+          opacity: textOpacity,
+        });
+        const tw = Math.max(40, existingTextObj.width || 80);
+        const th = Math.max(24, existingTextObj.height || baseFontSize);
+        existingTextObj._hitPoints = [
+          { x: existingTextObj.left, y: existingTextObj.top + th / 2 },
+          { x: existingTextObj.left + tw, y: existingTextObj.top + th / 2 },
+        ];
+        existingTextObj._hitWidth = th;
+        existingTextObj.setCoords();
+        setStatus('Đã cập nhật nội dung chữ');
+      }
+      fabricCanvas.requestRenderAll();
+      remember(before);
+      updateHint();
+      window.dispatchEvent(new CustomEvent('app:selection-updated'));
+      return;
+    }
+
+    if (!rawVal.trim()) return;
+
+    const textObj = new Text(rawVal, {
+      left: worldX,
+      top: worldY,
       fill: strokeColor,
-      fontSize,
-      fontFamily: 'Be Vietnam Pro, sans-serif',
+      fontSize: baseFontSize,
+      fontFamily: resolvedFontFamily,
+      textAlign: align,
+      opacity: textOpacity,
+      lineHeight: 1.32,
       selectable: false,
       evented: false,
+      objectCaching: false,
     });
-    textObj._hitPoints = [{ x: point.x, y: point.y }, { x: point.x + Math.max(60, textObj.width || 100), y: point.y }];
-    textObj._hitWidth = Math.max(24, fontSize);
+    const tw = Math.max(40, textObj.width || 80);
+    const th = Math.max(24, textObj.height || baseFontSize);
+    textObj._hitPoints = [
+      { x: worldX, y: worldY + th / 2 },
+      { x: worldX + tw, y: worldY + th / 2 },
+    ];
+    textObj._hitWidth = th;
+    textObj.meta = {
+      dataRole: 'user_text',
+      fontKey,
+    };
     fabricCanvas.add(textObj);
     fabricCanvas.requestRenderAll();
     remember(before);
     updateHint();
-    setStatus('Đã thêm chữ');
+    setStatus('Đã ghi chữ lên bảng');
   };
 
-  input.addEventListener('pointerdown', (ev) => ev.stopPropagation());
-  input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') {
+  textarea.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+  textarea.addEventListener('input', autoResize);
+  textarea.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) {
       ev.preventDefault();
       finalize(true);
-    } else if (ev.key === 'Escape') {
-      ev.preventDefault();
-      finalize(false);
-      setStatus('Đã hủy nhập chữ');
     }
   });
-  input.addEventListener('blur', () => finalize(true));
+  textarea.addEventListener('blur', () => finalize(true));
 
-  stage.appendChild(input);
-  activeInlineTextInput = input;
-  requestAnimationFrame(() => input.focus());
+  stage.appendChild(textarea);
+  activeInlineTextInput = textarea;
+  autoResize();
+  requestAnimationFrame(() => {
+    textarea.focus();
+    const len = textarea.value.length;
+    textarea.setSelectionRange(len, len);
+  });
 }
 
 function resizeCanvas() {
@@ -274,48 +386,75 @@ function renderPreview() {
   applyPreviewTransform();
 
   if (state.tool === 'pen' || state.tool === 'highlighter') {
-    // Chỉ vẽ các điểm mới trong mỗi frame để tránh tính lại toàn bộ nét dài.
-    const firstUnpainted = state.stroke.renderedPoints;
-    previewContext.save();
-    previewContext.globalAlpha = state.tool === 'highlighter' ? 0.35 : 1;
-    previewContext.strokeStyle = state.stroke.color;
-    previewContext.fillStyle = state.stroke.color;
-    previewContext.lineCap = 'round';
-    previewContext.lineJoin = 'round';
-
-    for (let i = firstUnpainted; i < points.length; i++) {
-      const p = points[i];
-      const radius = Math.max(0.65, state.stroke.width * (0.25 + p.pressure * 0.75) / 2);
-      if (i === 0) {
-        previewContext.beginPath();
-        previewContext.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        previewContext.fill();
-      } else {
-        const previous = points[i - 1];
-        previewContext.lineWidth = radius * 2;
-        previewContext.beginPath();
-        previewContext.moveTo(previous.x, previous.y);
-        previewContext.lineTo(p.x, p.y);
-        previewContext.stroke();
+    const strokeAlpha = state.tool === 'highlighter' ? 0.35 : (state.stroke.opacity ?? 1);
+    const dashArr = state.tool === 'pen' ? getDashArrayForStyle(state.stroke.strokeStyle, state.stroke.width) : null;
+    if (dashArr) {
+      wipePreviewBuffer();
+      previewContext.save();
+      previewContext.globalAlpha = strokeAlpha;
+      previewContext.strokeStyle = state.stroke.color;
+      previewContext.lineWidth = state.stroke.width;
+      previewContext.lineCap = 'round';
+      previewContext.lineJoin = 'round';
+      previewContext.setLineDash(dashArr);
+      previewContext.beginPath();
+      previewContext.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        previewContext.lineTo(points[i].x, points[i].y);
       }
+      previewContext.stroke();
+      previewContext.restore();
+      state.stroke.renderedPoints = points.length;
+    } else {
+      // Chỉ vẽ các điểm mới trong mỗi frame để tránh tính lại toàn bộ nét dài.
+      const firstUnpainted = state.stroke.renderedPoints;
+      previewContext.save();
+      previewContext.globalAlpha = strokeAlpha;
+      previewContext.strokeStyle = state.stroke.color;
+      previewContext.fillStyle = state.stroke.color;
+      previewContext.lineCap = 'round';
+      previewContext.lineJoin = 'round';
+
+      for (let i = firstUnpainted; i < points.length; i++) {
+        const p = points[i];
+        const radius = Math.max(0.65, state.stroke.width * (0.25 + p.pressure * 0.75) / 2);
+        if (i === 0) {
+          previewContext.beginPath();
+          previewContext.arc(p.x, p.y, radius, 0, Math.PI * 2);
+          previewContext.fill();
+        } else {
+          const previous = points[i - 1];
+          previewContext.lineWidth = radius * 2;
+          previewContext.beginPath();
+          previewContext.moveTo(previous.x, previous.y);
+          previewContext.lineTo(p.x, p.y);
+          previewContext.stroke();
+        }
+      }
+      state.stroke.renderedPoints = points.length;
+      previewContext.restore();
     }
-    state.stroke.renderedPoints = points.length;
-    previewContext.restore();
   } else {
     wipePreviewBuffer();
     if (state.tool === 'eraser') {
+      previewContext.save();
       previewContext.beginPath();
       previewContext.arc(end.x, end.y, state.stroke.width / 2, 0, Math.PI * 2);
+      previewContext.fillStyle = 'rgba(201, 100, 66, 0.14)';
+      previewContext.fill();
       previewContext.strokeStyle = '#C96442';
       previewContext.lineWidth = 1.5 / (fabricCanvas.getZoom() || 1);
       previewContext.stroke();
+      previewContext.restore();
     } else if (points.length > 1) {
       previewContext.save();
+      previewContext.globalAlpha = state.tool === 'areaEraser' ? 1 : (state.stroke.opacity ?? 1);
       previewContext.strokeStyle = state.tool === 'areaEraser' ? '#C96442' : state.stroke.color;
       previewContext.lineWidth = state.tool === 'areaEraser' ? 1.5 / (fabricCanvas.getZoom() || 1) : state.stroke.width;
-      previewContext.setLineDash(state.tool === 'areaEraser' ? [6, 5] : []);
+      const dashArr = state.tool === 'areaEraser' ? [6, 5] : (getDashArrayForStyle(state.stroke.strokeStyle, state.stroke.width) || []);
+      previewContext.setLineDash(dashArr);
       if (state.tool === 'ruler') drawRuler(previewContext, points[0], end, state.stroke.color);
-      else previewShape(previewContext, points[0], end, state.tool);
+      else previewShape(previewContext, points[0], end, state.tool, state.stroke.shapeFill);
       previewContext.restore();
     }
   }
@@ -331,13 +470,34 @@ function schedulePreview() {
   if (!state.previewFrame) state.previewFrame = requestAnimationFrame(renderPreview);
 }
 
-function eraseAt(point, radius) {
+function eraseAt(prevPoint, point, radius) {
   let changed = false;
-  fabricCanvas.getObjects().slice().forEach((object) => {
-    if (!isNearObject(object, point, radius)) return;
-    fabricCanvas.remove(object);
-    changed = true;
-  });
+  const currentList = fabricCanvas.getObjects().slice();
+  for (const object of currentList) {
+    // Tẩy từng phần thực sự ("đưa đến đâu xoá đến đó") trên mọi nét bút và hình vẽ
+    const splitPieces = splitObjectByEraserSweep(object, prevPoint || point, point, radius);
+    if (splitPieces !== null) {
+      const idx = fabricCanvas.getObjects().indexOf(object);
+      fabricCanvas.remove(object);
+      if (splitPieces.length > 0) {
+        if (idx >= 0) {
+          splitPieces.forEach((piece, offset) => {
+            fabricCanvas.insertAt(idx + offset, piece);
+          });
+        } else {
+          fabricCanvas.add(...splitPieces);
+        }
+      }
+      changed = true;
+      continue;
+    }
+
+    // Các đối tượng không tách điểm được (như nhãn nhỏ / chữ ngắn) nếu bị chà trực tiếp cũng được xoá
+    if (!(object instanceof Path) && isNearObject(object, point, radius * 0.85)) {
+      fabricCanvas.remove(object);
+      changed = true;
+    }
+  }
   if (changed) fabricCanvas.requestRenderAll();
   return changed;
 }
@@ -355,7 +515,7 @@ function addPoint(event) {
   if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < minDelta) return;
   state.stroke.points.push(point);
   if (state.tool === 'eraser') {
-    state.stroke.modified = eraseAt(point, state.stroke.width / 2) || state.stroke.modified;
+    state.stroke.modified = eraseAt(previous || point, point, state.stroke.width / 2) || state.stroke.modified;
   }
   state.lastInputTime = performance.now();
   schedulePreview();
@@ -382,17 +542,56 @@ export function finishStroke(commit) {
   const last = points.at(-1);
   let createdObject = null;
   if (state.tool === 'pen' || state.tool === 'highlighter') {
-    const pathData = createPath(points, finished.width);
-    if (pathData) {
-      const object = new Path(pathData, {
-        fill: finished.color,
-        opacity: state.tool === 'highlighter' ? 0.35 : 1,
-        selectable: false, evented: false, objectCaching: false
-      });
-      object._hitPoints = points.slice();
-      object._hitWidth = finished.width;
-      fabricCanvas.add(object);
-      createdObject = object;
+    const dashArr = state.tool === 'pen' ? getDashArrayForStyle(finished.strokeStyle, finished.width) : null;
+    const strokeOpacity = state.tool === 'highlighter' ? 0.35 : (finished.opacity ?? 1);
+    if (dashArr) {
+      const dStr = createCenterlinePathData(points);
+      if (dStr) {
+        const object = new Path(dStr, {
+          fill: 'rgba(0,0,0,0)',
+          stroke: finished.color,
+          strokeWidth: finished.width,
+          strokeDashArray: dashArr,
+          strokeLineCap: 'round',
+          strokeLineJoin: 'round',
+          strokeUniform: true,
+          opacity: strokeOpacity,
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+        });
+        object._hitPoints = points.slice();
+        object._hitWidth = finished.width;
+        object.meta = {
+          aiState: 'raw',
+          strokeStyle: finished.strokeStyle,
+          strokeId: `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          createdAt: Date.now(),
+        };
+        fabricCanvas.add(object);
+        createdObject = object;
+      }
+    } else {
+      const pathData = createPath(points, finished.width);
+      if (pathData) {
+        const object = new Path(pathData, {
+          fill: finished.color,
+          opacity: strokeOpacity,
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+        });
+        object._hitPoints = points.slice();
+        object._hitWidth = finished.width;
+        object.meta = {
+          aiState: 'raw',
+          strokeStyle: 'solid',
+          strokeId: `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          createdAt: Date.now(),
+        };
+        fabricCanvas.add(object);
+        createdObject = object;
+      }
     }
   } else if (state.tool === 'areaEraser' && points.length > 1) {
     const rect = {
@@ -412,7 +611,11 @@ export function finishStroke(commit) {
   } else if (shapeTools.has(state.tool) && points.length > 1) {
     const distance = Math.hypot(last.x - first.x, last.y - first.y);
     if (distance > 2) {
-      const shape = makeShape(first, last, state.tool, finished.color, finished.width);
+      const shape = makeShape(first, last, state.tool, finished.color, finished.width, {
+        fill: finished.shapeFill,
+        strokeStyle: finished.strokeStyle,
+        opacity: finished.opacity,
+      });
       if (shape) {
         fabricCanvas.add(shape);
         createdObject = shape;
@@ -447,6 +650,7 @@ export function finishStroke(commit) {
 }
 
 function shouldStartPan(event) {
+  if (state.boardLocked) return false;
   if (state.tool === 'hand') return true;
   if (isSpacePressed) return true;
   if (event.pointerType === 'mouse' && event.button === 1) return true;
@@ -458,8 +662,8 @@ function pointerDown(event) {
   const pointerType = event.pointerType;
   if (pointerType === 'pen') state.lastPenSeenAt = performance.now();
 
-  // Theo dõi chụm 2 ngón tay trên Tablet / màn hình cảm ứng để kéo & thu phóng bảng vô hạn
-  if (pointerType === 'touch' && !state.penInUse) {
+  // Theo dõi chụm 2 ngón tay trên Tablet / màn hình cảm ứng (khi chưa khoá trang)
+  if (!state.boardLocked && pointerType === 'touch' && !state.penInUse) {
     const sp = getScreenPoint(event);
     activeTouches.set(event.pointerId, { x: sp.x, y: sp.y });
     if (activeTouches.size === 2) {
@@ -476,7 +680,7 @@ function pointerDown(event) {
     }
   }
 
-  // Kéo di chuyển bảng vô hạn (công cụ Kéo bảng V, giữ phím Space, hoặc nhấn chuột giữa)
+  // Kéo di chuyển bảng vô hạn (công cụ Kéo bảng, giữ phím Space, hoặc nhấn chuột giữa)
   if (shouldStartPan(event)) {
     event.preventDefault();
     closePanels();
@@ -487,6 +691,11 @@ function pointerDown(event) {
     };
     stage.classList.add('is-panning-active');
     try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    return;
+  }
+
+  // Nhường toàn quyền chuột/bút cho công cụ Chọn & Khoanh vùng (V)
+  if (state.tool === 'select') {
     return;
   }
 
@@ -515,7 +724,7 @@ function pointerDown(event) {
 
   if (state.tool === 'text') {
     const p = getPoint(event);
-    openInlineTextEditor(p);
+    openDirectCanvasTextEditor(p, null);
     return;
   }
 
@@ -526,7 +735,10 @@ function pointerDown(event) {
   state.stroke = {
     points: [], before: snapshot(), modified: false,
     color: ui.color.value,
-    width: width * (state.tool === 'eraser' ? 4 : state.tool === 'highlighter' ? 4 : 1),
+    width: width * (state.tool === 'eraser' ? 4.5 : state.tool === 'highlighter' ? 4 : 1),
+    strokeStyle: state.strokeStyle || 'solid',
+    shapeFill: state.shapeFill || 'transparent',
+    opacity: (state.opacity ?? 100) / 100,
     renderedPoints: 0
   };
   try { surface.setPointerCapture(event.pointerId); } catch { /* Thiết bị có thể không hỗ trợ. */ }
@@ -609,9 +821,9 @@ function pointerCancel(event) {
 
 function onStageWheel(event) {
   if (state.ended) return;
-  // Không chặn cuộn bên trong các khung cuộn con như AI overlay
-  if (event.target.closest('.ai-overlay-panel, .tool-popover')) return;
+  if (event.target.closest('.ai-overlay-panel, .tool-popover, .context-inspector')) return;
   event.preventDefault();
+  if (state.boardLocked) return;
 
   const rect = surface.getBoundingClientRect();
   const sx = event.clientX - rect.left;
@@ -660,6 +872,7 @@ function setupInfiniteViewportControls() {
     if (inField || document.querySelector('dialog[open]:not([popover])')) return;
 
     if (event.code === 'Space' && !event.repeat && !event.ctrlKey && !event.metaKey) {
+      if (state.boardLocked) return;
       event.preventDefault();
       isSpacePressed = true;
       stage.classList.add('is-panning');

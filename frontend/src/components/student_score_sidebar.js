@@ -52,10 +52,33 @@ export function setupStudentScoreSidebar() {
     sidebarClassNameEl.textContent = sidebarState.className;
   }
 
-  function showScoreStatus(message, variant = 'info') {
+  let scoreStatusTimer = null;
+
+  function showScoreStatus(message, variant = 'info', autoHideMs = 2800) {
     if (!scoreStatusEl) return;
+    if (scoreStatusTimer) {
+      clearTimeout(scoreStatusTimer);
+      scoreStatusTimer = null;
+    }
+    if (!message) {
+      scoreStatusEl.hidden = true;
+      scoreStatusEl.textContent = '';
+      delete scoreStatusEl.dataset.variant;
+      return;
+    }
+    scoreStatusEl.hidden = false;
     scoreStatusEl.textContent = message;
     scoreStatusEl.dataset.variant = variant;
+
+    if (variant !== 'loading' && autoHideMs > 0) {
+      const clampedMs = Math.min(autoHideMs, 3000);
+      scoreStatusTimer = setTimeout(() => {
+        scoreStatusEl.hidden = true;
+        scoreStatusEl.textContent = '';
+        delete scoreStatusEl.dataset.variant;
+        scoreStatusTimer = null;
+      }, clampedMs);
+    }
   }
 
   function updateStepButtons() {
@@ -202,7 +225,7 @@ export function setupStudentScoreSidebar() {
     const reason = (reasonInput?.value || '').trim() || 'Làm bài tốt trên bảng';
     const pts = sidebarState.selectedStep;
 
-    showScoreStatus(`Đang cộng +${pts} điểm cho ${student.full_name}...`, 'info');
+    showScoreStatus(`Đang cộng +${pts} điểm cho ${student.full_name}...`, 'loading', 0);
     try {
       const res = await authFetch(`${SCORES_API_BASE}/award`, {
         method: 'POST',

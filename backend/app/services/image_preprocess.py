@@ -22,7 +22,7 @@ def decode_base64_image(image_base64: str) -> Tuple[Image.Image, int]:
 
 def _composite_rgba_preserving_strokes(img: Image.Image) -> Image.Image:
     """
-    Hợp nhất kênh Alpha thông minh:
+    Hợp nhất kênh Alpha thông minh (chạy C-level histogram cực nhanh, hỗ trợ cả khi có hoặc không có OpenCV):
     - Nếu người dùng vẽ bút phấn trắng/vàng/xanh sáng trên nền Canvas trong suốt (RGBA),
       tự động đặt lên nền tối (17, 24, 39) để không bị mất nét trắng trên nền trắng.
     - Ngược lại đặt lên nền trắng chuẩn (255, 255, 255).
@@ -31,17 +31,20 @@ def _composite_rgba_preserving_strokes(img: Image.Image) -> Image.Image:
         return img.convert("RGB")
 
     rgba = img.convert("RGBA")
-    if HAS_OPENCV:
-        arr = np.array(rgba)
-        alpha = arr[:, :, 3]
-        opaque_mask = alpha > 32
-        if np.any(opaque_mask):
-            # Tính độ sáng trung bình của các pixel có nét vẽ
-            rgb_opaque = arr[:, :, :3][opaque_mask].astype(np.float32)
-            lum = 0.299 * rgb_opaque[:, 0] + 0.587 * rgb_opaque[:, 1] + 0.114 * rgb_opaque[:, 2]
-            # Kiểm tra xem có phải toàn bộ ảnh đã có nền đặc sẵn hay nền trong suốt
-            transparent_ratio = float(np.mean(alpha < 16))
-            if transparent_ratio > 0.15 and float(np.mean(lum)) > 180.0:
+    alpha = rgba.getchannel("A")
+    alpha_hist = alpha.histogram()
+    total_px = max(rgba.width * rgba.height, 1)
+    transparent_ratio = sum(alpha_hist[:16]) / total_px
+    opaque_count = sum(alpha_hist[33:])
+
+    if opaque_count > 0 and transparent_ratio > 0.15:
+        gray_rgb = ImageOps.grayscale(rgba.convert("RGB"))
+        opaque_mask = alpha.point(lambda a: 255 if a > 32 else 0, mode="L")
+        lum_hist = gray_rgb.histogram(opaque_mask)
+        mask_total = sum(lum_hist)
+        if mask_total > 0:
+            mean_lum = sum(i * c for i, c in enumerate(lum_hist)) / mask_total
+            if mean_lum > 180.0:
                 dark_bg = Image.new("RGBA", rgba.size, (17, 24, 39, 255))
                 return Image.alpha_composite(dark_bg, rgba).convert("RGB")
 
@@ -123,15 +126,15 @@ def preprocess_canvas_image(image_base64: str, padding: int = 22) -> Dict[str, A
 
         cropped_img = enhanced.crop((x0, y0, x1, y1))
 
-    # Giới hạn cạnh lớn nhất 1536px để đảm bảo tốc độ gửi Gemini < 1.5s trên màn 4K
+    # Giới hạn cạnh lớn nhất 1024px và nén WebP nhẹ để tăng tốc độ gửi Gemini < 1s
     max_side = max(cropped_img.width, cropped_img.height)
-    if max_side > 1536:
-        ratio = 1536.0 / max_side
+    if max_side > 1024:
+        ratio = 1024.0 / max_side
         new_size = (max(1, int(cropped_img.width * ratio)), max(1, int(cropped_img.height * ratio)))
         cropped_img = cropped_img.resize(new_size, Image.Resampling.LANCZOS)
 
     out_buf = io.BytesIO()
-    cropped_img.save(out_buf, format="PNG", optimize=True)
+    cropped_img.save(out_buf, format="WEBP", quality=85, method=2)
     processed_bytes = out_buf.getvalue()
     processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
 
@@ -148,7 +151,7 @@ def preprocess_canvas_image(image_base64: str, padding: int = 22) -> Dict[str, A
             "width": int(x1 - x0),
             "height": int(y1 - y0),
         },
-        "processed_base64": f"data:image/png;base64,{processed_b64}",
+        "processed_base64": f"data:image/webp;base64,{processed_b64}",
         "raw_base64": processed_b64,
         "size_reduction_percent": reduction,
     }

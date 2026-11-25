@@ -142,7 +142,12 @@ class GeminiAIService:
 
         try:
             raw_bytes = base64.b64decode(clean_b64)
-            pil_image = Image.open(BytesIO(raw_bytes))
+            mime_type = (
+                "image/webp"
+                if image_base64.startswith("data:image/webp") or raw_bytes[:4] == b"RIFF"
+                else "image/png"
+            )
+            pil_image = None
             prompt = get_prompt_for_subject(subject=subject, grade_level=grade_level or "THPT")
 
             raw_text = ""
@@ -167,6 +172,16 @@ class GeminiAIService:
                     and hasattr(self.client, "aio")
                     and hasattr(self.client.aio, "models")
                 )
+                image_part = None
+                if use_native_aio:
+                    try:
+                        from google.genai import types
+                        image_part = types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)
+                    except Exception:
+                        image_part = None
+                if image_part is None:
+                    pil_image = Image.open(BytesIO(raw_bytes))
+                media_input = image_part if image_part is not None else pil_image
 
                 for mod_idx, mod in enumerate(candidate_models[:4]):
                     max_attempts = 2 if mod_idx == 0 else 1
@@ -187,6 +202,7 @@ class GeminiAIService:
                                 gen_config = types.GenerateContentConfig(
                                     response_mime_type="application/json",
                                     temperature=0.1,
+                                    max_output_tokens=700,
                                 )
                             except Exception:
                                 pass
@@ -196,7 +212,7 @@ class GeminiAIService:
                                     response = await asyncio.wait_for(
                                         self.client.aio.models.generate_content(
                                             model=mod,
-                                            contents=[pil_image, prompt],
+                                            contents=[media_input, prompt],
                                             config=gen_config,
                                         ),
                                         timeout=per_attempt_timeout,
@@ -208,7 +224,7 @@ class GeminiAIService:
                                             asyncio.to_thread(
                                                 self.client.models.generate_content,
                                                 model=mod,
-                                                contents=[pil_image, prompt],
+                                                contents=[media_input, prompt],
                                                 config=gen_config,
                                             ),
                                             timeout=per_attempt_timeout,
@@ -220,7 +236,7 @@ class GeminiAIService:
                                     asyncio.to_thread(
                                         self.client.models.generate_content,
                                         model=mod,
-                                        contents=[pil_image, prompt],
+                                        contents=[media_input, prompt],
                                         config=gen_config,
                                     ),
                                     timeout=per_attempt_timeout,
@@ -277,6 +293,8 @@ class GeminiAIService:
                 if not raw_text:
                     raise last_err or RuntimeError("Không nhận được phản hồi hợp lệ từ Gemini API.")
             else:
+                if pil_image is None:
+                    pil_image = Image.open(BytesIO(raw_bytes))
                 response = await asyncio.wait_for(
                     asyncio.to_thread(self.model.generate_content, [prompt, pil_image]),
                     timeout=total_budget,

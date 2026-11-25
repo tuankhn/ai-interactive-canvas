@@ -1,5 +1,24 @@
 import { Path, Line, Triangle, Circle, Ellipse, Text, Group } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
+export function getDashArrayForStyle(style, width = 4) {
+  if (style === 'dashed') {
+    return [Math.max(8, Math.round(width * 2.8)), Math.max(6, Math.round(width * 2))];
+  }
+  if (style === 'dotted') {
+    return [Math.max(1.5, Math.round(width * 0.35)), Math.max(6, Math.round(width * 2.1))];
+  }
+  return null;
+}
+
+export function createCenterlinePathData(points) {
+  if (!points || points.length === 0) return '';
+  if (points.length === 1) {
+    const p = points[0];
+    return `M ${p.x.toFixed(2)} ${p.y.toFixed(2)} L ${(p.x + 0.2).toFixed(2)} ${p.y.toFixed(2)}`;
+  }
+  return `M ${points.map((p) => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' L ')}`;
+}
+
 export function createPath(points, baseWidth) {
   if (points.length === 0) return '';
   if (points.length === 1) {
@@ -54,7 +73,7 @@ export function drawRuler(context, start, end, color) {
   context.restore();
 }
 
-export function previewShape(context, start, end, kind) {
+export function previewShape(context, start, end, kind, fillStyle = 'transparent') {
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
   const w = Math.abs(end.x - start.x);
@@ -75,9 +94,15 @@ export function previewShape(context, start, end, kind) {
   } else if (kind === 'areaEraser') {
     context.rect(x, y, w, h);
   }
+  if (kind !== 'line' && kind !== 'areaEraser' && fillStyle && fillStyle !== 'transparent' && fillStyle !== 'rgba(0,0,0,0)') {
+    context.save();
+    context.fillStyle = fillStyle;
+    context.fill();
+    context.restore();
+  }
   context.stroke();
   if (kind === 'areaEraser') {
-    context.fillStyle = 'rgba(239,68,68,.09)';
+    context.fillStyle = 'rgba(201, 100, 66, 0.10)';
     context.fill();
   }
 }
@@ -117,14 +142,169 @@ function sampledEllipse(cx, cy, rx, ry) {
   });
 }
 
-export function makeShape(start, end, kind, color, width) {
+function densifyPolyline(points, maxStep = 3.5) {
+  if (!points || points.length <= 1) return points ? points.slice() : [];
+  const out = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    if (dist > maxStep) {
+      const steps = Math.min(240, Math.ceil(dist / maxStep));
+      const pA = a.pressure ?? 0.5;
+      const pB = b.pressure ?? 0.5;
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        out.push({
+          x: a.x + (b.x - a.x) * t,
+          y: a.y + (b.y - a.y) * t,
+          pressure: pA + (pB - pA) * t,
+        });
+      }
+    }
+    out.push(b);
+  }
+  return out;
+}
+
+/**
+ * Tẩy từng phần thực sự ("đưa đến đâu xoá đến đó"):
+ * Cắt bỏ đúng đoạn điểm nằm trong vùng quét cục tẩy (prevPt -> currPt, bán kính eraseRadius)
+ * và tách phần nét còn lại thành các đoạn Path độc lập mượt mà.
+ */
+export function splitObjectByEraserSweep(object, prevPt, currPt, eraseRadius) {
+  if (!object) return null;
+  const bbox = object.getBoundingRect();
+  if (!bbox) return null;
+
+  const a = prevPt || currPt;
+  const b = currPt;
+  const sweepLeft = Math.min(a.x, b.x) - eraseRadius - 4;
+  const sweepTop = Math.min(a.y, b.y) - eraseRadius - 4;
+  const sweepRight = Math.max(a.x, b.x) + eraseRadius + 4;
+  const sweepBottom = Math.max(a.y, b.y) + eraseRadius + 4;
+
+  if (
+    bbox.left > sweepRight ||
+    bbox.left + bbox.width < sweepLeft ||
+    bbox.top > sweepBottom ||
+    bbox.top + bbox.height < sweepTop
+  ) {
+    return null;
+  }
+
+  const isSplittable =
+    Array.isArray(object._hitPoints) &&
+    object._hitPoints.length >= 1 &&
+    (object instanceof Path ||
+      object instanceof Line ||
+      object instanceof Triangle ||
+      object instanceof Circle ||
+      object instanceof Ellipse);
+
+  if (!isSplittable) {
+    return null;
+  }
+
+  const baseWidth = object._hitWidth || object.strokeWidth || 4;
+  const hitThreshold = eraseRadius + baseWidth * 0.22;
+  const stepSize = Math.max(2, Math.min(4.5, eraseRadius * 0.38));
+  const dense = densifyPolyline(object._hitPoints, stepSize);
+
+  let anyErased = false;
+  const segments = [];
+  let currentSeg = [];
+
+  for (let i = 0; i < dense.length; i++) {
+    const pt = dense[i];
+    const d = distanceToSegment(pt, a, b);
+    if (d <= hitThreshold) {
+      anyErased = true;
+      if (currentSeg.length > 0) {
+        segments.push(currentSeg);
+        currentSeg = [];
+      }
+    } else {
+      currentSeg.push(pt);
+    }
+  }
+  if (currentSeg.length > 0) {
+    segments.push(currentSeg);
+  }
+
+  if (!anyErased) return null;
+
+  const isStrokedOutline =
+    Boolean(object.stroke) &&
+    (!object.fill || object.fill === 'rgba(0,0,0,0)' || object.fill === 'transparent' || !(object instanceof Path));
+  const strokeColor = isStrokedOutline ? object.stroke : object.fill;
+  const dashArray = Array.isArray(object.strokeDashArray) ? object.strokeDashArray.slice() : null;
+  const objOpacity = object.opacity ?? 1;
+  const baseMeta = object.meta ? { ...object.meta } : { aiState: 'raw' };
+
+  const replacements = [];
+  for (const seg of segments) {
+    if (seg.length === 0) continue;
+    if (seg.length === 1 && dense.length > 3) continue; // Bỏ mảnh vụn 1 điểm siêu nhỏ ở mép cắt
+    let newPath = null;
+    if (isStrokedOutline || dashArray) {
+      const dStr = createCenterlinePathData(seg);
+      if (!dStr) continue;
+      newPath = new Path(dStr, {
+        fill: 'rgba(0,0,0,0)',
+        stroke: strokeColor,
+        strokeWidth: baseWidth,
+        strokeDashArray: dashArray,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        strokeUniform: true,
+        opacity: objOpacity,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+      });
+    } else {
+      const dStr = createPath(seg, baseWidth);
+      if (!dStr) continue;
+      newPath = new Path(dStr, {
+        fill: strokeColor,
+        opacity: objOpacity,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+      });
+    }
+    newPath._hitPoints = seg;
+    newPath._hitWidth = baseWidth;
+    newPath.meta = { ...baseMeta };
+    replacements.push(newPath);
+  }
+
+  return replacements;
+}
+
+export function makeShape(start, end, kind, color, width, extra = {}) {
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
   const w = Math.abs(end.x - start.x);
   const h = Math.abs(end.y - start.y);
+  const fillVal =
+    extra.fill && extra.fill !== 'transparent' && kind !== 'line'
+      ? extra.fill
+      : 'rgba(0,0,0,0)';
+  const dashArray = getDashArrayForStyle(extra.strokeStyle || 'solid', width);
   const options = {
-    fill: 'rgba(0,0,0,0)', stroke: color, strokeWidth: width,
-    strokeUniform: true, selectable: false, evented: false, objectCaching: false
+    fill: fillVal,
+    stroke: color,
+    strokeWidth: width,
+    strokeDashArray: dashArray,
+    strokeLineCap: 'round',
+    strokeLineJoin: 'round',
+    opacity: Number.isFinite(extra.opacity) ? extra.opacity : 1,
+    strokeUniform: true,
+    selectable: false,
+    evented: false,
+    objectCaching: false,
   };
   let object, hitPoints;
   if (kind === 'line') {
@@ -146,6 +326,7 @@ export function makeShape(start, end, kind, color, width) {
   if (object) {
     object._hitPoints = hitPoints;
     object._hitWidth = width;
+    object.meta = { shapeKind: kind, strokeStyle: extra.strokeStyle || 'solid' };
   }
   return object;
 }

@@ -66,17 +66,22 @@ async function loadPageData(data) {
 }
 
 export function refreshPages() {
+  const locked = Boolean(state.boardLocked);
   $('pageIndicator').textContent = `Trang ${state.pageIndex + 1} / ${state.pages.length}`;
-  $('prevPage').disabled = state.ended || state.pageBusy || state.pageIndex === 0;
-  $('nextPage').disabled = state.ended || state.pageBusy || state.pageIndex >= state.pages.length - 1;
-  $('addPageButton').disabled = state.ended || state.pageBusy;
+  $('prevPage').disabled = state.ended || state.pageBusy || locked || state.pageIndex === 0;
+  $('nextPage').disabled = state.ended || state.pageBusy || locked || state.pageIndex >= state.pages.length - 1;
+  $('addPageButton').disabled = state.ended || state.pageBusy || locked;
   // Luôn giữ lại ít nhất một trang bảng.
-  $('deletePageButton').disabled = state.ended || state.pageBusy || state.pages.length <= 1;
+  $('deletePageButton').disabled = state.ended || state.pageBusy || locked || state.pages.length <= 1;
+  ['zoomInBtn', 'zoomOutBtn', 'zoomResetBtn', 'handTool'].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = state.ended || locked;
+  });
   updateHistoryButtons();
 }
 
 export async function switchPage(nextIndex) {
-  if (state.ended || state.pageBusy || state.stroke || nextIndex < 0 ||
+  if (state.ended || state.pageBusy || state.boardLocked || state.stroke || nextIndex < 0 ||
       nextIndex >= state.pages.length || nextIndex === state.pageIndex) return;
 
   state.pages[state.pageIndex] = serializeCurrentPage();
@@ -106,7 +111,7 @@ export async function switchPage(nextIndex) {
 }
 
 export async function addPage() {
-  if (state.ended || state.pageBusy || state.stroke) return;
+  if (state.ended || state.pageBusy || state.boardLocked || state.stroke) return;
   const newPageIndex = state.pages.length;
   state.pages.push(blankPage());
   await switchPage(newPageIndex);
@@ -119,7 +124,7 @@ export async function addPage() {
 }
 
 export async function deleteCurrentPage() {
-  if (state.ended || state.pageBusy || state.stroke || state.pages.length <= 1) return false;
+  if (state.ended || state.pageBusy || state.boardLocked || state.stroke || state.pages.length <= 1) return false;
 
   state.pages[state.pageIndex] = serializeCurrentPage();
   const removedIndex = state.pageIndex;
@@ -186,4 +191,5 @@ export function setupPageControls() {
   $('prevPage').addEventListener('click', () => switchPage(state.pageIndex - 1));
   $('nextPage').addEventListener('click', () => switchPage(state.pageIndex + 1));
   $('addPageButton').addEventListener('click', addPage);
+  window.addEventListener('app:board-lock-changed', refreshPages);
 }

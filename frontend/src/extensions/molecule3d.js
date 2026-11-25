@@ -90,10 +90,11 @@ function ensureLibrary() {
 const button = document.createElement('button');
 button.type = 'button';
 button.id = 'molecule3dTool';
-button.className = 'tool-button';
-button.title = 'Dựng mô hình phân tử H2O, CH4, C6H6';
+button.className = 'tool-button more-menu-item';
+button.title = 'Dựng mô hình phân tử 3D (H2O, CH4, C6H6)';
+button.dataset.guide = 'Mô hình Phân tử 3D — Nhập công thức hoá học (H2O, CH4, C6H6) và kéo chuột xoay 360° trực quan.';
 button.textContent = 'Phân tử 3D';
-(toolbar.querySelector('#handwritingTool') || toolbar.lastElementChild).insertAdjacentElement('afterend', button);
+(document.getElementById('handwritingTool') || toolbar.lastElementChild).insertAdjacentElement('afterend', button);
 
 const panel = document.createElement('section');
 panel.className = 'mol3d-panel';

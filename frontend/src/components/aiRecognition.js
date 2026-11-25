@@ -12,7 +12,7 @@ import {
   showCornerNotification,
 } from '../utils/offline_sync.js';
 
-const AUTO_AI_IDLE_MS = 1800;
+const AUTO_AI_IDLE_MS = 900;
 const AI_FETCH_TIMEOUT_MS = 24000;
 const MAX_RETRY_BACKOFF_MS = 3200;
 
@@ -21,6 +21,7 @@ let isRecognizing = false;
 let aiDebounceTimer = null;
 let currentAiResult = null;
 let recognizedStrokeObjects = [];
+let recognizedRegion = null;
 let recognizedPageIndex = null;
 let aiRequestId = 0;
 let boardSocket = null;
@@ -58,69 +59,154 @@ function mapPreprocessBoxToCanvas(preprocess) {
   };
 }
 
+function isRawHandwritingStroke(obj) {
+  if (!(obj instanceof Path)) return false;
+  const meta = obj.meta || {};
+  if (meta.aiState === 'graded' || meta.aiState === 'formatted') return false;
+  if (['question', 'answer_formatted', 'question_badge', 'grading_overlay'].includes(meta.dataRole)) {
+    return false;
+  }
+  return true;
+}
+
+function computeBoundingRegion(objects) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const obj of objects) {
+    const r = obj.getBoundingRect();
+    if (!r) continue;
+    minX = Math.min(minX, r.left);
+    minY = Math.min(minY, r.top);
+    maxX = Math.max(maxX, r.left + r.width);
+    maxY = Math.max(maxY, r.top + r.height);
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+  return {
+    left: minX,
+    top: minY,
+    width: Math.max(40, maxX - minX),
+    height: Math.max(32, maxY - minY),
+  };
+}
+
+function resolveNonOverlappingTop(region, occupiedObjects) {
+  let top = Math.max(36, region.top);
+  const badgeClearance = 28;
+  const estHeight = Math.max(48, Math.min(72, region.height));
+
+  let adjusted = true;
+  let guard = 0;
+  while (adjusted && guard < 12) {
+    adjusted = false;
+    guard += 1;
+    const candidate = {
+      left: region.left,
+      top: top - badgeClearance,
+      width: Math.max(180, region.width),
+      height: estHeight + badgeClearance,
+    };
+    for (const obj of occupiedObjects) {
+      const b = obj.getBoundingRect();
+      if (!b) continue;
+      if (rectsOverlap(candidate, b, 6)) {
+        top = Math.max(top, b.top + b.height + badgeClearance + 10);
+        adjusted = true;
+      }
+    }
+  }
+  return top;
+}
+
+function captureRawStrokesCroppedWebP(targetStrokes, region) {
+  const allObjects = fabricCanvas.getObjects();
+  const targetSet = new Set(targetStrokes);
+  const prevVisibility = new Map();
+  const prevBg = fabricCanvas.backgroundColor;
+  const prevVpt = (fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0]).slice();
+
+  const pad = 24;
+  const cropLeft = Math.floor(region.left - pad);
+  const cropTop = Math.floor(region.top - pad);
+  const cropWidth = Math.max(32, Math.ceil(region.width + pad * 2));
+  const cropHeight = Math.max(32, Math.ceil(region.height + pad * 2));
+
+  try {
+    for (const obj of allObjects) {
+      if (!targetSet.has(obj)) {
+        prevVisibility.set(obj, obj.visible);
+        obj.visible = false;
+      }
+    }
+    fabricCanvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    fabricCanvas.backgroundColor = isDarkBoardActive() ? '#191816' : '#FFFFFF';
+    fabricCanvas.renderAll();
+
+    const webpUrl = fabricCanvas.toDataURL({
+      format: 'webp',
+      quality: 0.85,
+      left: cropLeft,
+      top: cropTop,
+      width: cropWidth,
+      height: cropHeight,
+      multiplier: 1,
+    });
+    if (typeof webpUrl === 'string' && webpUrl.startsWith('data:image/webp')) {
+      return webpUrl;
+    }
+    return fabricCanvas.toDataURL({
+      format: 'png',
+      left: cropLeft,
+      top: cropTop,
+      width: cropWidth,
+      height: cropHeight,
+      multiplier: 1,
+    });
+  } finally {
+    for (const [obj, vis] of prevVisibility.entries()) {
+      obj.visible = vis;
+    }
+    fabricCanvas.backgroundColor = prevBg || '';
+    fabricCanvas.setViewportTransform(prevVpt);
+    fabricCanvas.renderAll();
+  }
+}
+
 /**
  * Xác định danh sách nét viết tay (Path) cần xóa và tọa độ chèn thay thế.
  */
 function resolveStrokesAndRegionForReplacement(aiResult) {
   const currentCanvasObjects = fabricCanvas.getObjects();
-  let activeHandwritingPaths = [];
+  let strokesToRemove = [];
 
-  if (recognizedPageIndex === null) {
-    activeHandwritingPaths = currentCanvasObjects.filter((obj) => obj instanceof Path);
-  } else if (recognizedPageIndex === state.pageIndex) {
-    const savedOnCanvas = recognizedStrokeObjects.filter((obj) => currentCanvasObjects.includes(obj));
-    activeHandwritingPaths =
-      savedOnCanvas.length > 0
-        ? savedOnCanvas
-        : currentCanvasObjects.filter((obj) => obj instanceof Path);
+  if (recognizedPageIndex === state.pageIndex && recognizedStrokeObjects.length > 0) {
+    strokesToRemove = recognizedStrokeObjects.filter((obj) => currentCanvasObjects.includes(obj));
+  } else if (recognizedPageIndex === null) {
+    strokesToRemove = currentCanvasObjects.filter((obj) => isRawHandwritingStroke(obj));
   }
 
-  const mappedBox = mapPreprocessBoxToCanvas(aiResult?.preprocess);
-  let strokesToRemove = activeHandwritingPaths;
-
-  if (mappedBox && activeHandwritingPaths.length > 0) {
-    const overlapping = activeHandwritingPaths.filter((obj) =>
-      rectsOverlap(obj.getBoundingRect(), mappedBox, 16)
-    );
-    if (overlapping.length > 0) {
-      strokesToRemove = overlapping;
-    }
-  }
-
-  // Tính khung bao (bounding box) của đúng các nét viết tay sẽ bị thay thế
-  let region = { left: 40, top: 40, width: 320, height: 54 };
+  let region = recognizedRegion ? { ...recognizedRegion } : null;
   if (strokesToRemove.length > 0) {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const obj of strokesToRemove) {
-      const r = obj.getBoundingRect();
-      minX = Math.min(minX, r.left);
-      minY = Math.min(minY, r.top);
-      maxX = Math.max(maxX, r.left + r.width);
-      maxY = Math.max(maxY, r.top + r.height);
-    }
-    if (Number.isFinite(minX) && Number.isFinite(minY)) {
-      const canvasW = fabricCanvas.getWidth();
-      const canvasH = fabricCanvas.getHeight();
-      const width = Math.max(160, maxX - minX);
-      const height = Math.max(44, maxY - minY);
-      region = {
-        left: Math.max(16, Math.min(minX, Math.max(16, canvasW - 180))),
-        top: Math.max(16, Math.min(minY, Math.max(16, canvasH - 64))),
-        width: Math.min(width, Math.max(180, canvasW - 32)),
-        height: Math.min(height, 140),
-      };
-    }
-  } else if (mappedBox && (recognizedPageIndex === null || recognizedPageIndex === state.pageIndex)) {
-    region = {
-      left: Math.max(16, mappedBox.left),
-      top: Math.max(16, mappedBox.top),
-      width: Math.max(180, mappedBox.width),
-      height: Math.max(48, mappedBox.height),
-    };
+    region = computeBoundingRegion(strokesToRemove) || region;
   }
+  if (!region) {
+    const mappedBox = mapPreprocessBoxToCanvas(aiResult?.preprocess);
+    region = mappedBox
+      ? {
+          left: Math.max(16, mappedBox.left),
+          top: Math.max(16, mappedBox.top),
+          width: Math.max(180, mappedBox.width),
+          height: Math.max(48, mappedBox.height),
+        }
+      : { left: 48, top: 88, width: 320, height: 52 };
+  }
+
+  const occupied = currentCanvasObjects.filter((obj) =>
+    ['question', 'answer_formatted', 'question_badge'].includes(obj?.meta?.dataRole)
+  );
+  const safeTop = resolveNonOverlappingTop(region, occupied);
+  region = { ...region, top: safeTop };
 
   return { strokesToRemove, region };
 }
@@ -254,13 +340,27 @@ export async function performAIRecognition({
   try {
     let imageBase64 = cachedImageBase64;
     if (!imageBase64) {
-      // Lưu lại các nét viết tay (Path) hiện có tại thời điểm chụp ảnh để xóa chính xác khi dán kết quả
-      recognizedStrokeObjects = fabricCanvas.getObjects().filter((obj) => obj instanceof Path);
+      const rawStrokes = fabricCanvas.getObjects().filter((obj) => isRawHandwritingStroke(obj));
+      if (rawStrokes.length === 0) {
+        if (!isDebounced) {
+          showAppToast({
+            title: 'Không có nét viết tay mới',
+            message: 'Các nội dung trên bảng đã được định dạng hoặc chấm xong. Hãy viết câu mới rồi bấm Nhận diện AI.',
+            variant: 'info',
+          });
+        }
+        if (aiElements.overlay) aiElements.overlay.hidden = true;
+        if (aiElements.statusIndicator) {
+          aiElements.statusIndicator.textContent = 'AI: Sẵn sàng';
+          aiElements.statusIndicator.classList.remove('is-analyzing');
+        }
+        return;
+      }
+      const targetRegion = computeBoundingRegion(rawStrokes);
+      recognizedStrokeObjects = rawStrokes;
+      recognizedRegion = targetRegion;
       recognizedPageIndex = state.pageIndex;
-
-      imageBase64 = withOpaqueBoardExport(() =>
-        fabricCanvas.toDataURL({ format: 'png', multiplier: 1.5 })
-      );
+      imageBase64 = captureRawStrokesCroppedWebP(rawStrokes, targetRegion);
     }
     const subject = cachedMeta?.subject || (aiElements.subjectSelect ? aiElements.subjectSelect.value : 'TOAN');
 
@@ -580,17 +680,35 @@ export async function insertIllustrationToBoard(illuData, targetX = null, target
  * và tạo nhãn trực quan ở góc trên bên trái (chạm ngắn vào nhãn để đổi vai trò).
  */
 export function attachEssayRoleMetadata(targetObj, rawLatexText, region) {
-  const existingQuestions = fabricCanvas
-    .getObjects()
-    .filter((obj) => obj?.meta?.dataRole === 'question');
-  const role = existingQuestions.length === 0 ? 'question' : 'answer_formatted';
-  const isQuestion = role === 'question';
+  const allObjects = fabricCanvas.getObjects();
+  const existingQuestions = allObjects
+    .filter((obj) => obj?.meta?.dataRole === 'question')
+    .map((obj) => ({ obj, bbox: obj.getBoundingRect() }))
+    .sort((a, b) => a.bbox.top - b.bbox.top);
+
+  const trimmed = String(rawLatexText || '').trim();
+  const looksLikeAnswerStep = /^(=|=>|->|⇔|⇒|-|\+|ta có|suy ra|vậy|bước)/i.test(trimmed);
+
+  let isQuestion = false;
+  if (existingQuestions.length === 0) {
+    isQuestion = true;
+  } else {
+    const lastQuestion = existingQuestions[existingQuestions.length - 1];
+    const lastIsGraded = lastQuestion.obj?.meta?.aiState === 'graded';
+    const farBelowLast = region.top - (lastQuestion.bbox.top + lastQuestion.bbox.height) > 95;
+    if (!looksLikeAnswerStep && (lastIsGraded || farBelowLast)) {
+      isQuestion = true;
+    }
+  }
+
+  const role = isQuestion ? 'question' : 'answer_formatted';
   const groupId = `essay_item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
   targetObj.meta = {
     ...(targetObj.meta || {}),
+    aiState: 'formatted',
     dataRole: role,
-    rawLatex: String(rawLatexText || '').trim(),
+    rawLatex: trimmed,
     questionGroupId: groupId,
   };
 
@@ -616,6 +734,7 @@ export function attachEssayRoleMetadata(targetObj, rawLatexText, region) {
   ];
   badgeText._hitWidth = Math.max(20, bh);
   badgeText.meta = {
+    aiState: 'formatted',
     dataRole: 'question_badge',
     linkedGroupId: groupId,
   };
@@ -724,6 +843,7 @@ export async function insertAiResultToBoard() {
     fabricCanvas.remove(...strokesToRemove);
   }
   recognizedStrokeObjects = [];
+  recognizedRegion = null;
   recognizedPageIndex = null;
 
   if (objectToInsert) {
