@@ -15,12 +15,14 @@ const rulerState = {
   angleBadge: null,
 };
 
-function computeIdealRulerLength() {
+function computeIdealRulerLength(angleDeg = rulerState.angleDeg) {
   if (!stage) return 1120;
   const sw = stage.clientWidth || 1000;
   const sh = stage.clientHeight || 700;
-  // Kéo dài thước bao phủ gần trọn chiều ngang / chiều dọc màn hình để kẻ một mạch không phải rê thước nhiều lần
-  return Math.max(640, Math.min(1800, Math.round(Math.max(sw, sh) * 0.92)));
+  const rad = (Number(angleDeg) * Math.PI) / 180;
+  // Thước nằm gần ngang -> dài theo chiều ngang màn hình; gần dọc -> dài theo chiều cao (chừa chỗ thanh trên / thanh dưới)
+  const limit = Math.abs(Math.cos(rad)) >= 0.5 ? sw - 24 : sh - 150;
+  return Math.max(220, Math.min(1800, Math.round(limit * 0.96)));
 }
 
 function normalizeAngle(deg) {
@@ -73,8 +75,17 @@ function clampRulerInsideStage() {
   if (!stage) return;
   const sw = stage.clientWidth || 800;
   const sh = stage.clientHeight || 600;
-  rulerState.cx = Math.max(40, Math.min(sw - 40, rulerState.cx));
-  rulerState.cy = Math.max(70, Math.min(sh - 40, rulerState.cy));
+  const rad = (rulerState.angleDeg * Math.PI) / 180;
+  const len = rulerState.length || 1120;
+  // Nửa kích thước hộp bao của thước sau khi xoay: giữ thước nằm gọn trong màn hình (không tràn trái / phải)
+  const ex = (Math.abs(Math.cos(rad)) * len + Math.abs(Math.sin(rad)) * RULER_HEIGHT) / 2;
+  const ey = (Math.abs(Math.sin(rad)) * len + Math.abs(Math.cos(rad)) * RULER_HEIGHT) / 2;
+  const minX = Math.min(ex + 4, sw / 2);
+  const maxX = Math.max(sw - ex - 4, sw / 2);
+  const minY = Math.min(Math.max(70, ey + 4), sh / 2);
+  const maxY = Math.max(sh - Math.max(40, ey) - 4, sh / 2);
+  rulerState.cx = Math.max(minX, Math.min(maxX, rulerState.cx));
+  rulerState.cy = Math.max(minY, Math.min(maxY, rulerState.cy));
 }
 
 function renderRulerTransform() {

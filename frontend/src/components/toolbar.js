@@ -590,7 +590,12 @@ function setupInstantTooltipsAndGuides() {
   function resolveTooltipText(el) {
     if (!el) return '';
     if (el.getAttribute('title')) {
-      el.dataset.tip = el.getAttribute('title');
+      const rawTitle = el.getAttribute('title');
+      el.dataset.tip = rawTitle;
+      // Giữ lại tên truy cập (aria-label) cho nút chỉ có biểu tượng để trình đọc màn hình không mất nhãn khi title bị gỡ
+      if (!el.hasAttribute('aria-label') && !(el.textContent || '').trim()) {
+        el.setAttribute('aria-label', rawTitle);
+      }
       el.removeAttribute('title');
     }
     return el.dataset.tip || '';

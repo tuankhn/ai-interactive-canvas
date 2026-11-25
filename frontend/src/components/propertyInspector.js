@@ -16,6 +16,7 @@ function isMobileViewport() {
 export function setInspectorCollapsed(collapsed) {
   inspectorCollapsed = Boolean(collapsed);
   syncPropertyInspectorVisibility();
+  window.dispatchEvent(new CustomEvent('app:selection-updated'));
 }
 
 export function togglePropertyInspector() {
@@ -312,6 +313,10 @@ export function setupPropertyInspector() {
     syncPropertyInspectorVisibility();
   });
   window.addEventListener('app:selection-changed', () => {
+    // Trên điện thoại: chọn đối tượng thì không tự bung bảng tuỳ chỉnh chèn lên thanh Sửa chữ / Xóa và nội dung
+    if (isMobileViewport() && state.tool === 'select' && getSelectedObjects().length > 0) {
+      inspectorCollapsed = true;
+    }
     syncPropertyInspectorVisibility();
   });
   ui.color?.addEventListener('input', syncInspectorActiveControls);

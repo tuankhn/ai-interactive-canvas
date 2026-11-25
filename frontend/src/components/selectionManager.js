@@ -7,6 +7,7 @@ import { closePanels } from './toolbar.js';
 import { openDirectCanvasTextEditor } from './drawingCanvas.js';
 import { removeObjectsWithCascade } from '../utils/cascadeDelete.js';
 import { isStickyNoteObject, openStickyNoteEditor, updateStickyNoteStyle } from './boardMediaAndNotes.js';
+import { getSafeAreaScreen, getBlockingPanelRects, rectsOverlap, clampRange } from '../utils/safeArea.js';
 
 let selectedObjects = [];
 let marqueeStartWorld = null;
@@ -171,48 +172,60 @@ export function syncSelectionOverlay() {
 
     const barW = actionBarEl.offsetWidth || 128;
     const barH = actionBarEl.offsetHeight || 34;
+    const safe = getSafeAreaScreen(8);
+    const blockers = getBlockingPanelRects(6);
     const boxCx = s.left + s.width / 2;
     const boxCy = s.top + s.height / 2;
     const boxHalfH = Math.max(8, s.height / 2 + pad);
     const activeDeg = singleObj && !cropModeActive ? singleAngle : 0;
-    const rotPt = rotatePointAround(
-      { x: boxCx, y: boxCy - boxHalfH - 30 },
-      { x: boxCx, y: boxCy },
-      (activeDeg * Math.PI) / 180,
-    );
+    const rotRad = (activeDeg * Math.PI) / 180;
+    const center = { x: boxCx, y: boxCy };
+    const handleAbove = rotatePointAround({ x: boxCx, y: boxCy - boxHalfH - 30 }, center, rotRad);
+    const handleBelow = rotatePointAround({ x: boxCx, y: boxCy + boxHalfH + 30 }, center, rotRad);
 
-    const visualTop = Math.min(unionScreen.top - pad, cropModeActive ? Infinity : rotPt.y - 14);
+    const handleIsFree = (pt) =>
+      pt.x - 14 >= safe.left &&
+      pt.x + 14 <= safe.right &&
+      pt.y - 14 >= safe.top &&
+      pt.y + 14 <= safe.bottom &&
+      !blockers.some((r) => rectsOverlap({ left: pt.x - 14, top: pt.y - 14, right: pt.x + 14, bottom: pt.y + 14 }, r));
+
+    // Nút xoay ↻ mặc định nằm phía trên; nếu chìm sau thanh trên/toolbar hoặc ra ngoài mép màn hình thì lật xuống phía dưới khung chọn
+    const rotateBelow = !cropModeActive && !handleIsFree(handleAbove) && handleIsFree(handleBelow);
+    boxEl.classList.toggle('is-rotate-below', rotateBelow);
+
+    const visualTop = Math.min(
+      unionScreen.top - pad,
+      cropModeActive || rotateBelow ? Infinity : handleAbove.y - 16,
+    );
     const visualBottom = Math.max(
       unionScreen.top + unionScreen.height + pad,
-      cropModeActive ? -Infinity : rotPt.y + 14,
+      cropModeActive || !rotateBelow ? -Infinity : handleBelow.y + 16,
     );
-    const stageH = stage.clientHeight || 720;
-    const stageW = stage.clientWidth || 1024;
-    const gap = 16;
 
-    let barTop;
-    if (!cropModeActive && rotPt.y <= boxCy) {
-      // Nút xoay ↻ đang nằm phía trên -> đặt thanh [Sửa chữ | Xóa] thoáng ở phía dưới khung chọn
-      const belowCandidate = unionScreen.top + unionScreen.height + pad + gap;
-      if (belowCandidate + barH <= stageH - 64) {
-        barTop = belowCandidate;
-      } else {
-        barTop = Math.max(10, visualTop - barH - gap);
-      }
-    } else {
-      // Nút xoay ↻ đang chúc xuống dưới (xoay ~180°) hoặc đang Crop -> đặt thanh ở phía trên khung chọn
-      const aboveCandidate = unionScreen.top - pad - barH - gap;
-      if (aboveCandidate >= 64) {
-        barTop = aboveCandidate;
-      } else {
-        barTop = Math.min(stageH - barH - 10, visualBottom + gap);
+    const gap = 12;
+    const centeredLeft = Math.round(unionScreen.left + unionScreen.width / 2 - barW / 2);
+    const barLeft = Math.round(clampRange(centeredLeft, safe.left, safe.right - barW));
+    const candidates = rotateBelow
+      ? [visualTop - barH - gap, visualBottom + gap, unionScreen.top + 10]
+      : [visualBottom + gap, visualTop - barH - gap, unionScreen.top + 10];
+
+    let barTop = null;
+    for (const cTop of candidates) {
+      const rect = { left: barLeft, top: cTop, right: barLeft + barW, bottom: cTop + barH };
+      const inside = cTop >= safe.top && cTop + barH <= safe.bottom;
+      if (inside && !blockers.some((r) => rectsOverlap(rect, r))) {
+        barTop = cTop;
+        break;
       }
     }
+    if (barTop === null) {
+      barTop = clampRange(candidates[0], safe.top, safe.bottom - barH);
+    }
 
-    const centeredLeft = Math.round(unionScreen.left + unionScreen.width / 2 - barW / 2);
     Object.assign(actionBarEl.style, {
-      left: `${Math.max(10, Math.min(centeredLeft, stageW - barW - 10))}px`,
-      top: `${Math.round(Math.max(10, barTop))}px`,
+      left: `${barLeft}px`,
+      top: `${Math.round(barTop)}px`,
     });
   }
 }
