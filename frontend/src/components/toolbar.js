@@ -450,6 +450,52 @@ function setupSystemPopoverPositioning() {
     hideSysPopover();
     $('clearButton')?.click();
   });
+
+  // Cấu hình nhanh địa chỉ Máy chủ AI Backend khi chạy trên GitHub Pages (.github.io)
+  const apiInput = $('apiBackendUrlInput');
+  const apiBadge = $('menuApiBadge');
+  const apiHint = $('apiBackendHint');
+  const syncApiConfigUi = () => {
+    const currentBase = window.getAiCanvasApiBase?.() || '';
+    if (apiInput) apiInput.value = currentBase;
+    if (apiBadge) {
+      if (currentBase) {
+        try {
+          apiBadge.textContent = new URL(currentBase).host.slice(0, 18);
+          apiBadge.dataset.state = 'ok';
+        } catch {
+          apiBadge.textContent = 'Đã gán';
+        }
+      } else {
+        apiBadge.textContent = 'Local';
+        delete apiBadge.dataset.state;
+      }
+    }
+  };
+  syncApiConfigUi();
+
+  $('saveApiBackendBtn')?.addEventListener('click', async () => {
+    const saved = window.setAiCanvasApiBase?.(apiInput?.value || '') || '';
+    syncApiConfigUi();
+    if (apiHint) apiHint.textContent = 'Đang kiểm tra kết nối /health...';
+    try {
+      const res = await fetch('/health', { cache: 'no-store' });
+      if (res.ok) {
+        if (apiHint) apiHint.textContent = `Đã kết nối thành công tới ${saved || 'máy chủ hiện tại'}!`;
+        window.dispatchEvent(new CustomEvent('app:class-changed'));
+      } else {
+        if (apiHint) apiHint.textContent = `Đã lưu (${res.status}) — hãy kiểm tra lại URL Backend.`;
+      }
+    } catch {
+      if (apiHint) apiHint.textContent = 'Đã lưu URL — máy chủ Cloud đang khởi động hoặc chưa chạy.';
+    }
+  });
+
+  $('resetApiBackendBtn')?.addEventListener('click', () => {
+    window.setAiCanvasApiBase?.('');
+    syncApiConfigUi();
+    if (apiHint) apiHint.textContent = 'Đã khôi phục cấu hình Backend mặc định.';
+  });
 }
 
 function setupToolbarErgonomicDock() {

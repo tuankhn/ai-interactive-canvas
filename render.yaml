@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: ai-interactive-canvas-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: development
+      - key: CORS_ALLOW_ORIGINS
+        value: "*"
+      - key: DATABASE_URL
+        value: sqlite:///./ai_canvas_cloud.db
+      - key: SEED_DEMO_ON_STARTUP
+        value: "true"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
