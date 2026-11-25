@@ -4,6 +4,7 @@
  */
 import { parseGeometryProblem } from './geometry_3d_parser.js';
 import { $, fabricCanvas, state } from '../utils/context.js';
+import { makePanelDraggable } from '../utils/floating_drag.js';
 import { closePanels } from './toolbar.js';
 
 // Chờ bảng vẽ gốc hoàn tất khởi tạo, tương tự extension phân tử có sẵn.
@@ -50,6 +51,7 @@ if (toolButton && !document.getElementById('geom3dPanel')) {
     <p id="geom3dMessage" class="geom3d-status" role="status" aria-live="polite"></p>
   `;
   document.body.append(panel);
+  makePanelDraggable(panel, panel.querySelector('.geom3d-titlebar'));
 
   const problemInput = $('geom3dProblem');
   const viewport = $('geom3dViewport');

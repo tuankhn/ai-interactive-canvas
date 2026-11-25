@@ -5,6 +5,7 @@ import { closePanels } from './toolbar.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
 import { showAppToast } from '../utils/ui_feedback.js';
+import { makePanelDraggable } from '../utils/floating_drag.js';
 import {
   isOfflineMode,
   markNetworkOffline,
@@ -1149,6 +1150,11 @@ export function setupAIRecognition() {
     wsRetryCount = 0;
     initBoardWebSocket();
   });
+
+  const aiPanelEl = $('aiOverlayPanel');
+  if (aiPanelEl) {
+    makePanelDraggable(aiPanelEl, aiPanelEl.querySelector('.ai-panel-header'));
+  }
 
   initBoardWebSocket();
 }

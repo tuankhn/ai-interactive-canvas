@@ -1,6 +1,7 @@
 import { $, fabricCanvas, state, setStatus, isDarkBoardActive } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { authFetch } from '../utils/auth_client.js';
+import { makePanelDraggable, computeCleanBoardPlacement, panViewportToShowWorldRect } from '../utils/floating_drag.js';
 import { Circle, FabricText, Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 const CIRCLE_ANSWER_ENDPOINT = '/api/v1/exam/circle-answer';
@@ -253,9 +254,8 @@ export function setupQuizBoard() {
     const before = snapshot();
     clearManagedQuizObjects();
 
-    const startX = 48;
-    const startY = 136;
-    const cardWidth = Math.min(820, Math.max(300, fabricCanvas.getWidth() - 96));
+    const cardWidth = Math.min(800, Math.max(320, (fabricCanvas.getWidth() || 960) - 120));
+    const { left: startX, top: startY } = computeCleanBoardPlacement(cardWidth, 38);
     const isDarkBoard = isDarkBoardActive();
 
     const header = new Textbox(
@@ -267,34 +267,48 @@ export function setupQuizBoard() {
         fontSize: 19,
         fontFamily: 'Be Vietnam Pro, sans-serif',
         fontWeight: 'bold',
-        fill: isDarkBoard ? '#f4f4f5' : '#18181b',
+        fill: isDarkBoard ? '#ECE7DF' : '#26231F',
         selectable: false,
         evented: false,
-        lineHeight: 1.4,
+        lineHeight: 1.48,
       }
     );
     header.meta = { quizCardManaged: true, question_id: question.id, type: 'quiz_header' };
     fabricCanvas.add(header);
 
-    const headerRect = header.getBoundingRect();
-    let optionTop = startY + Math.max(48, (headerRect?.height || 40) + 18);
+    const headerH = Math.max(36, header.calcTextHeight?.() || header.height || 40);
+    let optionTop = startY + headerH + 18;
 
     const options = Array.isArray(question.options) ? question.options : [];
-    const inkColor = isDarkBoard ? '#f4f4f5' : '#18181b';
-    const cardBg = isDarkBoard ? 'rgba(34, 34, 41, 0.9)' : '#f4f7f5';
-    const cardStroke = isDarkBoard ? '#52525b' : '#b5c5bc';
+    const inkColor = isDarkBoard ? '#ECE7DF' : '#26231F';
+    const cardBg = isDarkBoard ? 'rgba(42, 39, 35, 0.92)' : '#FAF8F4';
+    const cardStroke = isDarkBoard ? '#4A443D' : '#D5CEC0';
+    const badgeAccent = isDarkBoard ? '#E89274' : '#9C3F23';
 
     for (const opt of options) {
       const label = String(opt.label || 'A').toUpperCase();
-      const rowHeight = 46;
+
+      const optionBody = new Textbox(opt.content || '', {
+        left: startX + 56,
+        top: optionTop + 14,
+        width: cardWidth - 74,
+        fontSize: 16,
+        lineHeight: 1.45,
+        fontFamily: 'Be Vietnam Pro, sans-serif',
+        fill: inkColor,
+        selectable: false,
+        evented: false,
+      });
+      const bodyH = Math.max(22, optionBody.calcTextHeight?.() || optionBody.height || 22);
+      const rowHeight = Math.max(50, Math.ceil(bodyH + 26));
 
       const rowBox = new Rect({
         left: startX,
         top: optionTop,
         width: cardWidth,
         height: rowHeight,
-        rx: 8,
-        ry: 8,
+        rx: 9,
+        ry: 9,
         fill: cardBg,
         stroke: cardStroke,
         strokeWidth: 1.5,
@@ -306,17 +320,18 @@ export function setupQuizBoard() {
         type: 'quiz_option_target',
         question_id: question.id,
         label,
-        badgeX: startX + 26,
+        badgeX: startX + 27,
         badgeY: optionTop + rowHeight / 2,
       };
       fabricCanvas.add(rowBox);
 
+      const badgeCenterY = optionTop + rowHeight / 2;
       const circleBadge = new Circle({
         left: startX + 12,
-        top: optionTop + 8,
+        top: badgeCenterY - 15,
         radius: 15,
-        fill: '#ffffff',
-        stroke: '#14532d',
+        fill: isDarkBoard ? '#191816' : '#FFFFFF',
+        stroke: badgeAccent,
         strokeWidth: 2,
         selectable: false,
         evented: false,
@@ -331,27 +346,18 @@ export function setupQuizBoard() {
 
       const letterText = new FabricText(label, {
         left: startX + 21,
-        top: optionTop + 14,
-        fontSize: 16,
+        top: badgeCenterY - 9,
+        fontSize: 15.5,
         fontFamily: 'Be Vietnam Pro, sans-serif',
         fontWeight: 'bold',
-        fill: '#14532d',
+        fill: badgeAccent,
         selectable: false,
         evented: false,
       });
       letterText.meta = { quizCardManaged: true, type: 'quiz_option_letter', label };
       fabricCanvas.add(letterText);
 
-      const optionBody = new Textbox(opt.content || '', {
-        left: startX + 54,
-        top: optionTop + 13,
-        width: cardWidth - 70,
-        fontSize: 16,
-        fontFamily: 'Be Vietnam Pro, sans-serif',
-        fill: inkColor,
-        selectable: false,
-        evented: false,
-      });
+      optionBody.set('top', Math.round(optionTop + (rowHeight - bodyH) / 2));
       optionBody.meta = {
         quizCardManaged: true,
         type: 'quiz_option_target',
@@ -362,6 +368,13 @@ export function setupQuizBoard() {
 
       optionTop += rowHeight + 12;
     }
+
+    panViewportToShowWorldRect({
+      left: startX,
+      top: startY,
+      width: cardWidth,
+      height: Math.max(180, optionTop - startY),
+    });
 
     fabricCanvas.requestRenderAll();
     updateHint();
@@ -500,25 +513,76 @@ export function setupQuizBoard() {
     }
   }
 
-  function openOrTogglePanel() {
+  makePanelDraggable(panel, $('quizPanelDragHandle') || panel.querySelector('.quiz-panel-head'));
+
+  function openPanel() {
     const isOpen = panel.matches(':popover-open') || panel.classList.contains(':popover-open') || panel.hasAttribute('open');
-    if (isOpen) {
-      if (typeof panel.hidePopover === 'function') panel.hidePopover();
-      else panel.removeAttribute('open');
-      return;
+    if (!isOpen) {
+      if (typeof panel.showPopover === 'function') {
+        panel.showPopover();
+      } else {
+        panel.setAttribute('open', '');
+      }
     }
-    if (typeof panel.showPopover === 'function') {
-      panel.showPopover();
+    if (quizState.questions.length > 0) {
+      const hasQuizCardOnBoard = fabricCanvas.getObjects().some((obj) => obj?.meta?.quizCardManaged);
+      if (!hasQuizCardOnBoard) {
+        renderQuizQuestionOnCanvas(
+          quizState.questions[quizState.currentIndex],
+          quizState.currentIndex,
+          quizState.questions.length
+        );
+      }
     } else {
-      panel.setAttribute('open', '');
-    }
-    if (quizState.questions.length === 0) {
       void loadSampleQuiz(subjectSelect?.value || $('subjectSelect')?.value || 'TOAN');
     }
   }
 
   if (toggleBtn) {
-    toggleBtn.addEventListener('click', openOrTogglePanel);
+    toggleBtn.addEventListener('click', openPanel);
+  }
+
+  // Cho phép tải trực tiếp tệp đề trắc nghiệm (.docx, .pdf, .txt) ngay từ bảng điều khiển Trắc nghiệm
+  const customUploadBtn = $('quizUploadCustomBtn');
+  const customFileInput = $('quizCustomFileInput');
+  if (customUploadBtn && customFileInput) {
+    customUploadBtn.addEventListener('click', () => customFileInput.click());
+    customFileInput.addEventListener('change', async () => {
+      const file = customFileInput.files?.[0];
+      if (!file) return;
+      customUploadBtn.disabled = true;
+      customUploadBtn.textContent = 'Đang tải...';
+      setQuizPanelStatus(`Đang bóc tách câu hỏi trắc nghiệm từ "${file.name}"...`, 'info');
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await authFetch('/api/v1/exam/upload?mode=STUDENT', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || 'Không thể đọc tệp đề thi');
+        }
+        const examData = await res.json();
+        const mcqOnly = (examData.questions || []).filter((q) => Array.isArray(q.options) && q.options.length >= 2);
+        if (mcqOnly.length === 0) {
+          setQuizPanelStatus('Tệp vừa tải là đề tự luận (chưa có đáp án A, B, C, D). Bạn hãy dùng mục "Dàn toàn bộ câu hỏi ra bảng".', 'error');
+        } else {
+          quizState.questions = mcqOnly;
+          quizState.currentIndex = 0;
+          quizState.mode = 'STUDENT';
+          renderQuizQuestionOnCanvas(mcqOnly[0], 0, mcqOnly.length);
+          setQuizPanelStatus(`Đã nạp ${mcqOnly.length} câu trắc nghiệm từ "${file.name}". Khoanh tròn A, B, C, D để chấm!`, 'correct');
+        }
+      } catch (err) {
+        setQuizPanelStatus(err.message || 'Lỗi tải tệp đề trắc nghiệm.', 'error');
+      } finally {
+        customUploadBtn.disabled = false;
+        customUploadBtn.textContent = 'Tải đề (.docx/.pdf)';
+        customFileInput.value = '';
+      }
+    });
   }
   if (closeBtn) {
     closeBtn.addEventListener('click', () => {

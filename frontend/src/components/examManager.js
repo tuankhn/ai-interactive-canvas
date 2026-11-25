@@ -2,7 +2,8 @@ import { $, fabricCanvas, state, setStatus, isDarkBoardActive } from '../utils/c
 import { snapshot, remember, updateHint } from './history.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
-import { FabricText, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
+import { computeCleanBoardPlacement, panViewportToShowWorldRect } from '../utils/floating_drag.js';
+import { FabricText, Line, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 let currentExamData = null;
 
@@ -94,10 +95,15 @@ export function setupExamManager() {
     });
   }
 
-  // Đóng modal tải đề
-  const closeModal = () => examModal.close();
+  // Đóng modal tải đề (và tự đóng khi chuyển sang bảng Trắc nghiệm khoanh A/B/C/D)
+  const closeModal = () => {
+    if (examModal.open) examModal.close();
+  };
   if (closeExamModalBtn) closeExamModalBtn.addEventListener('click', closeModal);
   if (closeExamModalXBtn) closeExamModalXBtn.addEventListener('click', closeModal);
+  $('quizBoardToggleBtn')?.addEventListener('click', () => {
+    closeModal();
+  });
 
   // Đóng Feedback Dialog
   const closeFeedbackModal = () => {
@@ -472,7 +478,7 @@ export function setupExamManager() {
     });
   }
 
-  // Dàn câu hỏi lên mặt bảng vẽ
+  // Dàn TOÀN BỘ câu hỏi lên mặt bảng vẽ vô hạn (không bị cắt mất từ câu 3 trở đi)
   layoutToBoardBtn.addEventListener('click', async () => {
     if (!currentExamData || !currentExamData.questions || currentExamData.questions.length === 0) {
       showStatus('Không có câu hỏi nào để dàn lên bảng', true);
@@ -480,6 +486,7 @@ export function setupExamManager() {
     }
 
     const mode = getSelectedMode();
+    const totalQ = currentExamData.questions.length;
     layoutToBoardBtn.disabled = true;
     layoutToBoardBtn.textContent = 'Đang dàn lên bảng...';
 
@@ -490,56 +497,160 @@ export function setupExamManager() {
         body: JSON.stringify({
           questions: currentExamData.questions,
           mode: mode,
-          questions_per_page: 2,
+          questions_per_page: Math.max(50, totalQ),
         }),
       });
 
-      if (!res.ok) throw new Error('Không thể tạo layout bảng');
-      const layoutData = await res.json();
-
-      applyExamLayoutToCanvas(layoutData);
+      const layoutData = res.ok ? await res.json() : null;
+      applyExamLayoutToCanvas(currentExamData.questions, mode, layoutData);
       examModal.close();
-      setStatus(`Đã dàn thành công ${currentExamData.total_questions} câu hỏi lên bảng (${layoutData.total_pages} trang)!`);
+      setStatus(`Đã dàn đầy đủ ${totalQ}/${totalQ} câu hỏi lên mặt bảng vẽ!`);
     } catch (err) {
       showStatus(err.message, true);
     } finally {
       layoutToBoardBtn.disabled = false;
-      layoutToBoardBtn.textContent = 'Dàn lên mặt bảng vẽ';
+      layoutToBoardBtn.textContent = 'Dàn toàn bộ câu hỏi ra bảng';
     }
   });
 
-  // Chuyển layout sang đối tượng Fabric.js trên bảng vẽ
-  function applyExamLayoutToCanvas(layoutData) {
+  // Dàn đầy đủ 100% câu hỏi dọc theo mặt bảng vô hạn với khoảng cách thoáng, đo chiều cao thực tế từng dòng
+  function applyExamLayoutToCanvas(questionsList, mode = 'STUDENT', _layoutData = null) {
+    if (!Array.isArray(questionsList) || questionsList.length === 0) return;
     const before = snapshot();
-    const firstPage = layoutData.pages[0];
-    if (!firstPage) return;
+    const TextboxClass = Textbox || FabricText;
 
     const isDarkBoard = isDarkBoardActive();
-    const topOffset = 112;
+    const isStudent = mode === 'STUDENT';
+    const primaryInk = isDarkBoard ? '#ECE7DF' : '#26231F';
+    const optionInk = isDarkBoard ? '#D6CFC4' : '#3E3932';
+    const correctInk = isDarkBoard ? '#78A87B' : '#2F6F3E';
+    const explainInk = isDarkBoard ? '#E89274' : '#9C3F23';
+    const sepStroke = isDarkBoard ? 'rgba(255,255,255,0.10)' : 'rgba(38,35,31,0.10)';
 
-    firstPage.objects.forEach((item) => {
-      const TextboxClass = Textbox || FabricText;
-      const rawFill = String(item.fill || '#18181b').toLowerCase();
-      const isDefaultDarkInk = rawFill === '#172554' || rawFill === '#18181b' || rawFill === '#0f172a' || rawFill === '#1e293b';
-      const resolvedFill = isDarkBoard && isDefaultDarkInk ? '#f4f4f5' : (isDefaultDarkInk ? '#18181b' : item.fill);
-      const tb = new TextboxClass(item.text, {
-        left: item.left,
-        top: (item.top || 24) + topOffset,
-        fontSize: item.fontSize || 16,
-        fontFamily: 'Be Vietnam Pro, sans-serif',
-        fontWeight: item.fontWeight || 'normal',
-        fontStyle: item.fontStyle || 'normal',
-        fill: resolvedFill,
-        width: Math.min(item.width || 800, Math.max(300, fabricCanvas.getWidth() - 80)),
-        selectable: item.selectable !== false,
-        lineHeight: item.lineHeight || 1.35,
+    const blockWidth = Math.min(820, Math.max(340, (fabricCanvas.getWidth() || 980) - 140));
+    const { left: startLeft, top: startTop } = computeCleanBoardPlacement(blockWidth, 44);
+    let cursorY = startTop;
+
+    questionsList.forEach((q, idx) => {
+      const qNum = q.number ?? idx + 1;
+      const stemStr = `Câu ${qNum}: ${String(q.content || '').trim()}`;
+      const stemTb = new TextboxClass(stemStr, {
+        left: startLeft,
+        top: cursorY,
+        width: blockWidth,
+        fontSize: 18,
+        fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+        fontWeight: '700',
+        fill: primaryInk,
+        lineHeight: 1.5,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
       });
+      const stemH = Math.max(28, stemTb.calcTextHeight?.() || stemTb.height || 28);
+      stemTb._hitPoints = [
+        { x: startLeft, y: cursorY + stemH / 2 },
+        { x: startLeft + blockWidth, y: cursorY + stemH / 2 },
+      ];
+      stemTb._hitWidth = stemH;
+      stemTb.meta = {
+        examQuestion: true,
+        question_id: q.id || `q_${qNum}`,
+        number: qNum,
+        rawQuestionText: String(q.content || '').trim(),
+        aiState: 'formatted',
+      };
+      fabricCanvas.add(stemTb);
+      cursorY += stemH + 14;
 
-      // Lưu metadata để khi học sinh chọn trên canvas có thể chấm trắc nghiệm
-      if (item.meta) {
-        tb.meta = item.meta;
+      const opts = Array.isArray(q.options) ? q.options : [];
+      if (opts.length > 0) {
+        opts.forEach((opt) => {
+          const label = String(opt.label || '').trim().toUpperCase();
+          const isAnsCorrect = !isStudent && (opt.is_correct || label === q.correct_option);
+          const prefix = isAnsCorrect ? `✓ ${label}. ` : `${label}. `;
+          const optTb = new TextboxClass(`${prefix}${String(opt.content || '').trim()}`, {
+            left: startLeft + 20,
+            top: cursorY,
+            width: blockWidth - 24,
+            fontSize: 16.5,
+            fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+            fontWeight: isAnsCorrect ? '700' : '500',
+            fill: isAnsCorrect ? correctInk : optionInk,
+            lineHeight: 1.48,
+            selectable: false,
+            evented: true,
+            objectCaching: false,
+          });
+          const optH = Math.max(24, optTb.calcTextHeight?.() || optTb.height || 24);
+          optTb._hitPoints = [
+            { x: startLeft + 20, y: cursorY + optH / 2 },
+            { x: startLeft + blockWidth, y: cursorY + optH / 2 },
+          ];
+          optTb._hitWidth = optH;
+          optTb.meta = {
+            type: 'answer_option',
+            question_id: q.id || `q_${qNum}`,
+            label,
+            aiState: 'formatted',
+          };
+          fabricCanvas.add(optTb);
+          cursorY += optH + 10;
+        });
+      } else {
+        // Câu tự luận: chừa khoảng trống thoáng (90px) bên dưới để viết lời giải trực tiếp
+        cursorY += 86;
       }
-      fabricCanvas.add(tb);
+
+      if (!isStudent && q.explanation) {
+        cursorY += 4;
+        const expTb = new TextboxClass(`Hướng dẫn giải: ${String(q.explanation).trim()}`, {
+          left: startLeft + 20,
+          top: cursorY,
+          width: blockWidth - 24,
+          fontSize: 15,
+          fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+          fontStyle: 'italic',
+          fill: explainInk,
+          lineHeight: 1.5,
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+        });
+        const expH = Math.max(22, expTb.calcTextHeight?.() || expTb.height || 22);
+        expTb._hitPoints = [
+          { x: startLeft + 20, y: cursorY + expH / 2 },
+          { x: startLeft + blockWidth, y: cursorY + expH / 2 },
+        ];
+        expTb._hitWidth = expH;
+        expTb.meta = { examExplanation: true, aiState: 'formatted' };
+        fabricCanvas.add(expTb);
+        cursorY += expH + 10;
+      }
+
+      if (idx < questionsList.length - 1) {
+        cursorY += 14;
+        const divider = new Line(
+          [startLeft, cursorY, startLeft + blockWidth, cursorY],
+          {
+            stroke: sepStroke,
+            strokeWidth: 1,
+            strokeDashArray: [5, 5],
+            selectable: false,
+            evented: false,
+          }
+        );
+        divider.meta = { examDivider: true, aiState: 'formatted' };
+        fabricCanvas.add(divider);
+        cursorY += 24;
+      }
+    });
+
+    panViewportToShowWorldRect({
+      left: startLeft,
+      top: startTop,
+      width: blockWidth,
+      height: Math.min(420, cursorY - startTop),
     });
 
     fabricCanvas.requestRenderAll();
