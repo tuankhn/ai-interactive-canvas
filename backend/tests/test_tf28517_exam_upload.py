@@ -388,3 +388,40 @@ def test_unkeyed_math_exam_auto_solves_and_docx_all_bold_labels_not_forced_to_a(
     ).json()
     assert g3["is_correct"] is False
     assert g3["correct_label"] == "B"
+
+    # Kiểm tra chấm trực tiếp từ đề đã lưu sẵn trên bảng (question_id mới/không nằm trong RAM server):
+    # Câu 4: 120 + 80 × 3 = 360 -> Khoanh A (600) phải SAI, đáp án đúng C (360)
+    g4 = client.post(
+        "/api/v1/exam/grade-mcq",
+        json={
+            "question_id": "restored_localstorage_q4",
+            "selected_label": "A",
+            "question_content": "Giá trị của biểu thức 120 + 80 × 3 là:",
+            "options": [
+                {"label": "A", "content": "600"},
+                {"label": "B", "content": "200"},
+                {"label": "C", "content": "360"},
+                {"label": "D", "content": "280"},
+            ],
+        },
+    ).json()
+    assert g4["is_correct"] is False
+    assert g4["correct_label"] == "C"
+
+    # Câu 5: Số 19 được viết bằng chữ số La Mã -> Khoanh A (XVIII) phải SAI, đáp án đúng D (XIX)
+    g5 = client.post(
+        "/api/v1/exam/grade-mcq",
+        json={
+            "question_id": "restored_localstorage_q5",
+            "selected_label": "A",
+            "question_content": "Số 19 được viết bằng chữ số La Mã là:",
+            "options": [
+                {"label": "A", "content": "XVIII"},
+                {"label": "B", "content": "XXI"},
+                {"label": "C", "content": "IXX"},
+                {"label": "D", "content": "XIX"},
+            ],
+        },
+    ).json()
+    assert g5["is_correct"] is False
+    assert g5["correct_label"] == "D"

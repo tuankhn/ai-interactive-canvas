@@ -113,6 +113,86 @@ export function detectCircleSelectionGesture(points, strokeBbox = null, tool = '
 }
 
 /**
+ * Tự động đọc lại nội dung câu hỏi và 4 phương án A/B/C/D trực tiếp từ các Textbox đang nằm trên mặt bảng.
+ * Nhờ đó kể cả đề đã lưu trong localStorage từ phiên trước (hoặc sau khi F5 / đổi máy chủ) vẫn có đủ dữ liệu để giải & chấm chuẩn 100%!
+ */
+export function extractQuestionContextFromCanvas(canvas, questionId, fallbackY = null) {
+  if (!canvas || typeof canvas.getObjects !== 'function') {
+    return { content: null, options: null, minY: null, maxY: null };
+  }
+
+  const objs = canvas.getObjects();
+  let stemText = '';
+  const optionMap = new Map();
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  for (const obj of objs) {
+    const meta = obj?.meta;
+    if (!meta) continue;
+    const sameQ = questionId && meta.question_id === questionId;
+
+    if (sameQ && (meta.examQuestion || meta.type === 'quiz_header' || meta.type === 'question_title')) {
+      const raw = meta.rawQuestionText || (typeof obj.text === 'string' ? obj.text : '');
+      if (raw) {
+        stemText = String(raw)
+          .replace(/^\s*(?:\[Trắc nghiệm[^\]]*\]\s*)?(?:Câu|Bài|Question)\s*\d+\s*[:.]\s*/i, '')
+          .trim();
+      }
+    }
+
+    if (sameQ && (meta.type === 'answer_option' || meta.type === 'quiz_option_target')) {
+      const rect = obj.getBoundingRect ? obj.getBoundingRect() : null;
+      if (rect) {
+        if (rect.top < minY) minY = rect.top;
+        if (rect.top + rect.height > maxY) maxY = rect.top + rect.height;
+      }
+      const lbl = String(meta.label || '').trim().toUpperCase();
+      if (['A', 'B', 'C', 'D'].includes(lbl) && typeof obj.text === 'string') {
+        const cleanedOpt = obj.text
+          .replace(/^\s*(?:[✓✕]\s*)?[A-Da-d][.)]\s*/, '')
+          .replace(/\s*✓\s*\(Đáp án đúng\)\s*$/i, '')
+          .trim();
+        if (cleanedOpt && (!optionMap.has(lbl) || cleanedOpt.length > optionMap.get(lbl).length)) {
+          optionMap.set(lbl, cleanedOpt);
+        }
+      }
+    }
+  }
+
+  // Dự phòng: Nếu chưa tìm thấy câu dẫn theo question_id, dò Textbox "Câu X:" nằm ngay phía trên vùng phương án
+  const refY = Number.isFinite(minY) ? minY : fallbackY;
+  if (!stemText && Number.isFinite(refY)) {
+    let bestDelta = Infinity;
+    for (const obj of objs) {
+      if (typeof obj?.text !== 'string') continue;
+      const txt = obj.text.trim();
+      if (!/^(?:\[Trắc nghiệm[^\]]*\]\s*)?(?:Câu|Bài|Question)\s*\d+\s*[:.]/i.test(txt)) continue;
+      const rect = obj.getBoundingRect ? obj.getBoundingRect() : null;
+      if (!rect) continue;
+      const delta = refY - rect.top;
+      if (delta >= -8 && delta < 460 && delta < bestDelta) {
+        bestDelta = delta;
+        stemText = txt
+          .replace(/^\s*(?:\[Trắc nghiệm[^\]]*\]\s*)?(?:Câu|Bài|Question)\s*\d+\s*[:.]\s*/i, '')
+          .trim();
+      }
+    }
+  }
+
+  const orderedOptions = ['A', 'B', 'C', 'D']
+    .filter((lbl) => optionMap.has(lbl))
+    .map((lbl) => ({ label: lbl, content: optionMap.get(lbl) }));
+
+  return {
+    content: stemText || null,
+    options: orderedOptions.length >= 2 ? orderedOptions : null,
+    minY: Number.isFinite(minY) ? minY : null,
+    maxY: Number.isFinite(maxY) ? maxY : null,
+  };
+}
+
+/**
  * Thu thập tọa độ vùng đáp án A, B, C, D đang hiển thị trên Fabric Canvas.
  */
 export function findOptionTargetsOnCanvas(canvas) {
@@ -400,10 +480,19 @@ export function setupQuizBoard() {
 
   function highlightCircledOptionOnCanvas(target, isCorrect, matchedLabel, correctLabel = null) {
     const qId = target.questionId || 'q_board';
-    // Xoá dấu chấm cũ của riêng câu hỏi này nếu học sinh tẩy khoanh lại phương án mới
-    const staleMarks = fabricCanvas
-      .getObjects()
-      .filter((obj) => obj?.meta?.type === 'quiz_feedback_mark' && obj?.meta?.question_id === qId);
+    const canvasCtx = extractQuestionContextFromCanvas(fabricCanvas, qId, target.y);
+    const bandMinY = (canvasCtx.minY ?? target.y) - 28;
+    const bandMaxY = (canvasCtx.maxY ?? target.y + target.height) + 28;
+
+    // Xoá sạch dấu chấm cũ của câu hỏi này (kể cả dấu cũ lưu trong localStorage từ phiên trước chưa gắn question_id)
+    const staleMarks = fabricCanvas.getObjects().filter((obj) => {
+      if (obj?.meta?.type !== 'quiz_feedback_mark') return false;
+      if (obj.meta.question_id) return obj.meta.question_id === qId;
+      const r = obj.getBoundingRect ? obj.getBoundingRect() : null;
+      if (!r) return false;
+      const cy = r.top + r.height / 2;
+      return cy >= bandMinY && cy <= bandMaxY;
+    });
     if (staleMarks.length > 0) {
       fabricCanvas.remove(...staleMarks);
     }
@@ -512,11 +601,12 @@ export function setupQuizBoard() {
         explanation: target.explanation || null,
       };
 
+    const canvasExtracted = extractQuestionContextFromCanvas(fabricCanvas, target.questionId, target.y);
     const resolvedOptions =
       Array.isArray(question.options) && question.options.length > 0
         ? question.options.map((o) => ({ label: o.label, content: o.content }))
-        : target.options || null;
-    const resolvedContent = question.content || target.questionContent || null;
+        : target.options || canvasExtracted.options || null;
+    const resolvedContent = question.content || target.questionContent || canvasExtracted.content || null;
 
     const optionRegions = findOptionTargetsOnCanvas(fabricCanvas)
       .filter((opt) => !target.questionId || opt.questionId === target.questionId)
