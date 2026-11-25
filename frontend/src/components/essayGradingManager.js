@@ -153,6 +153,8 @@ async function recognizeLineCluster(clusterObjects, lineBbox, subject) {
       page_number: (state.pageIndex || 0) + 1,
       image_base64: imageBase64,
       provider: 'auto',
+      already_cropped: true,
+      fast_mode: true,
     }),
   });
 
@@ -183,7 +185,7 @@ function clearGradingOverlaysForQuestion(questionGroupId) {
   }
 }
 
-function renderOnBoardStepOverlay(stepEval, bbox, questionGroupId = '') {
+function renderOnBoardStepOverlay(stepEval, bbox, questionGroupId = '', stepOwnerId = '') {
   const isCorrect = Boolean(stepEval.is_step_correct);
   const isDark = isDarkBoardActive();
   const rightX = bbox.left + bbox.width + 16;
@@ -201,7 +203,12 @@ function renderOnBoardStepOverlay(stepEval, bbox, questionGroupId = '') {
       evented: false,
       objectCaching: false,
     });
-    checkObj.meta = { dataRole: 'grading_overlay', gradedQuestionId: questionGroupId, stepNumber: stepEval.step_number };
+    checkObj.meta = {
+      dataRole: 'grading_overlay',
+      gradedQuestionId: questionGroupId,
+      linkedStepOwnerId: stepOwnerId || undefined,
+      stepNumber: stepEval.step_number,
+    };
     fabricCanvas.add(checkObj);
     return;
   }
@@ -216,7 +223,12 @@ function renderOnBoardStepOverlay(stepEval, bbox, questionGroupId = '') {
     evented: false,
     objectCaching: false,
   });
-  redLine.meta = { dataRole: 'grading_overlay', gradedQuestionId: questionGroupId, stepNumber: stepEval.step_number };
+  redLine.meta = {
+    dataRole: 'grading_overlay',
+    gradedQuestionId: questionGroupId,
+    linkedStepOwnerId: stepOwnerId || undefined,
+    stepNumber: stepEval.step_number,
+  };
 
   const hintObj = new FabricText(' ✕ Gợi ý ', {
     left: rightX,
@@ -233,6 +245,7 @@ function renderOnBoardStepOverlay(stepEval, bbox, questionGroupId = '') {
   hintObj.meta = {
     dataRole: 'grading_overlay',
     gradedQuestionId: questionGroupId,
+    linkedStepOwnerId: stepOwnerId || undefined,
     isHintTrigger: true,
     stepNumber: stepEval.step_number,
     feedback: stepEval.feedback || '',
@@ -275,6 +288,91 @@ function toggleQuestionBadgeRole(badgeObj) {
 }
 
 /**
+ * Gán đối tượng bài làm (Path hoặc answer_formatted) về đúng câu hỏi tự luận theo không gian 2D:
+ * - Ưu tiên 1: Khóa cứng theo khung nét đứt answer_zone (hoặc linkedQuestionGroupId đã gắn sẵn).
+ * - Ưu tiên 2: So khớp 2D (nằm bên dưới đề bài và cùng cột ngang X), tuyệt đối không gom nhầm giữa các câu.
+ */
+function assignObjectsToQuestions2D(questions, zones, candidateObjects) {
+  const bucketMap = new Map();
+  questions.forEach((q, idx) => {
+    const qId = q.obj.meta.questionGroupId || `board_q_${idx + 1}`;
+    bucketMap.set(qId, []);
+  });
+
+  for (const obj of candidateObjects) {
+    const m = obj?.meta || {};
+    if (
+      m.dataRole === 'question' ||
+      m.dataRole === 'answer_zone' ||
+      m.dataRole === 'answer_zone_label' ||
+      m.type === 'answer_option' ||
+      m.type === 'quiz_option_target' ||
+      m.type === 'quiz_feedback_mark' ||
+      m.examDivider ||
+      m.examExplanation ||
+      m.quizCardManaged
+    ) {
+      continue;
+    }
+
+    if (m.linkedQuestionGroupId && bucketMap.has(m.linkedQuestionGroupId)) {
+      bucketMap.get(m.linkedQuestionGroupId).push(obj);
+      continue;
+    }
+
+    const b = obj.getBoundingRect();
+    if (!b) continue;
+    const cx = b.left + b.width / 2;
+    const cy = b.top + b.height / 2;
+
+    // Ưu tiên 1: Tâm nét viết / công thức nằm trong khung answer_zone của câu nào thì khóa chặt vào câu đó
+    const matchedZone = zones.find(
+      (z) =>
+        cx >= z.bbox.left - 8 &&
+        cx <= z.bbox.left + z.bbox.width + 8 &&
+        cy >= z.bbox.top - 8 &&
+        cy <= z.bbox.top + z.bbox.height + 8 &&
+        bucketMap.has(z.groupId)
+    );
+    if (matchedZone) {
+      bucketMap.get(matchedZone.groupId).push(obj);
+      continue;
+    }
+
+    // Ưu tiên 2: So khớp 2D cho đề viết tay tự do không có khung answer_zone
+    const aboveQuestions = questions.filter((q) => q.bbox.top + q.bbox.height - 10 <= cy);
+    if (aboveQuestions.length === 0) continue;
+
+    const sameColumnQuestions = aboveQuestions.filter((q) => {
+      const colLeft = q.bbox.left - 85;
+      const colRight = q.bbox.left + Math.max(240, q.bbox.width) + 220;
+      return cx >= colLeft && cx <= colRight;
+    });
+
+    const pool = sameColumnQuestions.length > 0 ? sameColumnQuestions : aboveQuestions;
+    let bestQ = pool[0];
+    let bestDist = Infinity;
+    for (const q of pool) {
+      const dy = cy - (q.bbox.top + q.bbox.height);
+      const qCenterX = q.bbox.left + Math.max(140, q.bbox.width) / 2;
+      const dxPenalty = sameColumnQuestions.length > 0 ? Math.abs(cx - qCenterX) * 0.15 : Math.abs(cx - qCenterX) * 0.6;
+      const score = dy + dxPenalty;
+      if (score < bestDist) {
+        bestDist = score;
+        bestQ = q;
+      }
+    }
+
+    const chosenId = bestQ.obj.meta.questionGroupId;
+    if (chosenId && bucketMap.has(chosenId)) {
+      bucketMap.get(chosenId).push(obj);
+    }
+  }
+
+  return bucketMap;
+}
+
+/**
  * LUỒNG CHÍNH 1-CLICK: Chấm tự luận trực tiếp trên mặt bảng (hỗ trợ cả khối [ĐỀ BÀI] đã gắn nhãn
  * lẫn bài viết tay tự do nhiều dòng trực tiếp trên bảng).
  */
@@ -289,9 +387,18 @@ export async function gradeEssayDirectlyOnBoard() {
     .filter((obj) => !['grading_overlay', 'question_badge'].includes(obj?.meta?.dataRole));
 
   const questions = allObjects
-    .filter((obj) => obj?.meta?.dataRole === 'question')
-    .map((obj) => ({ obj, bbox: obj.getBoundingRect() }))
+    .filter((obj) => obj?.meta?.dataRole === 'question' && obj?.meta?.questionType !== 'MCQ')
+    .map((obj, idx) => {
+      if (!obj.meta.questionGroupId) {
+        obj.meta.questionGroupId = obj.meta.question_id || `board_q_${idx + 1}`;
+      }
+      return { obj, bbox: obj.getBoundingRect() };
+    })
     .sort((a, b) => a.bbox.top - b.bbox.top);
+
+  const answerZones = allObjects
+    .filter((obj) => obj?.meta?.dataRole === 'answer_zone' && obj?.meta?.linkedGroupId)
+    .map((obj) => ({ obj, groupId: obj.meta.linkedGroupId, bbox: obj.getBoundingRect() }));
 
   const freehandLines =
     questions.length === 0
@@ -317,18 +424,12 @@ export async function gradeEssayDirectlyOnBoard() {
 
   try {
     if (questions.length > 0) {
+      const assignedBuckets = assignObjectsToQuestions2D(questions, answerZones, allObjects);
+
       for (let i = 0; i < questions.length; i += 1) {
         const q = questions[i];
         const qGroupId = q.obj.meta.questionGroupId || `board_q_${i + 1}`;
-        const minY = q.bbox.top + q.bbox.height - 6;
-        const maxY = i + 1 < questions.length ? questions[i + 1].bbox.top : Infinity;
-
-        const regionObjects = allObjects.filter((obj) => {
-          if (obj === q.obj || obj?.meta?.dataRole === 'question') return false;
-          const b = obj.getBoundingRect();
-          const centerY = b.top + b.height / 2;
-          return centerY >= minY && centerY < maxY;
-        });
+        const regionObjects = assignedBuckets.get(qGroupId) || [];
 
         const hasNewRawStrokes = regionObjects.some(
           (obj) => obj instanceof Path && obj?.meta?.aiState !== 'graded'
@@ -345,11 +446,19 @@ export async function gradeEssayDirectlyOnBoard() {
 
         const formattedSteps = regionObjects
           .filter((obj) => obj?.meta?.dataRole === 'answer_formatted')
-          .map((obj) => ({
-            writtenText: String(obj.meta.rawLatex || '').trim(),
-            bbox: obj.getBoundingRect(),
-            sourceObjects: [obj],
-          }));
+          .map((obj) => {
+            const ownerId =
+              obj.meta.stepOwnerId ||
+              obj.meta.questionGroupId ||
+              `step_fmt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            obj.meta.stepOwnerId = ownerId;
+            return {
+              writtenText: String(obj.meta.rawLatex || '').trim(),
+              bbox: obj.getBoundingRect(),
+              sourceObjects: [obj],
+              stepOwnerId: ownerId,
+            };
+          });
 
         const rawStrokes = regionObjects.filter((obj) => obj instanceof Path);
         const lineClusters = clusterStrokesIntoLines(rawStrokes);
@@ -361,10 +470,16 @@ export async function gradeEssayDirectlyOnBoard() {
             const writtenText = cachedText
               ? String(cachedText)
               : await recognizeLineCluster(cluster.objects, cluster.bbox, subject);
+            const firstStroke = cluster.objects[0];
+            const ownerId =
+              firstStroke?.meta?.stepOwnerId ||
+              firstStroke?.meta?.strokeId ||
+              `step_raw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             return {
               writtenText,
               bbox: cluster.bbox,
               sourceObjects: cluster.objects,
+              stepOwnerId: ownerId,
             };
           })
         );
@@ -380,7 +495,7 @@ export async function gradeEssayDirectlyOnBoard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question_id: qGroupId,
-            question_content: q.obj.meta.rawLatex || '',
+            question_content: q.obj.meta.rawLatex || q.obj.meta.rawQuestionText || '',
             subject,
             steps: orderedSteps.map((s) => s.writtenText),
           }),
@@ -399,7 +514,7 @@ export async function gradeEssayDirectlyOnBoard() {
         evaluations.forEach((stepEval, idx) => {
           const targetLine = orderedSteps[idx];
           if (targetLine) {
-            renderOnBoardStepOverlay(stepEval, targetLine.bbox, qGroupId);
+            renderOnBoardStepOverlay(stepEval, targetLine.bbox, qGroupId, targetLine.stepOwnerId);
             totalCheckedSteps += 1;
             if (!stepEval.is_step_correct) totalErrors += 1;
             targetLine.sourceObjects.forEach((srcObj) => {
@@ -407,6 +522,7 @@ export async function gradeEssayDirectlyOnBoard() {
                 ...(srcObj.meta || {}),
                 aiState: 'graded',
                 gradedQuestionId: qGroupId,
+                stepOwnerId: targetLine.stepOwnerId,
                 recognizedText: targetLine.writtenText,
               };
             });
@@ -417,11 +533,19 @@ export async function gradeEssayDirectlyOnBoard() {
     } else {
       const freehandId = `board_freehand_${Date.now()}`;
       const ocrLines = await Promise.all(
-        freehandLines.map(async (cluster) => ({
-          writtenText: await recognizeLineCluster(cluster.objects, cluster.bbox, subject),
-          bbox: cluster.bbox,
-          sourceObjects: cluster.objects,
-        }))
+        freehandLines.map(async (cluster) => {
+          const firstStroke = cluster.objects[0];
+          const ownerId =
+            firstStroke?.meta?.stepOwnerId ||
+            firstStroke?.meta?.strokeId ||
+            `step_fh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+          return {
+            writtenText: await recognizeLineCluster(cluster.objects, cluster.bbox, subject),
+            bbox: cluster.bbox,
+            sourceObjects: cluster.objects,
+            stepOwnerId: ownerId,
+          };
+        })
       );
       const validLines = ocrLines.filter((l) => l.writtenText.length > 0);
       if (validLines.length >= 2) {
@@ -451,7 +575,7 @@ export async function gradeEssayDirectlyOnBoard() {
         evaluations.forEach((stepEval, idx) => {
           const targetLine = answerLines[idx];
           if (targetLine) {
-            renderOnBoardStepOverlay(stepEval, targetLine.bbox, freehandId);
+            renderOnBoardStepOverlay(stepEval, targetLine.bbox, freehandId, targetLine.stepOwnerId);
             totalCheckedSteps += 1;
             if (!stepEval.is_step_correct) totalErrors += 1;
             targetLine.sourceObjects.forEach((srcObj) => {
@@ -459,6 +583,7 @@ export async function gradeEssayDirectlyOnBoard() {
                 ...(srcObj.meta || {}),
                 aiState: 'graded',
                 gradedQuestionId: freehandId,
+                stepOwnerId: targetLine.stepOwnerId,
                 recognizedText: targetLine.writtenText,
               };
             });
@@ -636,7 +761,9 @@ export function setupEssayGradingManager() {
       if (state.ended) return;
       cleanupOrphanQuestionBadges();
       const objs = fabricCanvas.getObjects();
-      const hasTaggedQuestion = objs.some((obj) => obj?.meta?.dataRole === 'question');
+      const hasTaggedQuestion = objs.some(
+        (obj) => obj?.meta?.dataRole === 'question' && obj?.meta?.questionType !== 'MCQ'
+      );
       const freehandLinesCount = hasTaggedQuestion
         ? 0
         : clusterStrokesIntoLines(objs.filter((obj) => obj instanceof Path)).length;

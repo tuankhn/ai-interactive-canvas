@@ -53,6 +53,12 @@ def _safe_eval_math_expr(expr: str, var_map: Optional[Dict[str, float]] = None) 
     cleaned = (expr or "").strip()
     if not cleaned or len(cleaned) > 160:
         return None
+    # Chuẩn hóa chữ số mũ Unicode (⁰¹²³⁴⁵⁶⁷⁸⁹) sang lũy thừa **
+    cleaned = re.sub(
+        r"([⁰¹²³⁴⁵⁶⁷⁸⁹]+)",
+        lambda m: "**" + m.group(1).translate(str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")),
+        cleaned,
+    )
     cleaned = (
         cleaned.replace("×", "*")
         .replace("⋅", "*")
@@ -60,8 +66,6 @@ def _safe_eval_math_expr(expr: str, var_map: Optional[Dict[str, float]] = None) 
         .replace("÷", "/")
         .replace(":", "/")
         .replace("^", "**")
-        .replace("²", "**2")
-        .replace("³", "**3")
         .replace("−", "-")
         .replace("–", "-")
     )

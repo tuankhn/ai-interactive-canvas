@@ -4,7 +4,7 @@ import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
 import { computeCleanBoardPlacement, panViewportToShowWorldRect } from '../utils/floating_drag.js';
 import { extractQuestionContextFromCanvas } from './quiz_board.js';
-import { FabricText, Line, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
+import { FabricText, Line, Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 let currentExamData = null;
 let rawLoadedExamData = null;
@@ -542,7 +542,11 @@ export function setupExamManager() {
 
     questionsList.forEach((q, idx) => {
       const qNum = q.number ?? idx + 1;
-      const stemStr = `Câu ${qNum}: ${String(q.content || '').trim()}`;
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const qType = opts.length >= 2 ? 'MCQ' : 'ESSAY';
+      const qGroupId = q.id || `exam_q_${Date.now()}_${idx + 1}`;
+      const rawQuestionStr = String(q.content || '').trim();
+      const stemStr = `Câu ${qNum}: ${rawQuestionStr}`;
       const stemTb = new TextboxClass(stemStr, {
         left: startLeft,
         top: cursorY,
@@ -564,62 +568,162 @@ export function setupExamManager() {
       stemTb._hitWidth = stemH;
       stemTb.meta = {
         examQuestion: true,
-        question_id: q.id || `q_${qNum}`,
+        dataRole: 'question',
+        questionType: qType,
+        question_id: qGroupId,
+        questionGroupId: qGroupId,
         number: qNum,
-        rawQuestionText: String(q.content || '').trim(),
+        rawQuestionText: rawQuestionStr,
+        rawLatex: rawQuestionStr,
         aiState: 'formatted',
       };
       fabricCanvas.add(stemTb);
       cursorY += stemH + 14;
 
-      const opts = Array.isArray(q.options) ? q.options : [];
       const cleanOptions = opts.map((o) => ({
         label: String(o.label || '').trim().toUpperCase(),
         content: String(o.content || '').trim(),
       }));
       if (opts.length > 0) {
-        opts.forEach((opt) => {
-          const label = String(opt.label || '').trim().toUpperCase();
-          const isAnsCorrect = !isStudent && (opt.is_correct || label === q.correct_option);
-          const prefix = isAnsCorrect ? `✓ ${label}. ` : `${label}. `;
-          const optTb = new TextboxClass(`${prefix}${String(opt.content || '').trim()}`, {
-            left: startLeft + 20,
-            top: cursorY,
-            width: blockWidth - 24,
-            fontSize: 16.5,
-            fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
-            fontWeight: isAnsCorrect ? '700' : '500',
-            fill: isAnsCorrect ? correctInk : optionInk,
-            lineHeight: 1.48,
-            selectable: false,
-            evented: true,
-            objectCaching: false,
+        const canUseTwoCols =
+          opts.length >= 2 &&
+          blockWidth >= 520 &&
+          opts.every((o) => String(o.content || '').trim().length <= 36);
+
+        if (canUseTwoCols) {
+          const colGap = 24;
+          const colWidth = Math.floor((blockWidth - 20 - colGap) / 2);
+          for (let rIdx = 0; rIdx < opts.length; rIdx += 2) {
+            const rowItems = opts.slice(rIdx, rIdx + 2);
+            let maxRowH = 26;
+            rowItems.forEach((opt, cIdx) => {
+              const label = String(opt.label || '').trim().toUpperCase();
+              const isAnsCorrect = !isStudent && (opt.is_correct || label === q.correct_option);
+              const prefix = isAnsCorrect ? `✓ ${label}. ` : `${label}. `;
+              const optLeft = startLeft + 20 + cIdx * (colWidth + colGap);
+              const optTb = new TextboxClass(`${prefix}${String(opt.content || '').trim()}`, {
+                left: optLeft,
+                top: cursorY,
+                width: colWidth,
+                fontSize: 16.5,
+                fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+                fontWeight: isAnsCorrect ? '700' : '500',
+                fill: isAnsCorrect ? correctInk : optionInk,
+                lineHeight: 1.48,
+                selectable: false,
+                evented: true,
+                objectCaching: false,
+              });
+              const optH = Math.max(24, optTb.calcTextHeight?.() || optTb.height || 24);
+              maxRowH = Math.max(maxRowH, optH);
+              optTb._hitPoints = [
+                { x: optLeft, y: cursorY + optH / 2 },
+                { x: optLeft + colWidth, y: cursorY + optH / 2 },
+              ];
+              optTb._hitWidth = optH;
+              optTb.meta = {
+                type: 'answer_option',
+                question_id: qGroupId,
+                linkedGroupId: qGroupId,
+                question_number: qNum,
+                question_content: rawQuestionStr,
+                correct_option: q.correct_option || null,
+                explanation: q.explanation || null,
+                options: cleanOptions,
+                label,
+                badgeX: optLeft + 9,
+                badgeY: cursorY + optH / 2,
+                aiState: 'formatted',
+              };
+              fabricCanvas.add(optTb);
+            });
+            cursorY += maxRowH + 12;
+          }
+        } else {
+          opts.forEach((opt) => {
+            const label = String(opt.label || '').trim().toUpperCase();
+            const isAnsCorrect = !isStudent && (opt.is_correct || label === q.correct_option);
+            const prefix = isAnsCorrect ? `✓ ${label}. ` : `${label}. `;
+            const optTb = new TextboxClass(`${prefix}${String(opt.content || '').trim()}`, {
+              left: startLeft + 20,
+              top: cursorY,
+              width: blockWidth - 24,
+              fontSize: 16.5,
+              fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+              fontWeight: isAnsCorrect ? '700' : '500',
+              fill: isAnsCorrect ? correctInk : optionInk,
+              lineHeight: 1.48,
+              selectable: false,
+              evented: true,
+              objectCaching: false,
+            });
+            const optH = Math.max(24, optTb.calcTextHeight?.() || optTb.height || 24);
+            optTb._hitPoints = [
+              { x: startLeft + 20, y: cursorY + optH / 2 },
+              { x: startLeft + blockWidth, y: cursorY + optH / 2 },
+            ];
+            optTb._hitWidth = optH;
+            optTb.meta = {
+              type: 'answer_option',
+              question_id: qGroupId,
+              linkedGroupId: qGroupId,
+              question_number: qNum,
+              question_content: rawQuestionStr,
+              correct_option: q.correct_option || null,
+              explanation: q.explanation || null,
+              options: cleanOptions,
+              label,
+              badgeX: startLeft + 29,
+              badgeY: cursorY + optH / 2,
+              aiState: 'formatted',
+            };
+            fabricCanvas.add(optTb);
+            cursorY += optH + 10;
           });
-          const optH = Math.max(24, optTb.calcTextHeight?.() || optTb.height || 24);
-          optTb._hitPoints = [
-            { x: startLeft + 20, y: cursorY + optH / 2 },
-            { x: startLeft + blockWidth, y: cursorY + optH / 2 },
-          ];
-          optTb._hitWidth = optH;
-          optTb.meta = {
-            type: 'answer_option',
-            question_id: q.id || `q_${qNum}`,
-            question_number: qNum,
-            question_content: String(q.content || '').trim(),
-            correct_option: q.correct_option || null,
-            explanation: q.explanation || null,
-            options: cleanOptions,
-            label,
-            badgeX: startLeft + 29,
-            badgeY: cursorY + optH / 2,
-            aiState: 'formatted',
-          };
-          fabricCanvas.add(optTb);
-          cursorY += optH + 10;
-        });
+        }
       } else {
-        // Câu tự luận: chừa khoảng trống thoáng (90px) bên dưới để viết lời giải trực tiếp
-        cursorY += 86;
+        // Câu tự luận: dựng Khung vùng làm bài nét đứt cô lập (answer_zone) để không bao giờ chấm nhầm sang câu khác
+        const zoneHeight = 128;
+        const answerZoneRect = new Rect({
+          left: startLeft,
+          top: cursorY,
+          width: blockWidth,
+          height: zoneHeight,
+          rx: 8,
+          ry: 8,
+          fill: isDarkBoard ? 'rgba(255, 255, 255, 0.03)' : 'rgba(156, 63, 35, 0.03)',
+          stroke: isDarkBoard ? 'rgba(232, 146, 116, 0.35)' : 'rgba(156, 63, 35, 0.28)',
+          strokeWidth: 1.4,
+          strokeDashArray: [6, 5],
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+        });
+        answerZoneRect.meta = {
+          dataRole: 'answer_zone',
+          linkedGroupId: qGroupId,
+          questionNumber: qNum,
+          aiState: 'formatted',
+        };
+        const zoneHint = new TextboxClass(`Vùng làm bài Câu ${qNum}`, {
+          left: startLeft + 12,
+          top: cursorY + 8,
+          width: 240,
+          fontSize: 12,
+          fontStyle: 'italic',
+          fontFamily: "'Be Vietnam Pro', system-ui, sans-serif",
+          fill: isDarkBoard ? 'rgba(236,231,223,0.45)' : 'rgba(92,86,78,0.55)',
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+        });
+        zoneHint.meta = {
+          dataRole: 'answer_zone_label',
+          linkedGroupId: qGroupId,
+          aiState: 'formatted',
+        };
+        fabricCanvas.add(answerZoneRect, zoneHint);
+        cursorY += zoneHeight + 18;
       }
 
       if (!isStudent && q.explanation) {
@@ -643,7 +747,7 @@ export function setupExamManager() {
           { x: startLeft + blockWidth, y: cursorY + expH / 2 },
         ];
         expTb._hitWidth = expH;
-        expTb.meta = { examExplanation: true, aiState: 'formatted' };
+        expTb.meta = { examExplanation: true, linkedGroupId: qGroupId, aiState: 'formatted' };
         fabricCanvas.add(expTb);
         cursorY += expH + 10;
       }
@@ -660,7 +764,7 @@ export function setupExamManager() {
             evented: false,
           }
         );
-        divider.meta = { examDivider: true, aiState: 'formatted' };
+        divider.meta = { examDivider: true, linkedGroupId: qGroupId, aiState: 'formatted' };
         fabricCanvas.add(divider);
         cursorY += 24;
       }

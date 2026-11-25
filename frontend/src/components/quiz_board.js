@@ -521,7 +521,7 @@ export function setupQuizBoard() {
         : `✕ ${matchedLabel}`;
 
     const markText = new FabricText(statusLabelText, {
-      left: target.x + Math.min(Math.max(180, target.width - 150), 460),
+      left: target.x + Math.min(Math.max(116, target.width - 145), 450),
       top: Math.max(target.y, centerY - 9),
       fontSize: 15.5,
       fontFamily: 'Be Vietnam Pro, sans-serif',

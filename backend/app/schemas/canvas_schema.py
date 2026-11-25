@@ -19,6 +19,8 @@ class RecognizeRequest(BaseModel):
     debounce_ms: int = Field(default=800, description="Thời gian dừng bút (debounce ms) trước khi gửi nhận diện")
     provider: str = Field(default="auto", description="Bộ nhận diện: auto (kết hợp), gemini (Gemini 2.5 Flash), mathpix (Mathpix OCR)")
     grade_level: Optional[str] = Field(default="THPT", description="Khối lớp (THCS, THPT)")
+    already_cropped: bool = Field(default=False, description="True nếu Frontend đã crop sát nét vẽ và nén WebP")
+    fast_mode: bool = Field(default=False, description="Chế độ OCR nhanh tối giản output token")
 
 
 class PreprocessInfo(BaseModel):
