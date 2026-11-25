@@ -544,39 +544,27 @@ export function setupHandwriting() {
     start = point(event);
     lastCurrent = start;
     drawMarquee(boxRect(start, start));
-    try { selector.setPointerCapture(event.pointerId); } catch { /* Không bắt buộc. */ }
+    if (event.pointerType !== 'touch') {
+      try { selector.setPointerCapture(event.pointerId); } catch { /* Không bắt buộc. */ }
+    }
   }, { passive: false });
-  selector.addEventListener('pointermove', (event) => {
-    if (event.pointerId !== pointer || !start) return;
+  window.addEventListener('pointermove', (event) => {
+    if (!selecting || event.pointerId !== pointer || !start) return;
     event.preventDefault();
     lastCurrent = point(event);
     drawMarquee(boxRect(start, lastCurrent));
   }, { passive: false });
-  selector.addEventListener('pointerup', (event) => {
-    if (event.pointerId !== pointer || !start) return;
+  window.addEventListener('pointerup', (event) => {
+    if (!selecting || event.pointerId !== pointer || !start) return;
     event.preventDefault();
     commitSelectionRegion(point(event));
   }, { passive: false });
-  selector.addEventListener('pointercancel', (event) => {
-    if (event.pointerId === pointer) {
+  window.addEventListener('pointercancel', (event) => {
+    if (selecting && event.pointerId === pointer) {
       start = null;
       lastCurrent = null;
       stopSelecting();
     }
-  });
-  selector.addEventListener('lostpointercapture', (event) => {
-    if (event.pointerId !== pointer) return;
-    // Trên iPadOS Safari, lostpointercapture có thể bắn ngay khi nhấc tay: nếu khung chọn đã đủ lớn thì chốt nhận dạng
-    if (start && lastCurrent) {
-      const cand = boxRect(start, lastCurrent);
-      if (cand.width >= 12 && cand.height >= 12) {
-        commitSelectionRegion(lastCurrent);
-        return;
-      }
-    }
-    start = null;
-    lastCurrent = null;
-    stopSelecting();
   });
 
   toolbar.addEventListener('click', (event) => {

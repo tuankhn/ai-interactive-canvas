@@ -724,10 +724,12 @@ export function setupBoardMediaAndNotes() {
     const pEl = ensureNotePreviewEl();
     pEl.style.background = state.noteBg || '#FFE066';
     pEl.hidden = true;
-    try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    if (event.pointerType !== 'touch') {
+      try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    }
   });
 
-  surface?.addEventListener('pointermove', (event) => {
+  window.addEventListener('pointermove', (event) => {
     if (!noteDrag || event.pointerId !== noteDrag.pointerId || state.tool !== 'note') return;
     const sp = getScreenPoint(event);
     const wp = screenToWorld(sp.x, sp.y);
@@ -799,8 +801,9 @@ export function setupBoardMediaAndNotes() {
     openStickyNoteEditor(noteObj, { isNew: true, beforeSnapshot: before });
   };
 
-  surface?.addEventListener('pointerup', finishNotePlacement);
-  surface?.addEventListener('pointercancel', () => {
+  window.addEventListener('pointerup', finishNotePlacement);
+  window.addEventListener('pointercancel', (event) => {
+    if (!noteDrag || event.pointerId !== noteDrag.pointerId) return;
     noteDrag = null;
     if (previewBoxEl) previewBoxEl.hidden = true;
   });
