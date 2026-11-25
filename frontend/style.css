@@ -1581,7 +1581,7 @@ button[aria-disabled="true"] {
   left: max(16px, env(safe-area-inset-left, 16px));
   top: 76px;
   z-index: 20;
-  width: 214px;
+  width: 232px;
   max-height: calc(100dvh - 148px);
   overflow-y: auto;
   scrollbar-width: thin;
@@ -1661,7 +1661,8 @@ button[aria-disabled="true"] {
 .insp-swatch-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .insp-swatch {
@@ -1714,7 +1715,7 @@ button[aria-disabled="true"] {
 .insp-btn-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -2886,7 +2887,7 @@ button[aria-disabled="true"] {
 .status-cluster {
   gap: 8px;
   padding: 5px 10px;
-  max-width: min(560px, 52vw);
+  max-width: min(760px, 60vw);
 }
 
 .ai-status-indicator {
@@ -5237,7 +5238,7 @@ dialog[popover]::backdrop {
   }
   .reopen-inspector-btn {
     top: auto;
-    bottom: calc(114px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(126px + env(safe-area-inset-bottom, 0px));
     left: 10px;
     width: 38px;
     height: 38px;
@@ -5247,10 +5248,10 @@ dialog[popover]::backdrop {
   }
   .context-inspector {
     top: auto;
-    bottom: calc(114px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(126px + env(safe-area-inset-bottom, 0px));
     left: 8px;
-    width: min(214px, calc(100vw - 16px));
-    max-height: calc(100dvh - 182px);
+    width: min(232px, calc(100vw - 16px));
+    max-height: calc(100dvh - 206px);
     padding: 9px 11px 11px;
     gap: 8px;
   }
@@ -5407,5 +5408,132 @@ dialog[popover]::backdrop {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==============================================================================
+   8. UI/UX POLISH PASS — ROTATE HANDLE FLIP, MOBILE FOOTER, FLOATING PANELS, DIALOGS
+   ============================================================================== */
+
+/* Nút xoay ↻ lật xuống phía dưới khung chọn khi phía trên bị thanh trên / toolbar che hoặc sát mép màn hình */
+.selection-bounding-box.is-rotate-below .sel-rotate-stem {
+  top: auto;
+  bottom: -24px;
+}
+.selection-bounding-box.is-rotate-below .sel-rotate-handle {
+  top: auto;
+  bottom: -42px;
+}
+
+/* Bảng nổi (Hình 3D, Phân tử 3D, Kết quả AI): không tràn xuống dưới thanh công cụ trên điện thoại */
+@media (max-width: 768px) {
+  body .geom3d-panel {
+    top: 62px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: calc(100dvh - 62px - 132px);
+    padding: 14px 16px;
+  }
+  body .mol3d-panel {
+    max-height: calc(100dvh - 62px - 132px);
+  }
+  body .ai-overlay-panel {
+    max-height: calc(100dvh - 132px - 132px);
+  }
+  .ai-latex-rendered,
+  .ai-latex-rendered .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  /* Căn giữa an toàn: công thức dài không bị cắt mất đầu bên trái mà vẫn cuộn ngang được */
+  .ai-latex-rendered {
+    justify-content: safe center;
+    font-size: 15px;
+    padding-bottom: 4px;
+  }
+  .ai-latex-rendered .katex-display {
+    margin: 0;
+    text-align: left;
+  }
+}
+
+@media (max-width: 560px) {
+  /* Chân trang gọn lại để Zoom + Phân trang luôn nằm trọn trong màn hình điện thoại */
+  .footer {
+    gap: 6px;
+  }
+  .footer-left-group {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 4px;
+  }
+  .zoom-controls {
+    padding: 3px;
+    gap: 2px;
+  }
+  .zoom-controls button {
+    min-inline-size: 28px;
+    padding: 0 4px;
+  }
+  #zoomResetBtn {
+    min-inline-size: 42px;
+    font-size: 11px;
+  }
+  .pagination {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 3px;
+    gap: 2px;
+    justify-content: space-between;
+  }
+  .pagination button {
+    min-inline-size: 30px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  #pageIndicator {
+    min-inline-size: 44px;
+    font-size: 11.5px;
+  }
+  .pagination .add-page-button,
+  .pagination .delete-page-button {
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  .status-cluster {
+    display: none;
+  }
+
+  /* Bảng điểm học sinh luôn nổi trên chấm màu mở lại bảng tuỳ chỉnh */
+  .students {
+    z-index: 40;
+  }
+
+  /* Hộp thoại: không phủ kín toàn màn hình, nút hành động xếp cột gọn gàng */
+  .board-dialog,
+  .clear-dialog {
+    max-height: calc(100dvh - 72px);
+  }
+  .dialog-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 8px;
+    /* Nút hành động luôn dính đáy hộp thoại, không bị đẩy xuống ngoài tầm nhìn khi nội dung dài */
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    margin-top: 14px;
+    padding: 12px 0 2px;
+    background: var(--bg-surface);
+  }
+  .dialog-actions button {
+    width: 100%;
+  }
+
+  /* Thước kẻ trên điện thoại: bỏ nút xoay thứ hai để thanh điều khiển vừa chiều ngang */
+  .virtual-ruler .ruler-rotate-handle[data-ruler-rotate="right"] {
+    display: none;
   }
 }

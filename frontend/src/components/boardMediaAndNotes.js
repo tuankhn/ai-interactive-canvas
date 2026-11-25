@@ -3,6 +3,7 @@ import { $, stage, surface, fabricCanvas, state, ui, FONT_FAMILY_MAP, setStatus 
 import { getScreenPoint, screenToWorld } from '../utils/pointer.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { setTool, closePanels } from './toolbar.js';
+import { getSafeAreaScreen, clampRange } from '../utils/safeArea.js';
 
 export const STICKY_NOTE_COLORS = [
   { id: 'yellow', label: 'Vàng nắng', hex: '#FFE066' },
@@ -20,6 +21,34 @@ const NOTE_LINE_HEIGHT = 1.35;
 let lastKnownWorldPointer = null;
 let activeNoteEditorEl = null;
 let measureCtx = null;
+
+function parseHexColor(value) {
+  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(String(value || '').trim());
+  if (!m) return null;
+  let h = m[1];
+  if (h.length === 3) h = h.split('').map((x) => x + x).join('');
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+}
+
+function relativeLuminance(rgb) {
+  const f = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+
+/**
+ * Đảm bảo chữ trên Giấy Note luôn đọc được: nếu màu chữ (vd: chữ sáng của chế độ nền tối)
+ * quá chói với màu giấy pastel thì tự dùng màu mực đậm (hoặc sáng nếu giấy tối).
+ */
+export function ensureReadableNoteText(textColor, bgColor) {
+  const t = parseHexColor(textColor);
+  const b = parseHexColor(bgColor);
+  if (!t || !b) return textColor || '#1F1E1B';
+  const lt = relativeLuminance(t);
+  const lb = relativeLuminance(b);
+  const ratio = (Math.max(lt, lb) + 0.05) / (Math.min(lt, lb) + 0.05);
+  if (ratio >= 3) return textColor;
+  return lb > 0.4 ? '#1F1E1B' : '#FAF8F4';
+}
 
 function getMeasureCtx() {
   if (!measureCtx) {
@@ -152,6 +181,7 @@ export function createStickyNoteGroup({
   const w = Math.max(MIN_NOTE_SIZE, Math.round(width));
   const h = Math.max(MIN_NOTE_SIZE, Math.round(height));
   const resolvedFont = FONT_FAMILY_MAP[fontKey] || FONT_FAMILY_MAP.sans;
+  const readableTextColor = ensureReadableNoteText(textColor || '#1F1E1B', noteBg);
 
   const bgRect = new Rect({
     left: -w / 2,
@@ -193,7 +223,7 @@ export function createStickyNoteGroup({
     fontSize: fitted.fontSize,
     fontFamily: resolvedFont,
     fontWeight: '500',
-    fill: textColor || '#1F1E1B',
+    fill: readableTextColor,
     textAlign: textAlign || 'center',
     lineHeight: NOTE_LINE_HEIGHT,
     originX: 'center',
@@ -243,7 +273,7 @@ export function createStickyNoteGroup({
   group.meta = {
     dataRole: 'sticky_note',
     noteBg,
-    noteTextColor: textColor || '#1F1E1B',
+    noteTextColor: readableTextColor,
     noteText: text || '',
     noteWidth: w,
     noteHeight: h,
@@ -283,7 +313,7 @@ export function refreshStickyNoteLayout(noteGroup) {
     fontFamily: fam,
     fontSize: fitted.fontSize,
     textAlign: m.textAlign || 'center',
-    fill: m.noteTextColor || tb.fill || '#1F1E1B',
+    fill: ensureReadableNoteText(m.noteTextColor || tb.fill || '#1F1E1B', m.noteBg || bgRect?.fill),
     left: 0,
     top: 0,
     originX: 'center',
@@ -542,8 +572,11 @@ async function insertImageBlobOntoBoard(blob, dropWorldPt = null) {
     const displayScale = Math.min(1, maxDisplayW / outW, maxDisplayH / outH);
     const dispW = Math.round(outW * displayScale);
     const dispH = Math.round(outH * displayScale);
-    const left = Math.round(centerWorld.x - dispW / 2);
-    const top = Math.round(centerWorld.y - dispH / 2);
+    const safeArea = getSafeAreaScreen(12);
+    const safeTL = screenToWorld(safeArea.left, safeArea.top);
+    const safeBR = screenToWorld(safeArea.right, safeArea.bottom);
+    const left = Math.round(clampRange(centerWorld.x - dispW / 2, safeTL.x, safeBR.x - dispW));
+    const top = Math.round(clampRange(centerWorld.y - dispH / 2, safeTL.y, safeBR.y - dispH));
 
     const before = snapshot();
     const fabricImg = new FabricImage(finalImgEl, {
@@ -733,6 +766,15 @@ export function setupBoardMediaAndNotes() {
       h = Math.max(MIN_NOTE_SIZE, Math.round(Math.abs(drag.curWorld.y - drag.startWorld.y)));
       left = Math.round(Math.min(drag.startWorld.x, drag.curWorld.x));
       top = Math.round(Math.min(drag.startWorld.y, drag.curWorld.y));
+    }
+
+    // Giữ Giấy Note mới đặt nằm trong vùng nhìn thấy an toàn (không chìm sau thanh trên / thanh công cụ / chân trang)
+    {
+      const safe = getSafeAreaScreen(12);
+      const tl = screenToWorld(safe.left, safe.top);
+      const br = screenToWorld(safe.right, safe.bottom);
+      left = Math.round(clampRange(left, tl.x, br.x - w));
+      top = Math.round(clampRange(top, tl.y, br.y - h));
     }
 
     const noteColor = state.noteBg || '#FFE066';

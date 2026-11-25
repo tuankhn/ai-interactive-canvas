@@ -17,13 +17,13 @@ export function makePanelDraggable(panelEl, handleEl) {
     const vw = window.innerWidth || 1280;
     const vh = window.innerHeight || 720;
     const pw = panelEl.offsetWidth || 320;
-    const minVisibleX = Math.min(120, pw);
-    const minLeft = Math.min(8, vw - minVisibleX);
-    const maxLeft = Math.max(8, vw - 72);
+    const ph = panelEl.offsetHeight || 200;
+    // Luôn giữ trọn bảng trong màn hình (cả chiều ngang lẫn chiều dọc) để nút đóng (✕) và đáy bảng không bị kéo văng ra ngoài
+    const maxLeft = Math.max(8, vw - pw - 8);
     const minTop = 8;
-    const maxTop = Math.max(12, vh - 56);
+    const maxTop = Math.max(minTop, vh - ph - 8);
     return {
-      left: Math.round(Math.max(minLeft, Math.min(left, maxLeft))),
+      left: Math.round(Math.max(8, Math.min(left, maxLeft))),
       top: Math.round(Math.max(minTop, Math.min(top, maxTop))),
     };
   }

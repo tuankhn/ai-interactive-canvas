@@ -2,6 +2,7 @@ import { $, fabricCanvas, state, setStatus, isDarkBoardActive } from '../utils/c
 import { snapshot, remember, updateHint } from './history.js';
 import { authFetch } from '../utils/auth_client.js';
 import { makePanelDraggable, computeCleanBoardPlacement, panViewportToShowWorldRect } from '../utils/floating_drag.js';
+import { closePanels } from './toolbar.js';
 import { Circle, FabricText, Rect, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 const CIRCLE_ANSWER_ENDPOINT = '/api/v1/exam/circle-answer';
@@ -690,6 +691,8 @@ export function setupQuizBoard() {
   makePanelDraggable(panel, $('quizPanelDragHandle') || panel.querySelector('.quiz-panel-head'));
 
   function openPanel() {
+    // Đóng menu công cụ đang mở để không chồng lên bảng Trắc nghiệm
+    closePanels();
     const isOpen = panel.matches(':popover-open') || panel.classList.contains(':popover-open') || panel.hasAttribute('open');
     if (!isOpen) {
       if (typeof panel.showPopover === 'function') {
@@ -764,6 +767,15 @@ export function setupQuizBoard() {
       else panel.removeAttribute('open');
     });
   }
+  // Phím Escape đóng bảng Trắc nghiệm (trừ khi đang gõ trong ô nhập liệu)
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const isOpen = panel.matches(':popover-open') || panel.hasAttribute('open');
+    if (!isOpen) return;
+    const active = document.activeElement;
+    if (active && active.matches?.('input,textarea,select')) return;
+    closeBtn?.click();
+  });
   if (loadSampleBtn) {
     loadSampleBtn.addEventListener('click', () => {
       void loadSampleQuiz(subjectSelect?.value || 'TOAN');
