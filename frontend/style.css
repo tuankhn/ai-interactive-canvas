@@ -2074,46 +2074,6 @@ button[aria-disabled="true"] {
   display: none;
 }
 
-.sel-angle-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  padding: 0 5px;
-  height: 24px;
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-subtle);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.sel-angle-input {
-  width: 34px;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  text-align: right;
-  padding: 0;
-  -moz-appearance: textfield;
-}
-
-.sel-angle-input::-webkit-outer-spin-button,
-.sel-angle-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.sel-angle-unit {
-  color: var(--ink-muted);
-  user-select: none;
-}
-
 .sticky-note-drag-preview {
   position: absolute;
   z-index: 15;
@@ -2122,6 +2082,14 @@ button[aria-disabled="true"] {
   box-shadow: 0 8px 20px rgba(38, 35, 31, 0.14);
   opacity: 0.85;
   pointer-events: none;
+}
+
+.sticky-note-inline-editor {
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: hidden;
 }
 
 .sticky-note-inline-editor::placeholder {
