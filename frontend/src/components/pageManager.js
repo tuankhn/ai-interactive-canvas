@@ -2,6 +2,7 @@ import { $, state, ui, stage, fabricCanvas, blankPage, setStatus } from '../util
 import { readStoredPages, writeStoredPages } from '../utils/storage.js';
 import { updateHint, syncBackgroundButtons, updateHistoryButtons, getActiveStudioBoardBg, adaptObjectsForBoardTheme } from './history.js';
 import { closePanels } from './toolbar.js';
+import { refreshStickyNoteLayout } from './boardMediaAndNotes.js';
 
 function serializeCurrentPage() {
   return {
@@ -57,6 +58,9 @@ async function loadPageData(data) {
     if (Number.isFinite(original._hitWidth)) object._hitWidth = original._hitWidth;
     if (original._isPlotlyGraph === true) object._isPlotlyGraph = true;
     if (original.meta && typeof original.meta === 'object') object.meta = original.meta;
+    if (original?.meta?.dataRole === 'sticky_note') {
+      refreshStickyNoteLayout(object);
+    }
   });
   const nextVpt =
     Array.isArray(safePage.viewport) && safePage.viewport.length === 6

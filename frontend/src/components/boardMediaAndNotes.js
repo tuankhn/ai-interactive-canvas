@@ -1,4 +1,4 @@
-import { FabricImage, Group, Path, Rect, Shadow, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
+import { FabricImage, Group, Path, Rect, Shadow, Text } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 import { $, stage, surface, fabricCanvas, state, ui, FONT_FAMILY_MAP, setStatus } from '../utils/context.js';
 import { getScreenPoint, screenToWorld } from '../utils/pointer.js';
 import { snapshot, remember, updateHint } from './history.js';
@@ -15,8 +15,105 @@ export const STICKY_NOTE_COLORS = [
 
 const DEFAULT_NOTE_SIZE = 200;
 const MIN_NOTE_SIZE = 130;
+const NOTE_PADDING = 18;
+const NOTE_LINE_HEIGHT = 1.35;
 let lastKnownWorldPointer = null;
 let activeNoteEditorEl = null;
+let measureCtx = null;
+
+function getMeasureCtx() {
+  if (!measureCtx) {
+    const c = document.createElement('canvas');
+    measureCtx = c.getContext('2d');
+  }
+  return measureCtx;
+}
+
+/**
+ * Ngắt dòng chuẩn như trình duyệt (`overflow-wrap: break-word`):
+ * - Từ bình thường có khoảng trắng thì ngắt theo từ.
+ * - Chuỗi liền không dấu cách quá dài (vd: "ahahahahhahahahaha") tự bẻ ký tự vừa khít lòng Giấy Note.
+ */
+function wrapTextLinesToWidth(rawText, maxWidthPx, fontSize, fontFamily, fontWeight = '500') {
+  const text = String(rawText ?? '').replace(/\r/g, '');
+  if (!text) return [''];
+  const ctx = getMeasureCtx();
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  const safeMaxW = Math.max(40, maxWidthPx - 6);
+
+  const paragraphs = text.split('\n');
+  const outLines = [];
+
+  for (const para of paragraphs) {
+    if (!para) {
+      outLines.push('');
+      continue;
+    }
+    const tokens = para.split(/(\s+)/).filter((t) => t.length > 0);
+    let currentLine = '';
+
+    for (const token of tokens) {
+      if (/^\s+$/.test(token)) {
+        if (currentLine.length > 0) {
+          const candidate = currentLine + token;
+          if (ctx.measureText(candidate).width <= safeMaxW) {
+            currentLine = candidate;
+          } else {
+            outLines.push(currentLine);
+            currentLine = '';
+          }
+        }
+        continue;
+      }
+
+      const tokenWidth = ctx.measureText(token).width;
+      if (tokenWidth <= safeMaxW) {
+        const candidate = currentLine ? currentLine + token : token;
+        if (ctx.measureText(candidate).width <= safeMaxW) {
+          currentLine = candidate;
+        } else {
+          if (currentLine.trimEnd()) outLines.push(currentLine.trimEnd());
+          currentLine = token;
+        }
+      } else {
+        // Chuỗi dài không khoảng trắng -> ngắt từng cụm ký tự vừa khít chiều ngang Note
+        for (const ch of Array.from(token)) {
+          const candidate = currentLine + ch;
+          if (currentLine && ctx.measureText(candidate).width > safeMaxW) {
+            outLines.push(currentLine);
+            currentLine = ch;
+          } else {
+            currentLine = candidate;
+          }
+        }
+      }
+    }
+    outLines.push(currentLine.trimEnd());
+  }
+
+  return outLines.length ? outLines : [''];
+}
+
+/**
+ * Tự động co cỡ chữ (tối thiểu 12px) giống Excalidraw để nhiều dòng chữ vẫn nằm gọn trong Giấy Note.
+ */
+function layoutStickyNoteText(rawText, innerWidth, innerHeight, preferredFontSize, fontFamily) {
+  const maxFS = Math.max(12, Number(preferredFontSize) || 22);
+  const minFS = 12;
+  let chosenFS = maxFS;
+  let lines = wrapTextLinesToWidth(rawText, innerWidth, chosenFS, fontFamily);
+
+  while (chosenFS > minFS && lines.length * chosenFS * NOTE_LINE_HEIGHT > innerHeight) {
+    chosenFS -= 1;
+    lines = wrapTextLinesToWidth(rawText, innerWidth, chosenFS, fontFamily);
+  }
+
+  return {
+    wrappedText: lines.join('\n'),
+    linesCount: lines.length,
+    fontSize: chosenFS,
+  };
+}
 
 export function isStickyNoteObject(obj) {
   return Boolean(obj && obj.meta?.dataRole === 'sticky_note');
@@ -85,24 +182,43 @@ export function createStickyNoteGroup({
   );
   cornerFold.meta = { dataRole: 'sticky_note_part', part: 'fold' };
 
-  const pad = 18;
-  const noteTb = new Textbox(text || '', {
+  const innerW = Math.max(80, w - NOTE_PADDING * 2);
+  const innerH = Math.max(80, h - NOTE_PADDING * 2);
+  const baseFS = Number(fontSize) || 22;
+  const fitted = layoutStickyNoteText(text || '', innerW, innerH, baseFS, resolvedFont);
+
+  const noteTb = new Text(fitted.wrappedText, {
     left: 0,
     top: 0,
-    width: Math.max(80, w - pad * 2),
-    fontSize: Number(fontSize) || 22,
+    fontSize: fitted.fontSize,
     fontFamily: resolvedFont,
     fontWeight: '500',
     fill: textColor || '#1F1E1B',
     textAlign: textAlign || 'center',
-    lineHeight: 1.35,
+    lineHeight: NOTE_LINE_HEIGHT,
     originX: 'center',
     originY: 'center',
-    splitByGrapheme: false,
     selectable: false,
     evented: false,
   });
   noteTb.meta = { dataRole: 'sticky_note_part', part: 'text' };
+  const clampScale = Math.min(
+    1,
+    innerW / Math.max(1, noteTb.width || 1),
+    innerH / Math.max(1, noteTb.height || 1),
+  );
+  noteTb.set({ scaleX: clampScale, scaleY: clampScale });
+
+  const clipRect = new Rect({
+    left: -w / 2 - 1,
+    top: -h / 2 - 1,
+    width: w + 2,
+    height: h + 2,
+    rx: 10,
+    ry: 10,
+    originX: 'left',
+    originY: 'top',
+  });
 
   const group = new Group([bgRect, cornerFold, noteTb], {
     left,
@@ -115,6 +231,7 @@ export function createStickyNoteGroup({
     evented: false,
     subTargetCheck: false,
     objectCaching: false,
+    clipPath: clipRect,
     shadow: new Shadow({
       color: 'rgba(38, 35, 31, 0.18)',
       blur: 14,
@@ -131,7 +248,7 @@ export function createStickyNoteGroup({
     noteWidth: w,
     noteHeight: h,
     fontKey,
-    fontSize: Number(fontSize) || 22,
+    fontSize: baseFS,
     textAlign: textAlign || 'center',
     createdAt: Date.now(),
   };
@@ -142,6 +259,66 @@ export function createStickyNoteGroup({
 }
 
 /**
+ * Đồng bộ lại bố cục dòng chữ bên trong Giấy Note (gọi sau khi sửa chữ, đổi cỡ chữ, đổi phông hoặc nạp từ localStorage).
+ */
+export function refreshStickyNoteLayout(noteGroup) {
+  if (!isStickyNoteObject(noteGroup)) return;
+  const m = noteGroup.meta || {};
+  const items = typeof noteGroup.getObjects === 'function' ? noteGroup.getObjects() : [];
+  const bgRect = items.find((o) => o?.meta?.part === 'bg') || items[0];
+  const tb = items.find((o) => o?.meta?.part === 'text' || typeof o?.text === 'string') || items[items.length - 1];
+  if (!tb) return;
+
+  const w = Number(m.noteWidth || bgRect?.width || DEFAULT_NOTE_SIZE);
+  const h = Number(m.noteHeight || bgRect?.height || DEFAULT_NOTE_SIZE);
+  const innerW = Math.max(80, w - NOTE_PADDING * 2);
+  const innerH = Math.max(80, h - NOTE_PADDING * 2);
+  const fam = FONT_FAMILY_MAP[m.fontKey || 'sans'] || FONT_FAMILY_MAP.sans;
+  const baseFS = Number(m.fontSize) || 22;
+  const rawText = m.noteText !== undefined ? m.noteText : tb.text || '';
+
+  const fitted = layoutStickyNoteText(rawText, innerW, innerH, baseFS, fam);
+  tb.set({
+    text: fitted.wrappedText,
+    fontFamily: fam,
+    fontSize: fitted.fontSize,
+    textAlign: m.textAlign || 'center',
+    fill: m.noteTextColor || tb.fill || '#1F1E1B',
+    left: 0,
+    top: 0,
+    originX: 'center',
+    originY: 'center',
+    scaleX: 1,
+    scaleY: 1,
+  });
+  const clampScale = Math.min(
+    1,
+    innerW / Math.max(1, tb.width || 1),
+    innerH / Math.max(1, tb.height || 1),
+  );
+  if (clampScale < 1) {
+    tb.set({ scaleX: clampScale, scaleY: clampScale });
+  }
+  if (!noteGroup.clipPath) {
+    noteGroup.clipPath = new Rect({
+      left: -w / 2 - 1,
+      top: -h / 2 - 1,
+      width: w + 2,
+      height: h + 2,
+      rx: 10,
+      ry: 10,
+      originX: 'left',
+      originY: 'top',
+    });
+  }
+  tb.setCoords?.();
+  noteGroup.dirty = true;
+  tb.dirty = true;
+  noteGroup.setCoords?.();
+  populateStickyNoteHitPoints(noteGroup);
+}
+
+/**
  * Cập nhật giao diện Giấy Note khi đổi màu nền, màu chữ, cỡ chữ, phông chữ hoặc nội dung.
  */
 export function updateStickyNoteStyle(noteGroup, patch = {}) {
@@ -149,42 +326,32 @@ export function updateStickyNoteStyle(noteGroup, patch = {}) {
   const m = noteGroup.meta || {};
   const items = typeof noteGroup.getObjects === 'function' ? noteGroup.getObjects() : [];
   const bgRect = items.find((o) => o?.meta?.part === 'bg') || items[0];
-  const tb = items.find((o) => o?.meta?.part === 'text' || typeof o?.text === 'string') || items[items.length - 1];
 
   if (patch.noteBg && bgRect) {
     bgRect.set('fill', patch.noteBg);
     m.noteBg = patch.noteBg;
+    bgRect.dirty = true;
   }
-  if (patch.color && tb) {
-    tb.set('fill', patch.color);
+  if (patch.color) {
     m.noteTextColor = patch.color;
   }
-  if (patch.fontFamily && tb) {
-    const fam = FONT_FAMILY_MAP[patch.fontFamily] || FONT_FAMILY_MAP.sans;
-    tb.set('fontFamily', fam);
+  if (patch.fontFamily) {
     m.fontKey = patch.fontFamily;
   }
-  if (patch.fontSize && tb) {
-    tb.set('fontSize', Number(patch.fontSize));
+  if (patch.fontSize) {
     m.fontSize = Number(patch.fontSize);
   }
-  if (patch.textAlign && tb) {
-    tb.set('textAlign', patch.textAlign);
+  if (patch.textAlign) {
     m.textAlign = patch.textAlign;
   }
-  if (patch.text !== undefined && tb) {
-    tb.set('text', patch.text);
+  if (patch.text !== undefined) {
     m.noteText = patch.text;
   }
   if (patch.opacity !== undefined) {
     noteGroup.set('opacity', Math.max(0.15, Math.min(1, Number(patch.opacity) / 100)));
   }
 
-  noteGroup.dirty = true;
-  if (tb) tb.dirty = true;
-  if (bgRect) bgRect.dirty = true;
-  noteGroup.setCoords?.();
-  populateStickyNoteHitPoints(noteGroup);
+  refreshStickyNoteLayout(noteGroup);
   return true;
 }
 
@@ -198,6 +365,7 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
   }
 
   const items = typeof noteGroup.getObjects === 'function' ? noteGroup.getObjects() : [];
+  const bgRect = items.find((o) => o?.meta?.part === 'bg') || items[0];
   const tb = items.find((o) => o?.meta?.part === 'text' || typeof o?.text === 'string') || items[items.length - 1];
   const m = noteGroup.meta || {};
   const before = beforeSnapshot || snapshot();
@@ -211,13 +379,15 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
   const vpt = fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0];
   const zoom = vpt[0] || 1;
   const center = noteGroup.getCenterPoint();
-  const scaledW = noteGroup.getScaledWidth();
-  const scaledH = noteGroup.getScaledHeight();
+  const baseW = Number(m.noteWidth || bgRect?.width || DEFAULT_NOTE_SIZE);
+  const baseH = Number(m.noteHeight || bgRect?.height || DEFAULT_NOTE_SIZE);
+  const innerW = Math.max(80, baseW - NOTE_PADDING * 2);
+  const innerH = Math.max(80, baseH - NOTE_PADDING * 2);
 
   const screenCx = center.x * zoom + vpt[4];
   const screenCy = center.y * zoom + vpt[5];
-  const screenW = Math.max(100, (scaledW - 28) * zoom);
-  const screenH = Math.max(80, (scaledH - 28) * zoom);
+  const screenW = Math.max(72, innerW * (noteGroup.scaleX || 1) * zoom);
+  const screenH = Math.max(72, innerH * (noteGroup.scaleY || 1) * zoom);
 
   const textarea = document.createElement('textarea');
   textarea.className = 'sticky-note-inline-editor';
@@ -226,7 +396,15 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
   textarea.setAttribute('aria-label', 'Nhập nội dung giấy ghi chú');
 
   const fontFam = FONT_FAMILY_MAP[m.fontKey || 'sans'] || FONT_FAMILY_MAP.sans;
-  const scaledFontPx = Math.max(13, Math.round((m.fontSize || 22) * zoom * (noteGroup.scaleY || 1)));
+
+  const syncTextareaMetrics = () => {
+    const fitted = layoutStickyNoteText(textarea.value || 'A', innerW, innerH, m.fontSize || 22, fontFam);
+    const scaledFontPx = Math.max(11, Math.round(fitted.fontSize * zoom * (noteGroup.scaleY || 1)));
+    const estTextBlockH = fitted.linesCount * scaledFontPx * NOTE_LINE_HEIGHT;
+    const verticalPad = Math.max(4, Math.floor((screenH - estTextBlockH) / 2));
+    textarea.style.fontSize = `${scaledFontPx}px`;
+    textarea.style.paddingTop = `${verticalPad}px`;
+  };
 
   Object.assign(textarea.style, {
     position: 'absolute',
@@ -235,25 +413,34 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
     width: `${Math.round(screenW)}px`,
     height: `${Math.round(screenH)}px`,
     zIndex: '28',
+    boxSizing: 'border-box',
     border: 'none',
     outline: 'none',
     resize: 'none',
+    overflow: 'hidden',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'break-word',
+    wordBreak: 'break-word',
     background: 'transparent',
     color: m.noteTextColor || '#1F1E1B',
     fontFamily: fontFam,
-    fontSize: `${scaledFontPx}px`,
     fontWeight: '500',
-    lineHeight: '1.35',
+    lineHeight: String(NOTE_LINE_HEIGHT),
     textAlign: m.textAlign || 'center',
-    padding: '8px 4px',
+    paddingLeft: '3px',
+    paddingRight: '3px',
+    paddingBottom: '4px',
     transform: noteGroup.angle ? `rotate(${noteGroup.angle}deg)` : 'none',
     transformOrigin: 'center center',
   });
+  syncTextareaMetrics();
 
   let committed = false;
+  const onToolChangedCommit = () => finalize();
   const finalize = () => {
     if (committed) return;
     committed = true;
+    window.removeEventListener('app:tool-changed', onToolChangedCommit);
     activeNoteEditorEl = null;
     const nextText = textarea.value.replace(/\r/g, '');
     textarea.remove();
@@ -264,9 +451,13 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
     remember(before);
     updateHint();
     setStatus(isNew ? 'Đã thêm Giấy Note lên bảng' : 'Đã cập nhật nội dung Giấy Note');
-    window.dispatchEvent(new CustomEvent('app:select-objects', { detail: { objects: [noteGroup] } }));
+    if (state.tool === 'select') {
+      window.dispatchEvent(new CustomEvent('app:select-objects', { detail: { objects: [noteGroup] } }));
+    }
   };
 
+  window.addEventListener('app:tool-changed', onToolChangedCommit);
+  textarea.addEventListener('input', syncTextareaMetrics);
   textarea.addEventListener('pointerdown', (ev) => ev.stopPropagation());
   textarea.addEventListener('keydown', (ev) => {
     ev.stopPropagation();

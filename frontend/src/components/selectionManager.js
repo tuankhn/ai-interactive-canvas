@@ -20,7 +20,6 @@ let boxEl = null;
 let actionBarEl = null;
 let cropToggleBtn = null;
 let editTextBtn = null;
-let angleInputEl = null;
 
 function isTextObject(obj) {
   return obj instanceof Text || obj instanceof Textbox || typeof obj?.text === 'string';
@@ -164,10 +163,6 @@ export function syncSelectionOverlay() {
       cropToggleBtn.hidden = !singleImg;
       cropToggleBtn.classList.toggle('is-active', cropModeActive);
       cropToggleBtn.setAttribute('aria-pressed', String(cropModeActive));
-    }
-    if (angleInputEl && document.activeElement !== angleInputEl) {
-      const shownDeg = singleObj ? normalizeDeg360(singleAngle) : 0;
-      angleInputEl.value = String(shownDeg);
     }
 
     const unionScreen = worldRectToScreen(worldBounds);
@@ -393,73 +388,6 @@ function buildOverlayDOM() {
     setStatus(cropModeActive ? 'Kéo các cạnh khung xanh để cắt (crop) vùng ảnh' : 'Đã tắt chế độ cắt ảnh');
   });
 
-  const angleWrap = document.createElement('label');
-  angleWrap.className = 'sel-angle-wrap';
-  angleWrap.title = 'Nhập góc xoay 0° – 360°';
-  angleInputEl = document.createElement('input');
-  angleInputEl.type = 'number';
-  angleInputEl.min = '0';
-  angleInputEl.max = '360';
-  angleInputEl.step = '1';
-  angleInputEl.value = '0';
-  angleInputEl.className = 'sel-angle-input';
-  angleInputEl.setAttribute('aria-label', 'Góc xoay độ');
-  const angleUnit = document.createElement('span');
-  angleUnit.className = 'sel-angle-unit';
-  angleUnit.textContent = '°';
-  angleWrap.append(angleInputEl, angleUnit);
-  angleWrap.addEventListener('pointerdown', (ev) => ev.stopPropagation());
-
-  const applyExactAngleFromInput = () => {
-    const current = getSelectedObjects();
-    if (!current.length || state.ended) return;
-    const desiredDeg = normalizeDeg360(angleInputEl.value);
-    angleInputEl.value = String(desiredDeg);
-    const before = snapshot();
-    if (current.length === 1) {
-      const obj = current[0];
-      const prevAngle = Number(obj.angle || 0);
-      const center = obj.getCenterPoint();
-      const dRad = ((desiredDeg - prevAngle) * Math.PI) / 180;
-      obj.rotate(desiredDeg);
-      obj.setPositionByOrigin(center, 'center', 'center');
-      if (Array.isArray(obj._hitPoints)) {
-        obj._hitPoints = obj._hitPoints.map((pt) => rotatePointAround(pt, center, dRad));
-      }
-      obj.setCoords?.();
-    } else {
-      const b = computeUnionWorldBounds(current);
-      if (b) {
-        const unionCenter = { x: b.left + b.width / 2, y: b.top + b.height / 2 };
-        const dRad = (desiredDeg * Math.PI) / 180;
-        for (const obj of current) {
-          const c = obj.getCenterPoint();
-          const nextC = rotatePointAround(c, unionCenter, dRad);
-          obj.rotate((obj.angle || 0) + desiredDeg);
-          obj.setPositionByOrigin(nextC, 'center', 'center');
-          if (Array.isArray(obj._hitPoints)) {
-            obj._hitPoints = obj._hitPoints.map((pt) => rotatePointAround(pt, unionCenter, dRad));
-          }
-          obj.setCoords?.();
-        }
-      }
-    }
-    fabricCanvas.requestRenderAll();
-    remember(before);
-    syncSelectionOverlay();
-    setStatus(`Đã đặt góc xoay ${desiredDeg}°`);
-  };
-
-  angleInputEl.addEventListener('change', applyExactAngleFromInput);
-  angleInputEl.addEventListener('keydown', (ev) => {
-    ev.stopPropagation();
-    if (ev.key === 'Enter') {
-      ev.preventDefault();
-      applyExactAngleFromInput();
-      angleInputEl.blur();
-    }
-  });
-
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
   delBtn.className = 'sel-action-btn sel-action-danger';
@@ -469,7 +397,7 @@ function buildOverlayDOM() {
     deleteSelectedObjects();
   });
 
-  actionBarEl.append(editTextBtn, cropToggleBtn, angleWrap, delBtn);
+  actionBarEl.append(editTextBtn, cropToggleBtn, delBtn);
   overlayRoot.append(marqueeEl, boxEl, actionBarEl);
   stage.appendChild(overlayRoot);
 }
@@ -573,7 +501,6 @@ export function setupSelectionManager() {
         }
         it.obj.setCoords?.();
         const normDeg = normalizeDeg360(nextAngle);
-        if (angleInputEl) angleInputEl.value = String(normDeg);
         setStatus(`Đang xoay: ${normDeg}° (Giữ Shift để bắt góc 15°)`);
       } else {
         const snappedDelta = event.shiftKey ? Math.round(rawDeltaDeg / 15) * 15 : Math.round(rawDeltaDeg);
@@ -588,7 +515,6 @@ export function setupSelectionManager() {
           it.obj.setCoords?.();
         }
         const normDeg = normalizeDeg360(snappedDelta);
-        if (angleInputEl) angleInputEl.value = String(normDeg);
         setStatus(`Đang xoay nhóm: ${normDeg}°`);
       }
 
