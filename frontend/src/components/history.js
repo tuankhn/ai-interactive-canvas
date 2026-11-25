@@ -36,6 +36,9 @@ function adaptSingleObjectTheme(obj, isDarkBoard) {
   }
 
   const meta = obj.meta || null;
+  if (meta?.dataRole === 'sticky_note' || meta?.dataRole === 'sticky_note_part') {
+    return;
+  }
   if (meta?.quizCardManaged) {
     if (meta.type === 'quiz_header' || (meta.type === 'quiz_option_target' && typeof obj.text === 'string')) {
       obj.set?.('fill', isDarkBoard ? '#f4f4f5' : '#18181b');
@@ -100,12 +103,28 @@ export function syncBoardAndHistoryTheme(targetBackground, { persist = true } = 
     if (!entry) return;
     entry.background = targetBackground;
     adaptObjectsForBoardTheme(entry.objects, isDark);
+    if (Array.isArray(entry.props)) {
+      entry.objects.forEach((obj, idx) => {
+        if (entry.props[idx] && obj) {
+          entry.props[idx].stroke = obj.stroke;
+          entry.props[idx].fill = obj.fill;
+        }
+      });
+    }
   });
 
   state.redoStack.forEach((entry) => {
     if (!entry) return;
     entry.background = targetBackground;
     adaptObjectsForBoardTheme(entry.objects, isDark);
+    if (Array.isArray(entry.props)) {
+      entry.objects.forEach((obj, idx) => {
+        if (entry.props[idx] && obj) {
+          entry.props[idx].stroke = obj.stroke;
+          entry.props[idx].fill = obj.fill;
+        }
+      });
+    }
   });
 
   if (Array.isArray(state.pages)) {
@@ -120,19 +139,163 @@ export function syncBoardAndHistoryTheme(targetBackground, { persist = true } = 
   }
 }
 
-export function snapshot() {
+function captureObjectProps(obj) {
+  if (!obj) return null;
+  const childSnaps =
+    typeof obj.getObjects === 'function'
+      ? obj.getObjects().map((ch) => ({
+          child: ch,
+          left: ch.left,
+          top: ch.top,
+          width: ch.width,
+          height: ch.height,
+          fill: ch.fill,
+          stroke: ch.stroke,
+          strokeWidth: ch.strokeWidth,
+          opacity: ch.opacity,
+          text: ch.text,
+          fontSize: ch.fontSize,
+          fontFamily: ch.fontFamily,
+          textAlign: ch.textAlign,
+          meta: ch.meta ? { ...ch.meta } : undefined,
+        }))
+      : null;
+
   return {
-    objects: fabricCanvas.getObjects().slice(),
+    left: obj.left,
+    top: obj.top,
+    angle: obj.angle || 0,
+    scaleX: obj.scaleX ?? 1,
+    scaleY: obj.scaleY ?? 1,
+    width: obj.width,
+    height: obj.height,
+    cropX: obj.cropX || 0,
+    cropY: obj.cropY || 0,
+    fill: obj.fill,
+    stroke: obj.stroke,
+    strokeWidth: obj.strokeWidth,
+    strokeDashArray: Array.isArray(obj.strokeDashArray) ? obj.strokeDashArray.slice() : obj.strokeDashArray,
+    opacity: obj.opacity ?? 1,
+    text: obj.text,
+    fontSize: obj.fontSize,
+    fontFamily: obj.fontFamily,
+    textAlign: obj.textAlign,
+    hitWidth: obj._hitWidth,
+    hitPoints: Array.isArray(obj._hitPoints) ? obj._hitPoints.map((p) => ({ ...p })) : null,
+    meta: obj.meta ? { ...obj.meta } : undefined,
+    childSnaps,
+  };
+}
+
+function applyObjectProps(obj, snap) {
+  if (!obj || !snap) return;
+  const patch = {
+    left: snap.left,
+    top: snap.top,
+    angle: snap.angle,
+    scaleX: snap.scaleX,
+    scaleY: snap.scaleY,
+    fill: snap.fill,
+    stroke: snap.stroke,
+    strokeWidth: snap.strokeWidth,
+    strokeDashArray: Array.isArray(snap.strokeDashArray) ? snap.strokeDashArray.slice() : snap.strokeDashArray,
+    opacity: snap.opacity,
+  };
+  if (snap.width !== undefined) patch.width = snap.width;
+  if (snap.height !== undefined) patch.height = snap.height;
+  if (obj.cropX !== undefined || snap.cropX) patch.cropX = snap.cropX;
+  if (obj.cropY !== undefined || snap.cropY) patch.cropY = snap.cropY;
+  if (snap.text !== undefined && typeof obj.text === 'string') patch.text = snap.text;
+  if (snap.fontSize !== undefined && obj.fontSize !== undefined) patch.fontSize = snap.fontSize;
+  if (snap.fontFamily !== undefined && obj.fontFamily !== undefined) patch.fontFamily = snap.fontFamily;
+  if (snap.textAlign !== undefined && obj.textAlign !== undefined) patch.textAlign = snap.textAlign;
+  obj.set(patch);
+
+  if (snap.hitWidth !== undefined) obj._hitWidth = snap.hitWidth;
+  if (snap.hitPoints) obj._hitPoints = snap.hitPoints.map((p) => ({ ...p }));
+  if (snap.meta) obj.meta = { ...snap.meta };
+
+  if (Array.isArray(snap.childSnaps)) {
+    for (const cs of snap.childSnaps) {
+      if (!cs?.child) continue;
+      const cPatch = {
+        left: cs.left,
+        top: cs.top,
+        fill: cs.fill,
+        stroke: cs.stroke,
+        strokeWidth: cs.strokeWidth,
+        opacity: cs.opacity,
+      };
+      if (cs.width !== undefined) cPatch.width = cs.width;
+      if (cs.height !== undefined) cPatch.height = cs.height;
+      if (cs.text !== undefined && typeof cs.child.text === 'string') cPatch.text = cs.text;
+      if (cs.fontSize !== undefined && cs.child.fontSize !== undefined) cPatch.fontSize = cs.fontSize;
+      if (cs.fontFamily !== undefined && cs.child.fontFamily !== undefined) cPatch.fontFamily = cs.fontFamily;
+      if (cs.textAlign !== undefined && cs.child.textAlign !== undefined) cPatch.textAlign = cs.textAlign;
+      cs.child.set(cPatch);
+      if (cs.meta) cs.child.meta = { ...cs.meta };
+      cs.child.setCoords?.();
+    }
+    obj.dirty = true;
+  }
+  obj.setCoords?.();
+}
+
+function propsDiffer(snap, obj) {
+  if (!snap || !obj) return true;
+  if (
+    snap.left !== obj.left ||
+    snap.top !== obj.top ||
+    snap.angle !== (obj.angle || 0) ||
+    snap.scaleX !== (obj.scaleX ?? 1) ||
+    snap.scaleY !== (obj.scaleY ?? 1) ||
+    snap.width !== obj.width ||
+    snap.height !== obj.height ||
+    snap.cropX !== (obj.cropX || 0) ||
+    snap.cropY !== (obj.cropY || 0) ||
+    snap.fill !== obj.fill ||
+    snap.stroke !== obj.stroke ||
+    snap.strokeWidth !== obj.strokeWidth ||
+    snap.opacity !== (obj.opacity ?? 1) ||
+    snap.text !== obj.text ||
+    snap.fontSize !== obj.fontSize ||
+    snap.fontFamily !== obj.fontFamily ||
+    snap.textAlign !== obj.textAlign
+  ) {
+    return true;
+  }
+  if (Array.isArray(snap.childSnaps)) {
+    return snap.childSnaps.some(
+      (cs) =>
+        !cs.child ||
+        cs.fill !== cs.child.fill ||
+        cs.stroke !== cs.child.stroke ||
+        cs.text !== cs.child.text ||
+        cs.fontSize !== cs.child.fontSize ||
+        cs.fontFamily !== cs.child.fontFamily ||
+        cs.textAlign !== cs.child.textAlign,
+    );
+  }
+  return false;
+}
+
+export function snapshot() {
+  const objs = fabricCanvas.getObjects().slice();
+  return {
+    objects: objs,
+    props: objs.map(captureObjectProps),
     background: getActiveStudioBoardBg(),
   };
 }
 
 function stateChanged(before) {
   const currentObjects = fabricCanvas.getObjects();
-  return (
-    before.objects.length !== currentObjects.length ||
-    before.objects.some((object, index) => object !== currentObjects[index])
-  );
+  if (before.objects.length !== currentObjects.length) return true;
+  for (let i = 0; i < currentObjects.length; i++) {
+    if (before.objects[i] !== currentObjects[i]) return true;
+    if (Array.isArray(before.props) && propsDiffer(before.props[i], currentObjects[i])) return true;
+  }
+  return false;
 }
 
 export function updateHistoryButtons() {
@@ -174,6 +337,9 @@ export function restore(snapState) {
   const existing = fabricCanvas.getObjects().slice();
   if (existing.length) fabricCanvas.remove(...existing);
   if (snapState.objects.length) {
+    if (Array.isArray(snapState.props)) {
+      snapState.objects.forEach((obj, idx) => applyObjectProps(obj, snapState.props[idx]));
+    }
     adaptObjectsForBoardTheme(snapState.objects, isDark);
     fabricCanvas.add(...snapState.objects);
   }

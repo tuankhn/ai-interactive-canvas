@@ -1,19 +1,27 @@
 import { $, stage, state, setStatus } from '../utils/context.js';
 
-const RULER_WIDTH = 480;
-const RULER_HEIGHT = 56;
-const HALF_LEN = RULER_WIDTH / 2;
+const RULER_HEIGHT = 54;
 const HALF_H = RULER_HEIGHT / 2;
-const SNAP_CAPTURE_PX = 34;
+const SNAP_CAPTURE_PX = 36;
 
 const rulerState = {
   visible: false,
-  cx: 420,
+  cx: 480,
   cy: 300,
+  length: 1120,
   angleDeg: 0,
   el: null,
+  svgWrap: null,
   angleBadge: null,
 };
+
+function computeIdealRulerLength() {
+  if (!stage) return 1120;
+  const sw = stage.clientWidth || 1000;
+  const sh = stage.clientHeight || 700;
+  // Kéo dài thước bao phủ gần trọn chiều ngang / chiều dọc màn hình để kẻ một mạch không phải rê thước nhiều lần
+  return Math.max(640, Math.min(1800, Math.round(Math.max(sw, sh) * 0.92)));
+}
 
 function normalizeAngle(deg) {
   let a = ((deg % 360) + 540) % 360 - 180;
@@ -32,9 +40,9 @@ function snapAngleDetent(rawDeg, shiftKey = false) {
   return Math.round(rawDeg);
 }
 
-function buildRulerTicksSvg() {
+function buildRulerTicksSvg(rulerWidth) {
   const parts = [];
-  const totalMm = Math.floor((RULER_WIDTH - 32) / 4);
+  const totalMm = Math.floor((rulerWidth - 32) / 4);
   for (let i = 0; i <= totalMm; i += 1) {
     const x = 16 + i * 4;
     const isCm = i % 10 === 0;
@@ -42,23 +50,36 @@ function buildRulerTicksSvg() {
     const tickLen = isCm ? 11 : isHalf ? 7.5 : 4.5;
     parts.push(`<line x1="${x}" y1="0" x2="${x}" y2="${tickLen}" />`);
     parts.push(`<line x1="${x}" y1="${RULER_HEIGHT}" x2="${x}" y2="${RULER_HEIGHT - tickLen}" />`);
-    if (isCm && i / 10 <= 11) {
+    if (isCm && x <= rulerWidth - 20) {
       parts.push(`<text x="${x}" y="21" text-anchor="middle">${i / 10}</text>`);
     }
   }
-  return `<svg class="virtual-ruler-svg" viewBox="0 0 ${RULER_WIDTH} ${RULER_HEIGHT}" aria-hidden="true">${parts.join('')}</svg>`;
+  return `<svg class="virtual-ruler-svg" viewBox="0 0 ${rulerWidth} ${RULER_HEIGHT}" preserveAspectRatio="none" aria-hidden="true">${parts.join('')}</svg>`;
+}
+
+function syncRulerDimensions() {
+  if (!rulerState.el) return;
+  const nextLen = computeIdealRulerLength();
+  if (rulerState.length !== nextLen || !rulerState.svgWrap?.innerHTML) {
+    rulerState.length = nextLen;
+    rulerState.el.style.width = `${nextLen}px`;
+    if (rulerState.svgWrap) {
+      rulerState.svgWrap.innerHTML = buildRulerTicksSvg(nextLen);
+    }
+  }
 }
 
 function clampRulerInsideStage() {
   if (!stage) return;
   const sw = stage.clientWidth || 800;
   const sh = stage.clientHeight || 600;
-  rulerState.cx = Math.max(60, Math.min(sw - 60, rulerState.cx));
-  rulerState.cy = Math.max(90, Math.min(sh - 60, rulerState.cy));
+  rulerState.cx = Math.max(40, Math.min(sw - 40, rulerState.cx));
+  rulerState.cy = Math.max(70, Math.min(sh - 40, rulerState.cy));
 }
 
 function renderRulerTransform() {
   if (!rulerState.el) return;
+  syncRulerDimensions();
   clampRulerInsideStage();
   rulerState.el.style.left = `${rulerState.cx}px`;
   rulerState.el.style.top = `${rulerState.cy}px`;
@@ -108,6 +129,7 @@ export function toggleRuler(forceState = undefined) {
 export function snapPointToRuler(point, strokeSession) {
   if (!rulerState.visible || !point || !strokeSession) return point;
 
+  const halfLen = (rulerState.length || 1120) / 2;
   const rad = (rulerState.angleDeg * Math.PI) / 180;
   const ux = Math.cos(rad);
   const uy = Math.sin(rad);
@@ -120,7 +142,7 @@ export function snapPointToRuler(point, strokeSession) {
   const normal = dx * nx + dy * ny;
 
   if (strokeSession.rulerSnapEdge == null) {
-    const withinLength = Math.abs(along) <= HALF_LEN + 28;
+    const withinLength = Math.abs(along) <= halfLen + 28;
     const distTop = Math.abs(normal - -HALF_H);
     const distBottom = Math.abs(normal - HALF_H);
     const insideBody = Math.abs(normal) < HALF_H;
@@ -133,7 +155,7 @@ export function snapPointToRuler(point, strokeSession) {
   }
 
   if (typeof strokeSession.rulerSnapEdge === 'number') {
-    const clampedAlong = Math.max(-HALF_LEN, Math.min(HALF_LEN, along));
+    const clampedAlong = Math.max(-halfLen, Math.min(halfLen, along));
     return {
       ...point,
       x: rulerState.cx + ux * clampedAlong + nx * strokeSession.rulerSnapEdge,
@@ -147,21 +169,24 @@ export function snapPointToRuler(point, strokeSession) {
 export function setupRulerOverlay() {
   if (!stage || rulerState.el) return;
 
+  rulerState.length = computeIdealRulerLength();
   const el = document.createElement('div');
   el.id = 'virtualRulerOverlay';
   el.className = 'virtual-ruler';
   el.hidden = true;
   el.setAttribute('role', 'region');
-  el.setAttribute('aria-label', 'Thước kẻ thẳng thông minh');
-  el.style.width = `${RULER_WIDTH}px`;
+  el.setAttribute('aria-label', 'Thước kẻ thẳng thông minh xuyên màn hình');
+  el.style.width = `${rulerState.length}px`;
   el.style.height = `${RULER_HEIGHT}px`;
 
   el.innerHTML = `
-    ${buildRulerTicksSvg()}
+    <div class="virtual-ruler-svg-wrap">${buildRulerTicksSvg(rulerState.length)}</div>
     <div class="virtual-ruler-controls">
       <button type="button" class="ruler-rotate-handle" data-ruler-rotate="left" title="Kéo để xoay góc thước (Giữ Shift xoay từng 15°)" aria-label="Xoay góc thước">↻</button>
-      <button type="button" class="ruler-angle-pill" data-ruler-snap-angle="true" title="Bấm để chuyển nhanh góc 0° / 45° / 90°">0°</button>
-      <span class="ruler-guide-text">Vẽ dọc mép thước để kẻ thẳng</span>
+      <button type="button" class="ruler-angle-pill" data-ruler-snap-angle="cycle" title="Bấm đổi nhanh góc 0° / 45° / 90°">0°</button>
+      <button type="button" class="ruler-orient-btn" data-ruler-set-angle="0" title="Đặt thước nằm ngang xuyên màn hình (0°)">Ngang</button>
+      <button type="button" class="ruler-orient-btn" data-ruler-set-angle="90" title="Đặt thước thẳng đứng dọc màn hình (90°)">Dọc</button>
+      <span class="ruler-guide-text">Kẻ dọc mép thước</span>
       <button type="button" class="ruler-rotate-handle" data-ruler-rotate="right" title="Kéo để xoay góc thước (Giữ Shift xoay từng 15°)" aria-label="Xoay góc thước">↻</button>
       <button type="button" class="ruler-close-btn" id="closeRulerBtn" title="Tắt thước kẻ (Phím R)" aria-label="Tắt thước kẻ">✕</button>
     </div>
@@ -169,6 +194,7 @@ export function setupRulerOverlay() {
 
   stage.appendChild(el);
   rulerState.el = el;
+  rulerState.svgWrap = el.querySelector('.virtual-ruler-svg-wrap');
   rulerState.angleBadge = el.querySelector('.ruler-angle-pill');
 
   let dragMode = null; // 'move' | 'rotate'
@@ -188,7 +214,11 @@ export function setupRulerOverlay() {
 
   el.addEventListener('pointerdown', (ev) => {
     ev.stopPropagation();
-    if (ev.target.closest('#closeRulerBtn') || ev.target.closest('[data-ruler-snap-angle]')) {
+    if (
+      ev.target.closest('#closeRulerBtn') ||
+      ev.target.closest('[data-ruler-snap-angle]') ||
+      ev.target.closest('[data-ruler-set-angle]')
+    ) {
       return;
     }
     ev.preventDefault();
@@ -248,6 +278,22 @@ export function setupRulerOverlay() {
     },
     { passive: false }
   );
+
+  el.querySelectorAll('[data-ruler-set-angle]').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const targetDeg = Number(btn.dataset.rulerSetAngle || 0);
+      rulerState.angleDeg = targetDeg;
+      if (stage) {
+        if (targetDeg === 0) {
+          rulerState.cx = Math.round((stage.clientWidth || 800) / 2);
+        } else if (targetDeg === 90) {
+          rulerState.cy = Math.round((stage.clientHeight || 600) / 2);
+        }
+      }
+      renderRulerTransform();
+    });
+  });
 
   el.querySelector('[data-ruler-snap-angle]')?.addEventListener('click', (ev) => {
     ev.stopPropagation();

@@ -102,7 +102,7 @@ export const ui = {
 export const toolNames = {
   select: 'Chọn & Di chuyển', hand: 'Kéo bảng', pen: 'Bút vẽ', highlighter: 'Bút dạ quang', eraser: 'Tẩy nét',
   areaEraser: 'Tẩy khoanh vùng', line: 'Đoạn thẳng', triangle: 'Tam giác',
-  circle: 'Hình tròn', ellipse: 'Hình elip', ruler: 'Thước kẻ ảo', text: 'Chữ'
+  circle: 'Hình tròn', ellipse: 'Hình elip', ruler: 'Thước kẻ ảo', text: 'Chữ', note: 'Giấy Note'
 };
 export const shapeTools = new Set(['line', 'triangle', 'circle', 'ellipse']);
 export const eraserTools = new Set(['eraser', 'areaEraser']);
@@ -134,6 +134,7 @@ export const state = {
   boardLocked: false,
   strokeStyle: 'solid', // 'solid' | 'dashed' | 'dotted'
   shapeFill: 'transparent',
+  noteBg: '#FFE066',
   opacity: 100,
   fontFamily: 'sans', // 'hand' | 'sans' | 'mono' | 'serif'
   fontSize: 26, // S=18, M=26, L=36, XL=50

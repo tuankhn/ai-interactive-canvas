@@ -4,6 +4,7 @@ import { syncBackgroundButtons, updateHint, setupHistoryShortcuts } from '../com
 import { refreshPages, restoreSavedPages, persistPages, setupPageControls } from '../components/pageManager.js';
 import { finishStroke, setupDrawingCanvas } from '../components/drawingCanvas.js';
 import { setupSelectionManager } from '../components/selectionManager.js';
+import { setupBoardMediaAndNotes } from '../components/boardMediaAndNotes.js';
 import { setupPropertyInspector } from '../components/propertyInspector.js';
 import { setupBoardDialogs } from '../components/boardDialogs.js';
 import { setupAIRecognition } from '../components/aiRecognition.js';
@@ -186,6 +187,7 @@ export async function initWhiteboard() {
   setupPageControls();
   setupDrawingCanvas();
   setupSelectionManager();
+  setupBoardMediaAndNotes();
   setupPropertyInspector();
   setupBoardDialogs();
   setupAIRecognition();

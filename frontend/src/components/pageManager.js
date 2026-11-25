@@ -51,6 +51,7 @@ async function loadPageData(data) {
       selectable: Boolean(isInteractiveAnswer),
       evented: Boolean(isInteractiveAnswer),
       objectCaching: false,
+      ...(original?.meta?.dataRole === 'sticky_note' ? { subTargetCheck: false } : {}),
     });
     if (Array.isArray(original._hitPoints)) object._hitPoints = original._hitPoints;
     if (Number.isFinite(original._hitWidth)) object._hitWidth = original._hitWidth;
