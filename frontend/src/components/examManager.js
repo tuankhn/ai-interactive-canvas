@@ -3,6 +3,7 @@ import { snapshot, remember, updateHint } from './history.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
 import { computeCleanBoardPlacement, panViewportToShowWorldRect } from '../utils/floating_drag.js';
+import { extractQuestionContextFromCanvas } from './quiz_board.js';
 import { FabricText, Line, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 let currentExamData = null;
@@ -724,13 +725,14 @@ export function setupExamManager() {
           questionObj = currentExamData.questions.find((q) => q.id === questionId) || null;
         }
         if (!questionObj) {
+          const canvasCtx = extractQuestionContextFromCanvas(fabricCanvas, questionId, bounds.top);
           questionObj = {
             id: questionId,
             number: obj.meta.question_number || 1,
-            content: obj.meta.question_content || '',
+            content: obj.meta.question_content || canvasCtx.content || '',
             correct_option: obj.meta.correct_option || null,
             explanation: obj.meta.explanation || null,
-            options: obj.meta.options || [],
+            options: obj.meta.options || canvasCtx.options || [],
           };
         }
         gradeStudentChoice(questionObj, label);

@@ -137,6 +137,43 @@ def _format_num_clean(val: float) -> str:
     return f"{val:.4f}".rstrip("0").rstrip(".")
 
 
+_ROMAN_PAIRS: List[Tuple[int, str]] = [
+    (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+    (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+    (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+]
+
+
+def _int_to_roman(num: int) -> Optional[str]:
+    if num <= 0 or num > 3999:
+        return None
+    out: List[str] = []
+    rem = num
+    for val, sym in _ROMAN_PAIRS:
+        while rem >= val:
+            out.append(sym)
+            rem -= val
+    return "".join(out)
+
+
+def _roman_to_int(roman: str) -> Optional[int]:
+    token = (roman or "").strip().upper()
+    if not token or not re.fullmatch(r"[IVXLCDM]+", token):
+        return None
+    vals = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+    total = 0
+    prev = 0
+    for ch in reversed(token):
+        v = vals[ch]
+        if v < prev:
+            total -= v
+        else:
+            total += v
+            prev = v
+    # Kiểm tra tính chính tắc (loại bỏ cách viết sai quy tắc như IXX cho 19)
+    return total if _int_to_roman(total) == token else None
+
+
 class GradingService:
     """
     Logic chấm bài trắc nghiệm tự động, phân tích chuyên sâu các phương án gây nhiễu,
@@ -255,6 +292,38 @@ class GradingService:
 
         stem = question_content.strip()
         stem_lower = stem.lower()
+
+        # 0. Chữ số La Mã (hai chiều: Số tự nhiên -> La Mã như 'Số 19 viết bằng chữ số La Mã' -> XIX, và La Mã -> Số tự nhiên)
+        if "la mã" in stem_lower:
+            m_arabic = re.search(r"(?:số\s+)?(\d{1,4})\b", stem_lower)
+            if m_arabic:
+                n_val = int(m_arabic.group(1))
+                expected_roman = _int_to_roman(n_val)
+                if expected_roman:
+                    roman_hits = [
+                        str(o.get("label", "")).strip().upper()
+                        for o in options
+                        if str(o.get("content", "")).strip().upper() == expected_roman
+                    ]
+                    if len(roman_hits) == 1:
+                        return (
+                            roman_hits[0],
+                            f"Số {n_val} viết bằng chữ số La Mã đúng quy tắc là {expected_roman}. Vậy đáp án đúng là {roman_hits[0]} ({expected_roman}).",
+                        )
+            m_rom = re.search(r"\b([IVXLCDM]{1,10})\b", stem)
+            if m_rom:
+                conv_int = _roman_to_int(m_rom.group(1))
+                if conv_int is not None:
+                    int_hits = [
+                        str(o.get("label", "")).strip().upper()
+                        for o in options
+                        if _extract_option_numeric_value(str(o.get("content", ""))) == float(conv_int)
+                    ]
+                    if len(int_hits) == 1:
+                        return (
+                            int_hits[0],
+                            f"Chữ số La Mã {m_rom.group(1).upper()} có giá trị là {conv_int}. Vậy đáp án đúng là {int_hits[0]} ({conv_int}).",
+                        )
 
         numeric_opts: List[Tuple[str, float, str]] = []
         for opt in options:
@@ -462,13 +531,38 @@ class GradingService:
             f"Danh sách câu hỏi:\n{json.dumps(items_payload, ensure_ascii=False)}"
         )
 
+        from app.core.config import settings
+
+        candidate_models: List[str] = []
+        for m in [
+            getattr(gemini_service, "_preferred_model", None),
+            gemini_service.active_model_name,
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+            *(getattr(settings, "GEMINI_FALLBACK_MODELS", []) or []),
+        ]:
+            if m and m not in candidate_models:
+                candidate_models.append(m)
+
         def _call_sync() -> str:
-            model_name = gemini_service.active_model_name or "gemini-3.5-flash"
-            if gemini_service._client_type == "google-genai":
-                resp = gemini_service.client.models.generate_content(model=model_name, contents=prompt)
-                return resp.text or ""
-            resp = gemini_service.model.generate_content(prompt)
-            return resp.text or ""
+            last_exc: Optional[Exception] = None
+            for model_name in candidate_models[:4]:
+                try:
+                    if gemini_service._client_type == "google-genai":
+                        resp = gemini_service.client.models.generate_content(model=model_name, contents=prompt)
+                        if resp and resp.text:
+                            return resp.text
+                    else:
+                        resp = gemini_service.model.generate_content(prompt)
+                        if resp and resp.text:
+                            return resp.text
+                except Exception as inner_exc:
+                    last_exc = inner_exc
+                    continue
+            if last_exc:
+                raise last_exc
+            return ""
 
         try:
             raw_text = await asyncio.wait_for(asyncio.to_thread(_call_sync), timeout=timeout)
