@@ -7,6 +7,7 @@ import { closePanels } from './toolbar.js';
 import { scheduleAIDebounce, cancelAIDebounce } from './aiRecognition.js';
 import { snapPointToRuler } from './rulerOverlay.js';
 import { removeObjectsWithCascade } from '../utils/cascadeDelete.js';
+import { getSafeAreaScreen, clampRange } from '../utils/safeArea.js';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5.0;
@@ -177,17 +178,26 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
   const vpt = fabricCanvas.viewportTransform || [1, 0, 0, 1, 0, 0];
   const zoom = vpt[0] || 1;
 
-  const worldX = existingTextObj ? existingTextObj.left : point.x;
-  const worldY = existingTextObj ? existingTextObj.top : point.y;
-  const sx = worldX * zoom + vpt[4];
-  const sy = worldY * zoom + vpt[5];
-
   const fontKey = existingTextObj?.meta?.fontKey || state.fontFamily || 'sans';
   const resolvedFontFamily = existingTextObj?.fontFamily || FONT_FAMILY_MAP[fontKey] || FONT_FAMILY_MAP.sans;
   const baseFontSize = existingTextObj ? (existingTextObj.fontSize || 26) : (state.fontSize || 26);
   const strokeColor = existingTextObj ? (existingTextObj.fill || ui.color.value) : ui.color.value;
   const align = existingTextObj ? (existingTextObj.textAlign || state.textAlign || 'left') : (state.textAlign || 'left');
   const textOpacity = existingTextObj ? (existingTextObj.opacity ?? 1) : ((state.opacity ?? 100) / 100);
+  const scaledFontPx = Math.max(12, baseFontSize * zoom);
+
+  const safe = getSafeAreaScreen(18);
+  let worldX = existingTextObj ? existingTextObj.left : point.x;
+  let worldY = existingTextObj ? existingTextObj.top : point.y;
+  let sx = worldX * zoom + vpt[4];
+  let sy = worldY * zoom + vpt[5];
+
+  if (!existingTextObj) {
+    sx = clampRange(sx, safe.left, safe.right - 96);
+    sy = clampRange(sy, safe.top, safe.bottom - Math.ceil(scaledFontPx * 1.4));
+    worldX = (sx - vpt[4]) / zoom;
+    worldY = (sy - vpt[5]) / zoom;
+  }
 
   if (existingTextObj) {
     existingTextObj.visible = false;
@@ -201,7 +211,6 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
   textarea.setAttribute('aria-label', 'Gõ chữ trực tiếp lên bảng');
   textarea.className = 'direct-canvas-textarea';
 
-  const scaledFontPx = Math.max(12, baseFontSize * zoom);
   Object.assign(textarea.style, {
     position: 'absolute',
     left: `${sx}px`,
@@ -237,6 +246,12 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
     const nextH = Math.max(Math.ceil(scaledFontPx * 1.35 * lines.length), textarea.scrollHeight + 2);
     textarea.style.width = `${nextW}px`;
     textarea.style.height = `${nextH}px`;
+    if (!existingTextObj) {
+      const clampedSx = clampRange(sx, safe.left, safe.right - nextW);
+      const clampedSy = clampRange(sy, safe.top, safe.bottom - nextH);
+      textarea.style.left = `${Math.round(clampedSx)}px`;
+      textarea.style.top = `${Math.round(clampedSy)}px`;
+    }
   };
 
   let finalized = false;
@@ -313,9 +328,15 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
     });
     const tw = Math.max(40, textObj.width || 80);
     const th = Math.max(24, textObj.height || baseFontSize);
+    const clampedScreenX = clampRange(worldX * zoom + vpt[4], safe.left, safe.right - tw * zoom);
+    const clampedScreenY = clampRange(worldY * zoom + vpt[5], safe.top, safe.bottom - th * zoom);
+    const finalWorldX = (clampedScreenX - vpt[4]) / zoom;
+    const finalWorldY = (clampedScreenY - vpt[5]) / zoom;
+    textObj.set({ left: finalWorldX, top: finalWorldY });
+    textObj.setCoords?.();
     textObj._hitPoints = [
-      { x: worldX, y: worldY + th / 2 },
-      { x: worldX + tw, y: worldY + th / 2 },
+      { x: finalWorldX, y: finalWorldY + th / 2 },
+      { x: finalWorldX + tw, y: finalWorldY + th / 2 },
     ];
     textObj._hitWidth = th;
     textObj.meta = {

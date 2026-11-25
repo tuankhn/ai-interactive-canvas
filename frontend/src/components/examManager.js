@@ -82,17 +82,18 @@ export function setupExamManager() {
     });
   }
 
-  // Nút Chấm trắc nghiệm trên Toolbar
+  // Nút Trắc nghiệm khoanh A/B/C/D & Chấm AI mở thẳng bảng điều khiển Trắc nghiệm nổi trên mặt bảng
   if (gradeMcqBtn) {
     gradeMcqBtn.addEventListener('click', () => {
       if (state.ended) return;
-      if (!currentExamData || !currentExamData.questions || currentExamData.questions.length === 0) {
+      if (examModal?.open) examModal.close();
+      const quizToggle = $('quizBoardToggleBtn');
+      if (quizToggle) {
+        quizToggle.click();
+        setStatus('Đã mở bảng Trắc nghiệm — Khoanh tròn đáp án A, B, C, D trực tiếp trên bảng để AI chấm & giải thích.');
+      } else {
         showStatus('');
         examModal.showModal();
-        setStatus('Vui lòng chọn hoặc tải đề thi để bắt đầu làm bài và chấm trắc nghiệm.');
-      } else {
-        examModal.showModal();
-        setStatus('Hãy nhấp vào một phương án A, B, C, D để hệ thống kiểm tra và giải thích chi tiết.');
       }
     });
   }

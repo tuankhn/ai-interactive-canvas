@@ -109,7 +109,10 @@ function renderAndApplyBoardSwatches(isDark, { persist = false } = {}) {
   });
 }
 
+let dismissTooltipCallback = null;
+
 export function closePanels() {
+  dismissTooltipCallback?.();
   const tipEl = $('instantTooltip');
   if (tipEl) tipEl.hidden = true;
   Object.values(panels).forEach((entry) => {
@@ -357,26 +360,12 @@ function setupStudentsDrawer() {
 }
 
 function setupToolbarRovingFocusFallback() {
-  if (!toolbar || 'focusGroup' in HTMLElement.prototype) return;
+  if (!toolbar) return;
 
   const getToolbarButtons = () =>
     Array.from(toolbar.querySelectorAll(':scope > .tool-group > button, :scope > button')).filter(
       (btn) => !btn.hidden && !btn.disabled
     );
-
-  const initItems = getToolbarButtons();
-  initItems.forEach((btn, idx) => {
-    btn.tabIndex = idx === 0 ? 0 : -1;
-  });
-
-  toolbar.addEventListener('focusin', ({ target }) => {
-    const items = getToolbarButtons();
-    if (items.includes(target)) {
-      items.forEach((btn) => {
-        btn.tabIndex = btn === target ? 0 : -1;
-      });
-    }
-  });
 
   toolbar.addEventListener('keydown', (event) => {
     const items = getToolbarButtons();
@@ -592,8 +581,8 @@ function setupInstantTooltipsAndGuides() {
     if (el.getAttribute('title')) {
       const rawTitle = el.getAttribute('title');
       el.dataset.tip = rawTitle;
-      // Giữ lại tên truy cập (aria-label) cho nút chỉ có biểu tượng để trình đọc màn hình không mất nhãn khi title bị gỡ
-      if (!el.hasAttribute('aria-label') && !(el.textContent || '').trim()) {
+      // Luôn giữ nhãn truy cập (aria-label) cho các nút trên thanh công cụ (vì CSS dùng font-size: 0 cho nút chỉ hiện icon)
+      if (!el.hasAttribute('aria-label')) {
         el.setAttribute('aria-label', rawTitle);
       }
       el.removeAttribute('title');
@@ -609,9 +598,18 @@ function setupInstantTooltipsAndGuides() {
     activeAnchor = null;
     if (tipEl) tipEl.hidden = true;
   }
+  dismissTooltipCallback = hideInstantTooltip;
+
+  // Chuyển toàn bộ title trên thanh công cụ / thanh trên / chân trang sang tooltip tuỳ biến ngay từ đầu (kể cả nút đang disabled như Hoàn tác / Làm lại)
+  document.querySelectorAll('#toolbar [title], .topbar [title], .footer [title]').forEach((el) => {
+    resolveTooltipText(el);
+  });
 
   function shouldSuppressTooltip(el) {
     if (!el) return true;
+    if (el.getAttribute('aria-expanded') === 'true' || el.classList.contains('is-popover-open')) {
+      return true;
+    }
     // Các hộp thoại <dialog> nằm ở top-layer của trình duyệt nên không phủ tooltip ngoài body
     if (el.closest('dialog')) {
       resolveTooltipText(el);

@@ -2327,6 +2327,7 @@ button[aria-disabled="true"] {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-sm);
+  cursor: grab;
 }
 
 .ruler-rotate-handle,
@@ -5457,12 +5458,32 @@ dialog[popover]::backdrop {
     margin: 0;
     text-align: left;
   }
+  /* Bảng điều khiển Trắc nghiệm trên mobile neo gọn nửa dưới để lộ trọn cả 4 phương án A/B/C/D phía trên */
+  .quiz-board-panel {
+    inset: auto 8px calc(120px + env(safe-area-inset-bottom, 0px)) 8px;
+    width: auto;
+    max-width: calc(100vw - 16px);
+    max-height: 29dvh;
+    padding: 10px 12px;
+    box-sizing: border-box;
+  }
+  .quiz-board-panel .quiz-panel-guide {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .students {
+    margin: 0;
+    box-sizing: border-box;
+    max-width: calc(100vw - 16px);
+  }
 }
 
 @media (max-width: 560px) {
-  /* Chân trang gọn lại để Zoom + Phân trang luôn nằm trọn trong màn hình điện thoại */
+  /* Chân trang gọn gàng hiển thị đủ cả Zoom + Phân trang + Chấm trạng thái AI + Đồng hồ trên màn hình nhỏ */
   .footer {
-    gap: 6px;
+    gap: 4px;
   }
   .footer-left-group {
     flex: 1 1 auto;
@@ -5470,40 +5491,66 @@ dialog[popover]::backdrop {
     gap: 4px;
   }
   .zoom-controls {
-    padding: 3px;
-    gap: 2px;
+    padding: 2px;
+    gap: 1px;
+    flex-shrink: 0;
   }
   .zoom-controls button {
-    min-inline-size: 28px;
-    padding: 0 4px;
+    min-inline-size: 24px;
+    min-block-size: 32px;
+    padding: 0 3px;
+    font-size: 12px;
   }
   #zoomResetBtn {
-    min-inline-size: 42px;
-    font-size: 11px;
+    min-inline-size: 36px;
+    font-size: 10.5px;
   }
   .pagination {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 3px;
-    gap: 2px;
+    padding: 2px 3px;
+    gap: 1px;
     justify-content: space-between;
   }
   .pagination button {
-    min-inline-size: 30px;
-    padding: 0 6px;
-    font-size: 12px;
+    min-inline-size: 24px;
+    min-block-size: 32px;
+    padding: 0 4px;
+    font-size: 11.5px;
   }
   #pageIndicator {
-    min-inline-size: 44px;
-    font-size: 11.5px;
+    min-inline-size: 38px;
+    font-size: 10.5px;
+    padding: 0 5px;
   }
   .pagination .add-page-button,
   .pagination .delete-page-button {
-    padding: 0 8px;
-    font-size: 12px;
+    min-inline-size: auto;
+    padding: 0 6px;
+    font-size: 11px;
   }
   .status-cluster {
-    display: none;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 7px;
+    min-block-size: 36px;
+  }
+  .status-cluster .ai-status-indicator {
+    display: inline-flex !important;
+    font-size: 0;
+    gap: 0;
+  }
+  .status-cluster .ai-status-indicator::before {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .status-cluster .timer {
+    font-size: 11px;
+    border-left: 0;
+    padding-left: 0;
   }
 
   /* Bảng điểm học sinh luôn nổi trên chấm màu mở lại bảng tuỳ chỉnh */
