@@ -692,15 +692,21 @@ function shouldStartPan(event) {
 function pointerDown(event) {
   if (state.ended || state.pageBusy) return;
   const pointerType = event.pointerType;
-  if (pointerType === 'pen') state.lastPenSeenAt = performance.now();
+  const now = performance.now();
+  if (pointerType === 'pen') state.lastPenSeenAt = now;
+  const recentStylus = now - state.lastPenSeenAt < 15000;
 
-  // Lọc lòng bàn tay thực sự (> 64px) TRƯỚC khi thêm vào activeTouches để tránh rò rỉ ghost pointerId trên iPadOS
-  if (pointerType === 'touch' && isPalmTouch(event)) {
+  // Chỉ lọc lòng bàn tay khi người dùng thực sự đang dùng bút Stylus gần đây; vẽ thuần bằng tay không bao giờ bị chặn
+  if (pointerType === 'touch' && recentStylus && isPalmTouch(event)) {
     return;
   }
 
   // Theo dõi chụm 2 ngón tay trên Tablet / màn hình cảm ứng (khi chưa khoá trang)
   if (!state.boardLocked && pointerType === 'touch' && !state.penInUse) {
+    // Nếu đây là ngón tay chính mới chạm xuống và không đang trong cử chỉ pinch -> dọn sạch touch bị rớt trước đó
+    if (event.isPrimary && !pinchState && !state.stroke) {
+      activeTouches.clear();
+    }
     const sp = getScreenPoint(event);
     activeTouches.set(event.pointerId, { x: sp.x, y: sp.y });
     if (activeTouches.size === 2) {
@@ -727,7 +733,9 @@ function pointerDown(event) {
       lastY: event.clientY,
     };
     stage.classList.add('is-panning-active');
-    try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    if (pointerType !== 'touch') {
+      try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    }
     return;
   }
 
@@ -736,10 +744,11 @@ function pointerDown(event) {
     return;
   }
 
-  // Palm Rejection: lọc tiếp xúc lớn, ngón thứ hai và touch gần lần bút Stylus.
+  // Palm Rejection: chỉ chặn khi bút đang chạm, ngón phụ, hoặc trong 650ms ngay sau nét bút Stylus
   if (pointerType === 'touch' && (
-    state.penInUse || isPalmTouch(event) || !event.isPrimary ||
-    performance.now() - state.lastPenSeenAt < 650
+    state.penInUse || !event.isPrimary ||
+    (recentStylus && isPalmTouch(event)) ||
+    now - state.lastPenSeenAt < 650
   )) return;
   if (pointerType === 'mouse' && event.button !== 0) return;
 
@@ -778,7 +787,9 @@ function pointerDown(event) {
     opacity: (state.opacity ?? 100) / 100,
     renderedPoints: 0
   };
-  try { surface.setPointerCapture(event.pointerId); } catch { /* Thiết bị có thể không hỗ trợ. */ }
+  if (pointerType !== 'touch') {
+    try { surface.setPointerCapture(event.pointerId); } catch { /* Thiết bị có thể không hỗ trợ. */ }
+  }
   addPoint(event);
   ui.input.textContent = `Đang dùng: ${toolNames[state.tool]} (${pointerType})`;
   setStatus('Đang thao tác');
@@ -818,7 +829,8 @@ function pointerMove(event) {
 
   if (state.ended || event.pointerId !== state.activePointer || !state.stroke) return;
   event.preventDefault();
-  const events = event.getCoalescedEvents?.();
+  // Chỉ gọi getCoalescedEvents() với bút Stylus (tránh lỗi dữ liệu rỗng/lệch của WebKit Safari 16.4 trên touch)
+  const events = event.pointerType === 'pen' ? event.getCoalescedEvents?.() : null;
   if (events?.length) {
     for (const pointEvent of events) addPoint(pointEvent);
   } else {
@@ -830,7 +842,8 @@ function endTouchOrPan(event) {
   if (event.pointerType === 'touch') {
     activeTouches.delete(event.pointerId);
     if (activeTouches.size < 2) pinchState = null;
-  } else if (event.pointerType === 'pen' && (!state.stroke || event.pointerId !== state.activePointer)) {
+  }
+  if (event.pointerType === 'pen' && (!state.stroke || event.pointerId !== state.activePointer)) {
     state.penInUse = false;
   }
   if (panDragState && event.pointerId === panDragState.pointerId) {
@@ -861,16 +874,6 @@ function pointerCancel(event) {
     return;
   }
   finishStroke(false);
-  syncInfiniteViewportUI();
-}
-
-function pointerLostCapture(event) {
-  if (endTouchOrPan(event)) return;
-  if (event.pointerId !== state.activePointer || !state.stroke) return;
-  // Trên iPadOS Safari, lostpointercapture hay bắn sớm khi nhấc tay:
-  // Chốt nét nếu đã có >= 2 điểm thay vì hủy mất nét vừa vẽ
-  const shouldCommit = state.stroke.points.length >= 2;
-  finishStroke(shouldCommit);
   syncInfiniteViewportUI();
 }
 
@@ -964,11 +967,11 @@ export function setupDrawingCanvas() {
   resizeCanvas();
   setupInfiniteViewportControls();
 
+  // Gắn pointermove / pointerup / pointercancel lên window để không cần setPointerCapture cho touch trên iPadOS 16.4 Safari
   surface.addEventListener('pointerdown', pointerDown, { passive: false });
-  surface.addEventListener('pointermove', pointerMove, { passive: false });
-  surface.addEventListener('pointerup', pointerUp, { passive: false });
-  surface.addEventListener('pointercancel', pointerCancel, { passive: false });
-  surface.addEventListener('lostpointercapture', pointerLostCapture);
+  window.addEventListener('pointermove', pointerMove, { passive: false });
+  window.addEventListener('pointerup', pointerUp, { passive: false });
+  window.addEventListener('pointercancel', pointerCancel, { passive: false });
 
   // Chặn cử chỉ cuộn/zoom mặc định của Safari iPadOS (giữ ngoại lệ cho select, text & note để bật bàn phím ảo bình thường)
   surface.addEventListener(

@@ -500,6 +500,7 @@ export function setupSelectionManager() {
 
     gesture = {
       pointerId: event.pointerId,
+      source: 'box',
       mode: gestureMode,
       handle,
       startWorld: wp,
@@ -527,11 +528,13 @@ export function setupSelectionManager() {
         hitPoints: Array.isArray(obj._hitPoints) ? obj._hitPoints.map((p) => ({ ...p })) : null,
       })),
     };
-    try { boxEl.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    if (event.pointerType !== 'touch') {
+      try { boxEl.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    }
   });
 
-  boxEl.addEventListener('pointermove', (event) => {
-    if (!gesture || event.pointerId !== gesture.pointerId) return;
+  window.addEventListener('pointermove', (event) => {
+    if (!gesture || gesture.source !== 'box' || event.pointerId !== gesture.pointerId) return;
     event.preventDefault();
     const sp = getScreenPoint(event);
     const wp = screenToWorld(sp.x, sp.y);
@@ -741,7 +744,7 @@ export function setupSelectionManager() {
   });
 
   const endBoxGesture = (event) => {
-    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    if (!gesture || gesture.source !== 'box' || event.pointerId !== gesture.pointerId) return;
     if (gesture.changed) {
       remember(gesture.before);
       setStatus(
@@ -755,9 +758,8 @@ export function setupSelectionManager() {
     gesture = null;
     syncSelectionOverlay();
   };
-  boxEl.addEventListener('pointerup', endBoxGesture);
-  boxEl.addEventListener('pointercancel', endBoxGesture);
-  boxEl.addEventListener('lostpointercapture', endBoxGesture);
+  window.addEventListener('pointerup', endBoxGesture);
+  window.addEventListener('pointercancel', endBoxGesture);
 
   // Khoanh vùng trỏ chuột (Marquee Selection) hoặc Click chọn trên mặt bảng
   let marqueePointerId = null;
@@ -801,6 +803,7 @@ export function setupSelectionManager() {
       if (initBounds) {
         gesture = {
           pointerId: event.pointerId,
+          source: 'surface',
           mode: 'move',
           handle: null,
           startWorld: wp,
@@ -816,7 +819,9 @@ export function setupSelectionManager() {
           })),
         };
         marqueePointerId = event.pointerId;
-        try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+        if (event.pointerType !== 'touch') {
+          try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+        }
       }
       return;
     }
@@ -840,10 +845,12 @@ export function setupSelectionManager() {
       width: '0px',
       height: '0px',
     });
-    try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    if (event.pointerType !== 'touch') {
+      try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    }
   });
 
-  surface.addEventListener('pointermove', (event) => {
+  window.addEventListener('pointermove', (event) => {
     if (state.tool !== 'select' || event.pointerId !== marqueePointerId) return;
     const sp = getScreenPoint(event);
     const wp = screenToWorld(sp.x, sp.y);
@@ -928,9 +935,8 @@ export function setupSelectionManager() {
       setStatus(`Đã chọn ${selectedObjects.length} đối tượng trong vùng khoanh`);
     }
   };
-  surface.addEventListener('pointerup', finishSurfaceSelection);
-  surface.addEventListener('pointercancel', finishSurfaceSelection);
-  surface.addEventListener('lostpointercapture', finishSurfaceSelection);
+  window.addEventListener('pointerup', finishSurfaceSelection);
+  window.addEventListener('pointercancel', finishSurfaceSelection);
 
   window.addEventListener('blur', () => {
     if (gesture) {
