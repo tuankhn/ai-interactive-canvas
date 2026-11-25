@@ -176,10 +176,10 @@ export function togglePanel(name) {
   });
 }
 
-export function setTool(next, { showGuide = false } = {}) {
+export function setTool(next) {
   if (state.ended) return;
   if (next === 'hand' && state.boardLocked) {
-    showToolGuideBanner('Mặt bảng đang KHOÁ — Bấm biểu tượng ổ khoá 🔒 (hoặc phím Q) để mở khoá trước khi kéo trang.');
+    setStatus('Mặt bảng đang KHOÁ — Bấm ổ khoá (hoặc phím Q) để mở khoá trước khi kéo trang.');
     return;
   }
   state.tool = next;
@@ -198,28 +198,10 @@ export function setTool(next, { showGuide = false } = {}) {
   ui.input.textContent = `Đã chọn: ${friendlyName}`;
   setStatus(`Đang dùng: ${friendlyName}`);
   window.dispatchEvent(new CustomEvent('app:tool-changed', { detail: { tool: next } }));
-
-  if (showGuide) {
-    const btn =
-      document.querySelector(`#toolbar [data-tool="${next}"]`) ||
-      document.querySelector(`.tool-popover [data-tool="${next}"]`) ||
-      (eraserTools.has(next) ? $('eraserMenu') : null);
-    if (btn?.dataset?.guide) {
-      showToolGuideBanner(btn.dataset.guide);
-    }
-  }
 }
 
-let guideHideTimer = null;
-export function showToolGuideBanner(message) {
-  const pill = $('toolGuidePill');
-  if (!pill || !message) return;
-  pill.textContent = message;
-  pill.hidden = false;
-  if (guideHideTimer) clearTimeout(guideHideTimer);
-  guideHideTimer = setTimeout(() => {
-    pill.hidden = true;
-  }, 4200);
+export function showToolGuideBanner() {
+  // Đã lược bỏ thanh thông báo hướng dẫn khi click vì đã có tooltip khi rê chuột
 }
 
 export function toggleBoardLock(forceValue) {
@@ -240,10 +222,9 @@ export function toggleBoardLock(forceValue) {
   }
   window.dispatchEvent(new CustomEvent('app:board-lock-changed', { detail: { locked: nextLocked } }));
   const msg = nextLocked
-    ? 'Đã KHOÁ mặt bảng & phân trang — Tỳ tay viết thoải mái không lo bị trượt trang (Bấm Q để mở khoá)'
-    : 'Đã MỞ KHOÁ mặt bảng — Có thể kéo bảng vô hạn, thu phóng và chuyển trang bình thường';
+    ? 'Đã KHOÁ mặt bảng & phân trang (Bấm Q để mở khoá)'
+    : 'Đã MỞ KHOÁ mặt bảng';
   setStatus(msg);
-  showToolGuideBanner(msg);
 }
 
 export function syncColorSelection() {
@@ -719,15 +700,6 @@ function setupInstantTooltipsAndGuides() {
   document.addEventListener('pointerdown', hideInstantTooltip);
   window.addEventListener('scroll', hideInstantTooltip, true);
 
-  // Hướng dẫn trực quan ngay khi người dùng nhấp vào bất kỳ nút chức năng nào có [data-guide]
-  document.addEventListener('click', (event) => {
-    const btn = event.target.closest?.('[data-guide]');
-    if (!btn || btn.disabled || btn.id === 'lockBoardBtn') return;
-    if (btn.dataset.guide) {
-      showToolGuideBanner(btn.dataset.guide);
-    }
-  });
-
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') hideInstantTooltip();
   });
@@ -738,7 +710,7 @@ export function setupToolbar() {
     button.addEventListener('click', () => {
       const nextTool = button.dataset.tool;
       const alreadyActive = state.tool === nextTool;
-      setTool(nextTool, { showGuide: !alreadyActive });
+      setTool(nextTool);
       if (alreadyActive) {
         window.dispatchEvent(new CustomEvent('app:toggle-inspector'));
       }
