@@ -110,6 +110,8 @@ function renderAndApplyBoardSwatches(isDark, { persist = false } = {}) {
 }
 
 export function closePanels() {
+  const tipEl = $('instantTooltip');
+  if (tipEl) tipEl.hidden = true;
   Object.values(panels).forEach((entry) => {
     if (!entry?.panel || !entry?.button) return;
     entry.panel.hidden = true;
@@ -618,13 +620,29 @@ function setupInstantTooltipsAndGuides() {
     if (tipEl) tipEl.hidden = true;
   }
 
+  function shouldSuppressTooltip(el) {
+    if (!el) return true;
+    // Các hộp thoại <dialog> nằm ở top-layer của trình duyệt nên không phủ tooltip ngoài body
+    if (el.closest('dialog')) {
+      resolveTooltipText(el);
+      return true;
+    }
+    return false;
+  }
+
   function positionInstantTooltip(anchor) {
-    if (!tipEl || !anchor) return;
+    if (!tipEl || !anchor || shouldSuppressTooltip(anchor)) {
+      hideInstantTooltip();
+      return;
+    }
     const text = resolveTooltipText(anchor);
     if (!text) {
       hideInstantTooltip();
       return;
     }
+    // Đặt tạm về góc (0, 0) trước khi đo để tránh bị ép hẹp kích thước khi vị trí cũ sát mép phải màn hình
+    tipEl.style.left = '0px';
+    tipEl.style.top = '0px';
     tipEl.textContent = text;
     tipEl.hidden = false;
 
@@ -635,10 +653,22 @@ function setupInstantTooltipsAndGuides() {
     let left = r.left + r.width / 2 - tw / 2;
     let top = r.bottom + 8;
 
-    // Nếu nút nằm sát đáy màn hình hoặc bên trong cột tuỳ chỉnh trái, đặt tooltip hợp lý để không che mất con trỏ
+    const popoverBox = anchor.closest('.more-tools-popover, .system-popover');
     if (anchor.closest('#contextPropertyPanel')) {
       left = r.right + 10;
       top = r.top + r.height / 2 - th / 2;
+    } else if (popoverBox && anchor.matches('.more-menu-item, .menu-item')) {
+      // Neo sang cạnh bên của menu dọc để không che khuất dòng chức năng kế tiếp bên dưới
+      const popRect = popoverBox.getBoundingClientRect();
+      if (popRect.left >= tw + 16) {
+        left = popRect.left - tw - 10;
+        top = r.top + r.height / 2 - th / 2;
+      } else if (window.innerWidth - popRect.right >= tw + 16) {
+        left = popRect.right + 10;
+        top = r.top + r.height / 2 - th / 2;
+      } else if (top + th + margin > window.innerHeight) {
+        top = r.top - th - 8;
+      }
     } else if (top + th + margin > window.innerHeight) {
       top = r.top - th - 8;
     }
@@ -652,7 +682,7 @@ function setupInstantTooltipsAndGuides() {
   document.addEventListener('pointerover', (event) => {
     if (event.pointerType === 'touch') return;
     const target = event.target.closest?.('button, [data-tip], [title]');
-    if (!target || target.disabled) {
+    if (!target || target.disabled || shouldSuppressTooltip(target)) {
       hideInstantTooltip();
       return;
     }
