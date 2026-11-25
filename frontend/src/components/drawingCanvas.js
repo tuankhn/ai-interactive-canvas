@@ -701,8 +701,8 @@ function pointerDown(event) {
     return;
   }
 
-  // Nhường toàn quyền chuột/bút cho công cụ Chọn & Khoanh vùng (V)
-  if (state.tool === 'select') {
+  // Nhường toàn quyền chuột/bút cho công cụ Chọn & Khoanh vùng (V) hoặc Giấy Note (N)
+  if (state.tool === 'select' || state.tool === 'note') {
     return;
   }
 

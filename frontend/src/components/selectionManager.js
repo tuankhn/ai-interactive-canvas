@@ -6,6 +6,7 @@ import { snapshot, remember, updateHint } from './history.js';
 import { closePanels } from './toolbar.js';
 import { openDirectCanvasTextEditor } from './drawingCanvas.js';
 import { removeObjectsWithCascade } from '../utils/cascadeDelete.js';
+import { isStickyNoteObject, openStickyNoteEditor, updateStickyNoteStyle } from './boardMediaAndNotes.js';
 
 let selectedObjects = [];
 let marqueeStartWorld = null;
@@ -19,9 +20,40 @@ let boxEl = null;
 let actionBarEl = null;
 let cropToggleBtn = null;
 let editTextBtn = null;
+let angleInputEl = null;
 
 function isTextObject(obj) {
   return obj instanceof Text || obj instanceof Textbox || typeof obj?.text === 'string';
+}
+
+function isEditableTextOrNote(obj) {
+  return isTextObject(obj) || isStickyNoteObject(obj);
+}
+
+function openEditorForSelectedObject(obj) {
+  if (!obj) return;
+  if (isStickyNoteObject(obj)) {
+    openStickyNoteEditor(obj);
+  } else {
+    openDirectCanvasTextEditor({ x: obj.left, y: obj.top }, obj);
+  }
+}
+
+function normalizeDeg360(deg) {
+  const n = Math.round(Number(deg) || 0) % 360;
+  return n < 0 ? n + 360 : n;
+}
+
+function rotatePointAround(pt, center, rad) {
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = pt.x - center.x;
+  const dy = pt.y - center.y;
+  return {
+    ...pt,
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  };
 }
 
 function isCroppableImage(obj) {
@@ -80,6 +112,7 @@ export function syncSelectionOverlay() {
 
   if (state.tool !== 'select' || selectedObjects.length === 0 || state.ended) {
     boxEl.hidden = true;
+    boxEl.style.transform = 'none';
     if (actionBarEl) actionBarEl.hidden = true;
     return;
   }
@@ -87,12 +120,33 @@ export function syncSelectionOverlay() {
   const worldBounds = computeUnionWorldBounds(selectedObjects);
   if (!worldBounds) {
     boxEl.hidden = true;
+    boxEl.style.transform = 'none';
     if (actionBarEl) actionBarEl.hidden = true;
     return;
   }
 
   const pad = 6;
-  const s = worldRectToScreen(worldBounds);
+  const singleObj = selectedObjects.length === 1 ? selectedObjects[0] : null;
+  const singleAngle = singleObj ? Number(singleObj.angle || 0) : 0;
+
+  let s;
+  if (singleObj && !cropModeActive && Math.abs(singleAngle % 360) > 0.05) {
+    const center = singleObj.getCenterPoint();
+    const localW = Math.max(8, singleObj.getScaledWidth());
+    const localH = Math.max(8, singleObj.getScaledHeight());
+    s = worldRectToScreen({
+      left: center.x - localW / 2,
+      top: center.y - localH / 2,
+      width: localW,
+      height: localH,
+    });
+    boxEl.style.transformOrigin = 'center center';
+    boxEl.style.transform = `rotate(${singleAngle}deg)`;
+  } else {
+    s = worldRectToScreen(worldBounds);
+    boxEl.style.transform = 'none';
+  }
+
   boxEl.hidden = false;
   boxEl.classList.toggle('is-crop-mode', cropModeActive);
   Object.assign(boxEl.style, {
@@ -103,18 +157,27 @@ export function syncSelectionOverlay() {
   });
 
   if (actionBarEl) {
-    const singleText = selectedObjects.length === 1 && isTextObject(selectedObjects[0]);
+    const singleEditable = selectedObjects.length === 1 && isEditableTextOrNote(selectedObjects[0]);
     const singleImg = selectedObjects.length === 1 && isCroppableImage(selectedObjects[0]);
-    if (editTextBtn) editTextBtn.hidden = !singleText;
+    if (editTextBtn) editTextBtn.hidden = !singleEditable;
     if (cropToggleBtn) {
       cropToggleBtn.hidden = !singleImg;
       cropToggleBtn.classList.toggle('is-active', cropModeActive);
       cropToggleBtn.setAttribute('aria-pressed', String(cropModeActive));
     }
+    if (angleInputEl && document.activeElement !== angleInputEl) {
+      const shownDeg = singleObj ? normalizeDeg360(singleAngle) : 0;
+      angleInputEl.value = String(shownDeg);
+    }
+
+    const unionScreen = worldRectToScreen(worldBounds);
     actionBarEl.hidden = false;
-    const barTop = s.top - pad - 38 < 58 ? s.top + s.height + pad + 8 : s.top - pad - 36;
+    const barTop =
+      unionScreen.top - pad - 62 < 58
+        ? unionScreen.top + unionScreen.height + pad + 12
+        : unionScreen.top - pad - 60;
     Object.assign(actionBarEl.style, {
-      left: `${Math.max(8, Math.min(s.left - pad, stage.clientWidth - 200))}px`,
+      left: `${Math.max(8, Math.min(unionScreen.left - pad, stage.clientWidth - 260))}px`,
       top: `${Math.max(8, barTop)}px`,
     });
   }
@@ -186,6 +249,10 @@ export function applyStyleToSelection(patch = {}) {
   const before = snapshot();
 
   for (const obj of current) {
+    if (isStickyNoteObject(obj)) {
+      updateStickyNoteStyle(obj, patch);
+      continue;
+    }
     if (patch.color) {
       if (isTextObject(obj)) {
         obj.set('fill', patch.color);
@@ -276,6 +343,20 @@ function buildOverlayDOM() {
   boxEl.id = 'selectionBoundingBox';
   boxEl.className = 'selection-bounding-box';
   boxEl.hidden = true;
+
+  const rotStem = document.createElement('span');
+  rotStem.className = 'sel-rotate-stem';
+  rotStem.setAttribute('aria-hidden', 'true');
+
+  const rotBtn = document.createElement('button');
+  rotBtn.type = 'button';
+  rotBtn.className = 'sel-rotate-handle';
+  rotBtn.dataset.handle = 'rotate';
+  rotBtn.title = 'Kéo xoay 360° (Giữ Shift để bắt góc 15°)';
+  rotBtn.setAttribute('aria-label', 'Xoay đối tượng 360 độ');
+  rotBtn.textContent = '↻';
+  boxEl.append(rotStem, rotBtn);
+
   ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].forEach((dir) => {
     const h = document.createElement('span');
     h.className = `sel-handle sel-${dir}`;
@@ -294,10 +375,10 @@ function buildOverlayDOM() {
   editTextBtn.textContent = 'Sửa chữ';
   editTextBtn.addEventListener('click', (ev) => {
     ev.stopPropagation();
-    const target = getSelectedObjects().find(isTextObject);
+    const target = getSelectedObjects().find(isEditableTextOrNote);
     if (target) {
       clearSelection();
-      openDirectCanvasTextEditor({ x: target.left, y: target.top }, target);
+      openEditorForSelectedObject(target);
     }
   });
 
@@ -312,6 +393,73 @@ function buildOverlayDOM() {
     setStatus(cropModeActive ? 'Kéo các cạnh khung xanh để cắt (crop) vùng ảnh' : 'Đã tắt chế độ cắt ảnh');
   });
 
+  const angleWrap = document.createElement('label');
+  angleWrap.className = 'sel-angle-wrap';
+  angleWrap.title = 'Nhập góc xoay 0° – 360°';
+  angleInputEl = document.createElement('input');
+  angleInputEl.type = 'number';
+  angleInputEl.min = '0';
+  angleInputEl.max = '360';
+  angleInputEl.step = '1';
+  angleInputEl.value = '0';
+  angleInputEl.className = 'sel-angle-input';
+  angleInputEl.setAttribute('aria-label', 'Góc xoay độ');
+  const angleUnit = document.createElement('span');
+  angleUnit.className = 'sel-angle-unit';
+  angleUnit.textContent = '°';
+  angleWrap.append(angleInputEl, angleUnit);
+  angleWrap.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+
+  const applyExactAngleFromInput = () => {
+    const current = getSelectedObjects();
+    if (!current.length || state.ended) return;
+    const desiredDeg = normalizeDeg360(angleInputEl.value);
+    angleInputEl.value = String(desiredDeg);
+    const before = snapshot();
+    if (current.length === 1) {
+      const obj = current[0];
+      const prevAngle = Number(obj.angle || 0);
+      const center = obj.getCenterPoint();
+      const dRad = ((desiredDeg - prevAngle) * Math.PI) / 180;
+      obj.rotate(desiredDeg);
+      obj.setPositionByOrigin(center, 'center', 'center');
+      if (Array.isArray(obj._hitPoints)) {
+        obj._hitPoints = obj._hitPoints.map((pt) => rotatePointAround(pt, center, dRad));
+      }
+      obj.setCoords?.();
+    } else {
+      const b = computeUnionWorldBounds(current);
+      if (b) {
+        const unionCenter = { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+        const dRad = (desiredDeg * Math.PI) / 180;
+        for (const obj of current) {
+          const c = obj.getCenterPoint();
+          const nextC = rotatePointAround(c, unionCenter, dRad);
+          obj.rotate((obj.angle || 0) + desiredDeg);
+          obj.setPositionByOrigin(nextC, 'center', 'center');
+          if (Array.isArray(obj._hitPoints)) {
+            obj._hitPoints = obj._hitPoints.map((pt) => rotatePointAround(pt, unionCenter, dRad));
+          }
+          obj.setCoords?.();
+        }
+      }
+    }
+    fabricCanvas.requestRenderAll();
+    remember(before);
+    syncSelectionOverlay();
+    setStatus(`Đã đặt góc xoay ${desiredDeg}°`);
+  };
+
+  angleInputEl.addEventListener('change', applyExactAngleFromInput);
+  angleInputEl.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      applyExactAngleFromInput();
+      angleInputEl.blur();
+    }
+  });
+
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
   delBtn.className = 'sel-action-btn sel-action-danger';
@@ -321,7 +469,7 @@ function buildOverlayDOM() {
     deleteSelectedObjects();
   });
 
-  actionBarEl.append(editTextBtn, cropToggleBtn, delBtn);
+  actionBarEl.append(editTextBtn, cropToggleBtn, angleWrap, delBtn);
   overlayRoot.append(marqueeEl, boxEl, actionBarEl);
   stage.appendChild(overlayRoot);
 }
@@ -342,13 +490,13 @@ export function setupSelectionManager() {
     const wp = screenToWorld(sp.x, sp.y);
     const handle = event.target.closest('[data-handle]')?.dataset?.handle || null;
 
-    // Kiểm tra nhấp đúp trên đối tượng chữ đang chọn -> mở gõ sửa chữ trực tiếp
+    // Kiểm tra nhấp đúp trên đối tượng chữ / Giấy Note đang chọn -> mở sửa chữ trực tiếp
     const now = performance.now();
-    if (!handle && current.length === 1 && isTextObject(current[0]) && now - lastClickInfo.time < 360) {
+    if (!handle && current.length === 1 && isEditableTextOrNote(current[0]) && now - lastClickInfo.time < 360) {
       const targetText = current[0];
       lastClickInfo = { time: 0, x: 0, y: 0, obj: null };
       clearSelection();
-      openDirectCanvasTextEditor({ x: targetText.left, y: targetText.top }, targetText);
+      openEditorForSelectedObject(targetText);
       return;
     }
     lastClickInfo = { time: now, x: wp.x, y: wp.y, obj: current[0] };
@@ -356,12 +504,28 @@ export function setupSelectionManager() {
     const initBounds = computeUnionWorldBounds(current);
     if (!initBounds) return;
 
+    const unionCenter =
+      current.length === 1
+        ? current[0].getCenterPoint()
+        : { x: initBounds.left + initBounds.width / 2, y: initBounds.top + initBounds.height / 2 };
+
+    const gestureMode =
+      handle === 'rotate'
+        ? 'rotate'
+        : handle
+          ? cropModeActive && current.length === 1 && isCroppableImage(current[0])
+            ? 'crop'
+            : 'resize'
+          : 'move';
+
     gesture = {
       pointerId: event.pointerId,
-      mode: handle ? (cropModeActive && current.length === 1 && isCroppableImage(current[0]) ? 'crop' : 'resize') : 'move',
+      mode: gestureMode,
       handle,
       startWorld: wp,
       lastWorld: wp,
+      unionCenter,
+      startPointerRad: Math.atan2(wp.y - unionCenter.y, wp.x - unionCenter.x),
       initBounds,
       before: snapshot(),
       changed: false,
@@ -369,6 +533,10 @@ export function setupSelectionManager() {
         obj,
         left: obj.left || 0,
         top: obj.top || 0,
+        angle: Number(obj.angle || 0),
+        center: obj.getCenterPoint(),
+        scaledW: Math.max(8, obj.getScaledWidth()),
+        scaledH: Math.max(8, obj.getScaledHeight()),
         scaleX: obj.scaleX || 1,
         scaleY: obj.scaleY || 1,
         fontSize: obj.fontSize || 24,
@@ -387,6 +555,47 @@ export function setupSelectionManager() {
     event.preventDefault();
     const sp = getScreenPoint(event);
     const wp = screenToWorld(sp.x, sp.y);
+
+    if (gesture.mode === 'rotate') {
+      const curRad = Math.atan2(wp.y - gesture.unionCenter.y, wp.x - gesture.unionCenter.x);
+      const rawDeltaDeg = ((curRad - gesture.startPointerRad) * 180) / Math.PI;
+      gesture.changed = true;
+
+      if (gesture.items.length === 1) {
+        const it = gesture.items[0];
+        const rawNext = it.angle + rawDeltaDeg;
+        const nextAngle = event.shiftKey ? Math.round(rawNext / 15) * 15 : Math.round(rawNext);
+        const appliedRad = ((nextAngle - it.angle) * Math.PI) / 180;
+        it.obj.rotate(nextAngle);
+        it.obj.setPositionByOrigin(it.center, 'center', 'center');
+        if (it.hitPoints) {
+          it.obj._hitPoints = it.hitPoints.map((pt) => rotatePointAround(pt, it.center, appliedRad));
+        }
+        it.obj.setCoords?.();
+        const normDeg = normalizeDeg360(nextAngle);
+        if (angleInputEl) angleInputEl.value = String(normDeg);
+        setStatus(`Đang xoay: ${normDeg}° (Giữ Shift để bắt góc 15°)`);
+      } else {
+        const snappedDelta = event.shiftKey ? Math.round(rawDeltaDeg / 15) * 15 : Math.round(rawDeltaDeg);
+        const dRad = (snappedDelta * Math.PI) / 180;
+        for (const it of gesture.items) {
+          const nextC = rotatePointAround(it.center, gesture.unionCenter, dRad);
+          it.obj.rotate(it.angle + snappedDelta);
+          it.obj.setPositionByOrigin(nextC, 'center', 'center');
+          if (it.hitPoints) {
+            it.obj._hitPoints = it.hitPoints.map((pt) => rotatePointAround(pt, gesture.unionCenter, dRad));
+          }
+          it.obj.setCoords?.();
+        }
+        const normDeg = normalizeDeg360(snappedDelta);
+        if (angleInputEl) angleInputEl.value = String(normDeg);
+        setStatus(`Đang xoay nhóm: ${normDeg}°`);
+      }
+
+      fabricCanvas.requestRenderAll();
+      syncSelectionOverlay();
+      return;
+    }
 
     if (gesture.mode === 'move') {
       const dx = wp.x - gesture.lastWorld.x;
@@ -409,6 +618,63 @@ export function setupSelectionManager() {
 
     const b = gesture.initBounds;
     const h = gesture.handle || 'se';
+
+    // Co giãn chính xác theo hệ toạ độ xoay cục bộ khi chọn 1 đối tượng đã xoay góc != 0°
+    if (
+      gesture.mode === 'resize' &&
+      gesture.items.length === 1 &&
+      Math.abs(gesture.items[0].angle % 360) > 0.05
+    ) {
+      const it = gesture.items[0];
+      const rad = (it.angle * Math.PI) / 180;
+      const localPt = rotatePointAround(wp, it.center, -rad);
+      const origLeft = it.center.x - it.scaledW / 2;
+      const origTop = it.center.y - it.scaledH / 2;
+      let lLeft = origLeft;
+      let lRight = it.center.x + it.scaledW / 2;
+      let lTop = origTop;
+      let lBottom = it.center.y + it.scaledH / 2;
+
+      if (h.includes('w')) lLeft = Math.min(lRight - 16, localPt.x);
+      if (h.includes('e')) lRight = Math.max(lLeft + 16, localPt.x);
+      if (h.includes('n')) lTop = Math.min(lBottom - 16, localPt.y);
+      if (h.includes('s')) lBottom = Math.max(lTop + 16, localPt.y);
+
+      const nextLocalW = Math.max(16, lRight - lLeft);
+      const nextLocalH = Math.max(16, lBottom - lTop);
+      const ratioX = nextLocalW / Math.max(1, it.scaledW);
+      const ratioY = nextLocalH / Math.max(1, it.scaledH);
+      const localNewCenter = { x: (lLeft + lRight) / 2, y: (lTop + lBottom) / 2 };
+      const worldNewCenter = rotatePointAround(localNewCenter, it.center, rad);
+
+      if (isTextObject(it.obj)) {
+        const uniformRatio = Math.max(0.35, (ratioX + ratioY) / 2);
+        it.obj.set({ fontSize: Math.max(11, Math.round(it.fontSize * uniformRatio)) });
+      } else {
+        it.obj.set({
+          scaleX: it.scaleX * ratioX,
+          scaleY: it.scaleY * ratioY,
+        });
+      }
+      it.obj.setPositionByOrigin(worldNewCenter, 'center', 'center');
+      if (it.hitPoints) {
+        it.obj._hitPoints = it.hitPoints.map((pt) => {
+          const unrot = rotatePointAround(pt, it.center, -rad);
+          const scaled = {
+            ...pt,
+            x: lLeft + ((unrot.x - origLeft) / Math.max(1, it.scaledW)) * nextLocalW,
+            y: lTop + ((unrot.y - origTop) / Math.max(1, it.scaledH)) * nextLocalH,
+          };
+          return rotatePointAround(scaled, it.center, rad);
+        });
+      }
+      it.obj.setCoords?.();
+      gesture.changed = true;
+      fabricCanvas.requestRenderAll();
+      syncSelectionOverlay();
+      return;
+    }
+
     let newLeft = b.left;
     let newTop = b.top;
     let newRight = b.left + b.width;
@@ -494,7 +760,13 @@ export function setupSelectionManager() {
     if (!gesture || event.pointerId !== gesture.pointerId) return;
     if (gesture.changed) {
       remember(gesture.before);
-      setStatus(gesture.mode === 'crop' ? 'Đã cắt (crop) vùng chọn' : 'Đã cập nhật vị trí / kích thước vùng chọn');
+      setStatus(
+        gesture.mode === 'crop'
+          ? 'Đã cắt (crop) vùng chọn'
+          : gesture.mode === 'rotate'
+            ? 'Đã cập nhật góc xoay đối tượng'
+            : 'Đã cập nhật vị trí / kích thước vùng chọn',
+      );
     }
     gesture = null;
     syncSelectionOverlay();
@@ -517,11 +789,11 @@ export function setupSelectionManager() {
     const now = performance.now();
 
     if (hitObj) {
-      // Nhấp đúp vào đối tượng chữ -> mở sửa chữ trực tiếp
-      if (isTextObject(hitObj) && lastClickInfo.obj === hitObj && now - lastClickInfo.time < 360) {
+      // Nhấp đúp vào đối tượng chữ / Giấy Note -> mở sửa chữ trực tiếp
+      if (isEditableTextOrNote(hitObj) && lastClickInfo.obj === hitObj && now - lastClickInfo.time < 360) {
         lastClickInfo = { time: 0, x: 0, y: 0, obj: null };
         clearSelection();
-        openDirectCanvasTextEditor({ x: hitObj.left, y: hitObj.top }, hitObj);
+        openEditorForSelectedObject(hitObj);
         return;
       }
       lastClickInfo = { time: now, x: wp.x, y: wp.y, obj: hitObj };
@@ -680,12 +952,22 @@ export function setupSelectionManager() {
       }
     } else if (event.key === 'Escape') {
       clearSelection();
-    } else if (event.key === 'Enter' && getSelectedObjects().length === 1 && isTextObject(getSelectedObjects()[0])) {
+    } else if (event.key === 'Enter' && getSelectedObjects().length === 1 && isEditableTextOrNote(getSelectedObjects()[0])) {
       event.preventDefault();
       const tObj = getSelectedObjects()[0];
       clearSelection();
-      openDirectCanvasTextEditor({ x: tObj.left, y: tObj.top }, tObj);
+      openEditorForSelectedObject(tObj);
     }
+  });
+
+  window.addEventListener('app:select-objects', ({ detail }) => {
+    const list = Array.isArray(detail?.objects)
+      ? detail.objects.filter((o) => o && fabricCanvas.getObjects().includes(o))
+      : [];
+    selectedObjects = list;
+    cropModeActive = false;
+    syncSelectionOverlay();
+    window.dispatchEvent(new CustomEvent('app:selection-changed', { detail: { count: selectedObjects.length } }));
   });
 
   window.addEventListener('app:sync-viewport', syncSelectionOverlay);

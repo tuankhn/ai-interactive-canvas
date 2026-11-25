@@ -186,6 +186,7 @@ export function setTool(next) {
   stage?.classList.toggle('is-panning', next === 'hand');
   stage?.classList.toggle('is-select-tool', next === 'select');
   stage?.classList.toggle('is-text-tool', next === 'text');
+  stage?.classList.toggle('is-note-tool', next === 'note');
   document.querySelectorAll('[data-tool]').forEach((button) => {
     const selected = button.dataset.tool === next;
     button.classList.toggle('is-active', selected);
@@ -570,7 +571,10 @@ function setupExcalidrawKeyboardShortcuts() {
       toggleRuler();
     } else if (key === 't') {
       event.preventDefault();
-      setTool('text', { showGuide: true });
+      setTool('text');
+    } else if (key === 'n') {
+      event.preventDefault();
+      setTool('note');
     } else if (key === 'o') {
       event.preventDefault();
       $('handwritingTool')?.click();

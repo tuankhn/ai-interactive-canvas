@@ -1,11 +1,12 @@
 import { $, state, ui, surface, shapeTools, setStatus } from '../utils/context.js';
 import { getSelectedObjects, applyStyleToSelection, applyLayerActionToSelection } from './selectionManager.js';
 import { syncColorSelection, syncWidthSelection } from './toolbar.js';
+import { isStickyNoteObject } from './boardMediaAndNotes.js';
 
 let inspectorCollapsed = typeof window !== 'undefined' && window.innerWidth <= 768;
 
 function isTextItem(obj) {
-  return obj && typeof obj.text === 'string';
+  return obj && (typeof obj.text === 'string' || isStickyNoteObject(obj));
 }
 
 function isMobileViewport() {
@@ -36,14 +37,16 @@ export function syncPropertyInspectorVisibility() {
   const selected = getSelectedObjects();
   const hasSelection = selected.length > 0;
   const selHasText = selected.some(isTextItem);
+  const selHasStickyNote = selected.some(isStickyNoteObject);
   const selHasShape = selected.some((o) => o && !isTextItem(o) && o.type !== 'path');
 
   const tool = state.tool;
   const isDrawTool = tool === 'pen' || tool === 'highlighter';
   const isShapeTool = shapeTools.has(tool);
   const isTextTool = tool === 'text';
+  const isNoteTool = tool === 'note';
 
-  const isContextEligible = isDrawTool || isShapeTool || isTextTool || hasSelection;
+  const isContextEligible = isDrawTool || isShapeTool || isTextTool || isNoteTool || hasSelection;
   if (!isContextEligible) {
     panel.hidden = true;
     if (reopenBtn) reopenBtn.hidden = true;
@@ -60,10 +63,12 @@ export function syncPropertyInspectorVisibility() {
   panel.hidden = false;
   if (reopenBtn) reopenBtn.hidden = true;
 
-  const showTextProps = isTextTool || (hasSelection && selHasText);
-  const showShapeFill = isShapeTool || (hasSelection && selHasShape);
-  const showStrokeWidthAndStyle = isDrawTool || isShapeTool || (hasSelection && !selHasText);
+  const showTextProps = isTextTool || isNoteTool || (hasSelection && selHasText);
+  const showNoteBg = isNoteTool || (hasSelection && selHasStickyNote);
+  const showShapeFill = !showNoteBg && (isShapeTool || (hasSelection && selHasShape));
+  const showStrokeWidthAndStyle = isDrawTool || isShapeTool || (hasSelection && !selHasText && !selHasStickyNote);
 
+  const noteBgGroup = $('propGroupNoteBg');
   const bgGroup = $('propGroupBackground');
   const widthGroup = $('propGroupStrokeWidth');
   const styleGroup = $('propGroupStrokeStyle');
@@ -72,6 +77,7 @@ export function syncPropertyInspectorVisibility() {
   const alignGroup = $('propGroupTextAlign');
   const layerGroup = $('propGroupLayers');
 
+  if (noteBgGroup) noteBgGroup.hidden = !showNoteBg;
   if (bgGroup) bgGroup.hidden = !showShapeFill;
   if (widthGroup) widthGroup.hidden = !showStrokeWidthAndStyle;
   if (styleGroup) styleGroup.hidden = !showStrokeWidthAndStyle || tool === 'highlighter';
@@ -98,6 +104,13 @@ export function syncInspectorActiveControls() {
   if (reopenDot) {
     reopenDot.style.setProperty('--reopen-dot-color', ui.color?.value || '#26231F');
   }
+
+  const currentNoteBg = (state.noteBg || '#FFE066').toLowerCase();
+  document.querySelectorAll('[data-insp-notebg]').forEach((btn) => {
+    const active = btn.dataset.inspNotebg.toLowerCase() === currentNoteBg;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
 
   const currentFill = state.shapeFill || 'transparent';
   document.querySelectorAll('[data-insp-fill]').forEach((btn) => {
@@ -170,6 +183,15 @@ export function setupPropertyInspector() {
     syncColorSelection();
     applyStyleToSelection({ color: customStrokeInput.value });
     syncInspectorActiveControls();
+  });
+
+  // Màu nền Giấy Note (Excalidraw Sticky Note)
+  document.querySelectorAll('[data-insp-notebg]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.noteBg = btn.dataset.inspNotebg;
+      applyStyleToSelection({ noteBg: state.noteBg });
+      syncInspectorActiveControls();
+    });
   });
 
   // Màu tô nền hình (Background)
@@ -259,19 +281,37 @@ export function setupPropertyInspector() {
     setInspectorCollapsed(false);
   });
 
-  // Trên Mobile: khi người dùng chạm bút bắt đầu vẽ lên mặt bảng, tự động thu gọn bảng tuỳ chỉnh để không che nét viết
-  surface?.addEventListener('pointerdown', () => {
-    if (isMobileViewport() && !inspectorCollapsed) {
+  // Tự động đóng bảng tuỳ chỉnh nét ngay khi người dùng nhấp / đặt bút ra bên ngoài bảng (cả Desktop lẫn Mobile)
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (inspectorCollapsed || panel.hidden) return;
+      const t = event.target;
+      if (
+        panel.contains(t) ||
+        t.closest?.('#toolbar') ||
+        t.closest?.('.tool-popover') ||
+        t.closest?.('#reopenInspectorBtn')
+      ) {
+        return;
+      }
       setInspectorCollapsed(true);
-    }
-  });
+    },
+    true
+  );
 
   window.addEventListener('app:toggle-inspector', togglePropertyInspector);
-  window.addEventListener('app:tool-changed', syncPropertyInspectorVisibility);
-  window.addEventListener('app:selection-changed', ({ detail }) => {
-    if (detail?.count > 0 && !isMobileViewport()) {
+  window.addEventListener('app:tool-changed', ({ detail }) => {
+    const nextTool = detail?.tool || state.tool;
+    if (
+      !isMobileViewport() &&
+      (nextTool === 'pen' || nextTool === 'highlighter' || nextTool === 'text' || nextTool === 'note' || shapeTools.has(nextTool))
+    ) {
       inspectorCollapsed = false;
     }
+    syncPropertyInspectorVisibility();
+  });
+  window.addEventListener('app:selection-changed', () => {
     syncPropertyInspectorVisibility();
   });
   ui.color?.addEventListener('input', syncInspectorActiveControls);
