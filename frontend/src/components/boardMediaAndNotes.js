@@ -436,8 +436,8 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
   syncTextareaMetrics();
 
   let committed = false;
-  const onToolChangedCommit = () => finalize();
-  const finalize = () => {
+  const onToolChangedCommit = () => finalize(false);
+  const finalize = (reselectAfter = false) => {
     if (committed) return;
     committed = true;
     window.removeEventListener('app:tool-changed', onToolChangedCommit);
@@ -451,7 +451,7 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
     remember(before);
     updateHint();
     setStatus(isNew ? 'Đã thêm Giấy Note lên bảng' : 'Đã cập nhật nội dung Giấy Note');
-    if (state.tool === 'select') {
+    if (reselectAfter && state.tool === 'select') {
       window.dispatchEvent(new CustomEvent('app:select-objects', { detail: { objects: [noteGroup] } }));
     }
   };
@@ -463,10 +463,10 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
     ev.stopPropagation();
     if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) {
       ev.preventDefault();
-      finalize();
+      finalize(true);
     }
   });
-  textarea.addEventListener('blur', finalize);
+  textarea.addEventListener('blur', () => finalize(false));
 
   stage.appendChild(textarea);
   activeNoteEditorEl = textarea;

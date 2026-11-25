@@ -1999,6 +1999,11 @@ button[aria-disabled="true"] {
   touch-action: none;
 }
 
+.canvas-stage.is-panning .selection-bounding-box,
+.canvas-stage.is-panning-active .selection-bounding-box {
+  pointer-events: none;
+}
+
 .selection-bounding-box.is-crop-mode {
   border: 2px solid #2F9E44;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.16);

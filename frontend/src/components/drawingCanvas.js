@@ -84,6 +84,10 @@ export function syncInfiniteViewportUI() {
       scrollBackBtn.hidden = anyVisible;
     }
   }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app:viewport-changed'));
+  }
 }
 
 export function setViewportTransformClean(nextVpt) {
