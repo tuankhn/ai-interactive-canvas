@@ -795,4 +795,15 @@ export function setupToolbar() {
   setupToolbarErgonomicDock();
   setupExcalidrawKeyboardShortcuts();
   setupInstantTooltipsAndGuides();
+
+  if (toolbar) {
+    const syncToolbarScrollCue = () => {
+      const atEnd = toolbar.scrollWidth <= toolbar.clientWidth + 4 ||
+        toolbar.scrollLeft + toolbar.clientWidth >= toolbar.scrollWidth - 6;
+      toolbar.classList.toggle('is-scroll-end', atEnd);
+    };
+    toolbar.addEventListener('scroll', syncToolbarScrollCue, { passive: true });
+    window.addEventListener('resize', syncToolbarScrollCue, { passive: true });
+    requestAnimationFrame(syncToolbarScrollCue);
+  }
 }

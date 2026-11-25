@@ -5584,3 +5584,16 @@ dialog[popover]::backdrop {
     display: none;
   }
 }
+
+/* Gợi ý cuộn ngang thanh công cụ trên iPad / Tablet cảm ứng (<= 1180px) */
+@media (pointer: coarse) and (max-width: 1180px) {
+  .toolbar {
+    -webkit-overflow-scrolling: touch;
+    mask-image: linear-gradient(to right, black 94%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black 94%, transparent 100%);
+  }
+  .toolbar.is-scroll-end {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+}
