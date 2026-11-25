@@ -1,7 +1,11 @@
 import { surface, fabricCanvas } from './context.js';
 
 export function isPalmTouch(event) {
-  return event.pointerType === 'touch' && (event.width > 28 || event.height > 28);
+  if (event.pointerType !== 'touch') return false;
+  const w = Number(event.width || 0);
+  const h = Number(event.height || 0);
+  // Ngón tay bình thường trên iPadOS Safari trả về 32–48px; lòng bàn tay thực sự > 64px
+  return w > 64 || h > 64 || w * h > 3600;
 }
 
 export function getScreenPoint(event) {

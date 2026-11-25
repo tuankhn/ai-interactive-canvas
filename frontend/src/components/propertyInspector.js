@@ -3,7 +3,7 @@ import { getSelectedObjects, applyStyleToSelection, applyLayerActionToSelection 
 import { syncColorSelection, syncWidthSelection } from './toolbar.js';
 import { isStickyNoteObject } from './boardMediaAndNotes.js';
 
-let inspectorCollapsed = typeof window !== 'undefined' && window.innerWidth <= 768;
+let inspectorCollapsed = typeof window !== 'undefined' && window.innerWidth <= 960;
 
 function isTextItem(obj) {
   return obj && (typeof obj.text === 'string' || isStickyNoteObject(obj));

@@ -8,6 +8,7 @@ import { $, stage, surface, toolbar, fabricCanvas, state, ui, toolNames, setStat
 import { snapshot, remember, updateHint } from '../components/history.js';
 import { closePanels, setTool } from '../components/toolbar.js';
 import { authFetch } from '../utils/auth_client.js';
+import { isPalmTouch } from '../utils/pointer.js';
 
 const OCR_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const MATH_CDN = 'https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js';
@@ -485,25 +486,12 @@ export function setupHandwriting() {
     if (selecting) stopSelecting();
     else beginSelection();
   });
-  selector.addEventListener('pointerdown', (event) => {
-    if (!selecting || state.ended || state.pageBusy || pointer !== null) return;
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
-    if (event.pointerType === 'touch' && (event.width > 28 || event.height > 28)) return;
-    event.preventDefault();
-    pointer = event.pointerId;
-    start = point(event);
-    drawMarquee(boxRect(start, start));
-    try { selector.setPointerCapture(event.pointerId); } catch { /* Không bắt buộc. */ }
-  }, { passive: false });
-  selector.addEventListener('pointermove', (event) => {
-    if (event.pointerId !== pointer || !start) return;
-    event.preventDefault();
-    drawMarquee(boxRect(start, point(event)));
-  }, { passive: false });
-  selector.addEventListener('pointerup', (event) => {
-    if (event.pointerId !== pointer || !start) return;
-    event.preventDefault();
-    const nextRegion = boxRect(start, point(event));
+  let lastCurrent = null;
+
+  function commitSelectionRegion(endPt) {
+    const nextRegion = boxRect(start, endPt);
+    start = null;
+    lastCurrent = null;
     stopSelecting();
     if (nextRegion.width < 12 || nextRegion.height < 12) {
       setStatus('Vùng chọn quá nhỏ. Nhấn Chuyển chữ để chọn lại.');
@@ -538,12 +526,58 @@ export function setupHandwriting() {
     location.textContent = `Trang ${pageOfSelection + 1} · ${Math.round(region.width)} × ${Math.round(region.height)} px`;
     dialog.showModal();
     if (crop) void runRecognition();
-  }, { passive: false });
-  for (const type of ['pointercancel', 'lostpointercapture']) {
-    selector.addEventListener(type, (event) => {
-      if (event.pointerId === pointer) stopSelecting();
-    });
   }
+
+  selector.addEventListener('touchstart', (event) => {
+    if (selecting) event.preventDefault();
+  }, { passive: false });
+  selector.addEventListener('touchmove', (event) => {
+    if (selecting) event.preventDefault();
+  }, { passive: false });
+
+  selector.addEventListener('pointerdown', (event) => {
+    if (!selecting || state.ended || state.pageBusy || pointer !== null) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (isPalmTouch(event)) return;
+    event.preventDefault();
+    pointer = event.pointerId;
+    start = point(event);
+    lastCurrent = start;
+    drawMarquee(boxRect(start, start));
+    try { selector.setPointerCapture(event.pointerId); } catch { /* Không bắt buộc. */ }
+  }, { passive: false });
+  selector.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== pointer || !start) return;
+    event.preventDefault();
+    lastCurrent = point(event);
+    drawMarquee(boxRect(start, lastCurrent));
+  }, { passive: false });
+  selector.addEventListener('pointerup', (event) => {
+    if (event.pointerId !== pointer || !start) return;
+    event.preventDefault();
+    commitSelectionRegion(point(event));
+  }, { passive: false });
+  selector.addEventListener('pointercancel', (event) => {
+    if (event.pointerId === pointer) {
+      start = null;
+      lastCurrent = null;
+      stopSelecting();
+    }
+  });
+  selector.addEventListener('lostpointercapture', (event) => {
+    if (event.pointerId !== pointer) return;
+    // Trên iPadOS Safari, lostpointercapture có thể bắn ngay khi nhấc tay: nếu khung chọn đã đủ lớn thì chốt nhận dạng
+    if (start && lastCurrent) {
+      const cand = boxRect(start, lastCurrent);
+      if (cand.width >= 12 && cand.height >= 12) {
+        commitSelectionRegion(lastCurrent);
+        return;
+      }
+    }
+    start = null;
+    lastCurrent = null;
+    stopSelecting();
+  });
 
   toolbar.addEventListener('click', (event) => {
     if (selecting && event.target.closest('button') !== toolButton) stopSelecting();
