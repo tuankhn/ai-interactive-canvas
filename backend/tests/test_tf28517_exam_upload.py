@@ -299,3 +299,92 @@ def test_frontend_exam_upload_ui_served():
     assert "Chế độ: Học sinh (Tự động ẩn đáp án đúng)" or "mode-student" in html_text
     assert "examDirectTextInput" in html_text
     assert "layoutToBoardBtn" in html_text
+
+
+def test_unkeyed_math_exam_auto_solves_and_docx_all_bold_labels_not_forced_to_a():
+    """
+    Kiểm tra thực tế lỗi báo cáo:
+    1) File DOCX in đậm cả 4 nhãn A., B., C., D. KHÔNG được gán bừa đáp án A cho mọi câu.
+    2) Đề Toán không đính kèm bảng đáp án vẫn giải đúng:
+       - Câu 1: Số gồm 5 nghìn, 3 trăm và 8 đơn vị -> C (5308)
+       - Câu 2: Kết quả phép chia 848 : 4 -> A (212)
+       - Câu 3: Tìm số chưa biết ? × 6 = 432 -> B (72)
+    """
+    import docx
+
+    doc = docx.Document()
+    doc.add_paragraph("Câu 1: Số gồm 5 nghìn, 3 trăm và 8 đơn vị được viết là:")
+    for lbl, val in [("A.", " 538"), ("B.", " 5380"), ("C.", " 5308"), ("D.", " 5038")]:
+        p = doc.add_paragraph()
+        r_lbl = p.add_run(lbl)
+        r_lbl.bold = True  # Cả 4 nhãn A., B., C., D. đều in đậm định dạng
+        p.add_run(val)
+
+    doc.add_paragraph("Câu 2: Kết quả của phép chia 848 : 4 là:")
+    for lbl, val in [("A.", " 212"), ("B.", " 221"), ("C.", " 202"), ("D.", " 214")]:
+        p = doc.add_paragraph()
+        r_lbl = p.add_run(lbl)
+        r_lbl.bold = True
+        p.add_run(val)
+
+    doc.add_paragraph("Câu 3: Tìm số chưa biết, biết: ? × 6 = 432")
+    for lbl, val in [("A.", " 70"), ("B.", " 72"), ("C.", " 62"), ("D.", " 82")]:
+        p = doc.add_paragraph()
+        r_lbl = p.add_run(lbl)
+        r_lbl.bold = True
+        p.add_run(val)
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+
+    files = {
+        "file": (
+            "de_toan_lop_3.docx",
+            bio.getvalue(),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    }
+    res_up = client.post("/api/v1/exam/upload?mode=STUDENT", files=files)
+    assert res_up.status_code == 200
+    questions = res_up.json()["questions"]
+    assert len(questions) == 3
+
+    # Khoanh C ở Câu 1 (5308) -> PHẢI ĐÚNG (✓ C)
+    g1 = client.post(
+        "/api/v1/exam/grade-mcq",
+        json={
+            "question_id": questions[0]["id"],
+            "selected_label": "C",
+            "question_content": questions[0]["content"],
+            "options": questions[0]["options"],
+        },
+    ).json()
+    assert g1["is_correct"] is True
+    assert g1["correct_label"] == "C"
+
+    # Khoanh A ở Câu 2 (212) -> PHẢI ĐÚNG (✓ A)
+    g2 = client.post(
+        "/api/v1/exam/grade-mcq",
+        json={
+            "question_id": questions[1]["id"],
+            "selected_label": "A",
+            "question_content": questions[1]["content"],
+            "options": questions[1]["options"],
+        },
+    ).json()
+    assert g2["is_correct"] is True
+    assert g2["correct_label"] == "A"
+
+    # Khoanh C (62) ở Câu 3 (? × 6 = 432) -> SAI, và đáp án đúng phải là B (72) chứ KHÔNG phải A!
+    g3 = client.post(
+        "/api/v1/exam/grade-mcq",
+        json={
+            "question_id": questions[2]["id"],
+            "selected_label": "C",
+            "question_content": questions[2]["content"],
+            "options": questions[2]["options"],
+        },
+    ).json()
+    assert g3["is_correct"] is False
+    assert g3["correct_label"] == "B"

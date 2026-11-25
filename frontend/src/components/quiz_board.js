@@ -136,12 +136,17 @@ export function findOptionTargetsOnCanvas(canvas) {
       grouped.set(key, {
         label,
         questionId: meta.question_id || 'q_board',
+        questionContent: meta.question_content || null,
+        options: Array.isArray(meta.options) ? meta.options : null,
+        correctOption: meta.correct_option || null,
+        explanation: meta.explanation || null,
+        isLaidOutExamOption: meta.type === 'answer_option',
         x: rect.left,
         y: rect.top,
         width: rect.width,
         height: rect.height,
-        badgeX: meta.badgeX ?? rect.left,
-        badgeY: meta.badgeY ?? rect.top,
+        badgeX: meta.badgeX ?? rect.left + 12,
+        badgeY: meta.badgeY ?? rect.top + rect.height / 2,
         targetObject: obj,
       });
     } else {
@@ -153,6 +158,10 @@ export function findOptionTargetsOnCanvas(canvas) {
       existing.y = minY;
       existing.width = maxX - minX;
       existing.height = maxY - minY;
+      if (meta.badgeX != null) existing.badgeX = meta.badgeX;
+      if (meta.badgeY != null) existing.badgeY = meta.badgeY;
+      if (!existing.questionContent && meta.question_content) existing.questionContent = meta.question_content;
+      if (!existing.options && Array.isArray(meta.options)) existing.options = meta.options;
     }
   }
   return Array.from(grouped.values());
@@ -280,6 +289,10 @@ export function setupQuizBoard() {
     let optionTop = startY + headerH + 18;
 
     const options = Array.isArray(question.options) ? question.options : [];
+    const cleanOptions = options.map((o) => ({
+      label: String(o.label || 'A').toUpperCase(),
+      content: String(o.content || '').trim(),
+    }));
     const inkColor = isDarkBoard ? '#ECE7DF' : '#26231F';
     const cardBg = isDarkBoard ? 'rgba(42, 39, 35, 0.92)' : '#FAF8F4';
     const cardStroke = isDarkBoard ? '#4A443D' : '#D5CEC0';
@@ -319,6 +332,8 @@ export function setupQuizBoard() {
         quizCardManaged: true,
         type: 'quiz_option_target',
         question_id: question.id,
+        question_content: question.content || '',
+        options: cleanOptions,
         label,
         badgeX: startX + 27,
         badgeY: optionTop + rowHeight / 2,
@@ -383,32 +398,82 @@ export function setupQuizBoard() {
     setQuizPanelStatus(`Đang hiển thị Câu ${index + 1}/${total}. Hãy dùng Bút vẽ khoanh tròn A, B, C hoặc D trên bảng!`, 'info');
   }
 
-  function highlightCircledOptionOnCanvas(target, isCorrect, matchedLabel) {
+  function highlightCircledOptionOnCanvas(target, isCorrect, matchedLabel, correctLabel = null) {
+    const qId = target.questionId || 'q_board';
+    // Xoá dấu chấm cũ của riêng câu hỏi này nếu học sinh tẩy khoanh lại phương án mới
+    const staleMarks = fabricCanvas
+      .getObjects()
+      .filter((obj) => obj?.meta?.type === 'quiz_feedback_mark' && obj?.meta?.question_id === qId);
+    if (staleMarks.length > 0) {
+      fabricCanvas.remove(...staleMarks);
+    }
+
     const color = isCorrect ? '#16a34a' : '#dc2626';
+    const ringRadius = target.isLaidOutExamOption ? 17 : 21;
+    const centerX = target.badgeX ?? target.x + 12;
+    const centerY = target.badgeY ?? target.y + target.height / 2;
+
     const badgeRing = new Circle({
-      left: (target.badgeX ?? target.x + 26) - 21,
-      top: (target.badgeY ?? target.y + target.height / 2) - 21,
-      radius: 21,
+      left: centerX - ringRadius,
+      top: centerY - ringRadius,
+      radius: ringRadius,
       fill: 'transparent',
       stroke: color,
-      strokeWidth: 3.5,
+      strokeWidth: 3,
       selectable: false,
       evented: false,
     });
-    badgeRing.meta = { quizCardManaged: true, type: 'quiz_feedback_mark', label: matchedLabel };
+    badgeRing.meta = { quizCardManaged: true, type: 'quiz_feedback_mark', question_id: qId, label: matchedLabel };
 
-    const markText = new FabricText(isCorrect ? `✓ ${matchedLabel}` : `✕ ${matchedLabel}`, {
-      left: target.x + Math.min(target.width - 54, 420),
-      top: target.y + 12,
-      fontSize: 16,
+    const statusLabelText = isCorrect
+      ? `✓ ${matchedLabel}`
+      : correctLabel && correctLabel !== matchedLabel
+        ? `✕ ${matchedLabel} (Đúng: ${correctLabel})`
+        : `✕ ${matchedLabel}`;
+
+    const markText = new FabricText(statusLabelText, {
+      left: target.x + Math.min(Math.max(180, target.width - 150), 460),
+      top: Math.max(target.y, centerY - 9),
+      fontSize: 15.5,
+      fontFamily: 'Be Vietnam Pro, sans-serif',
       fontWeight: 'bold',
       fill: color,
       selectable: false,
       evented: false,
     });
-    markText.meta = { quizCardManaged: true, type: 'quiz_feedback_mark', label: matchedLabel };
+    markText.meta = { quizCardManaged: true, type: 'quiz_feedback_mark', question_id: qId, label: matchedLabel };
 
     fabricCanvas.add(badgeRing, markText);
+
+    // Nếu khoanh chưa đúng, đánh dấu nhẹ vòng xanh đứt nét vào phương án đúng trên cùng câu hỏi để học sinh dễ đối chiếu
+    if (!isCorrect && correctLabel && correctLabel !== matchedLabel) {
+      const siblingCorrect = findOptionTargetsOnCanvas(fabricCanvas).find(
+        (opt) => opt.questionId === qId && opt.label === correctLabel
+      );
+      if (siblingCorrect) {
+        const cX = siblingCorrect.badgeX ?? siblingCorrect.x + 12;
+        const cY = siblingCorrect.badgeY ?? siblingCorrect.y + siblingCorrect.height / 2;
+        const correctHintRing = new Circle({
+          left: cX - ringRadius,
+          top: cY - ringRadius,
+          radius: ringRadius,
+          fill: 'transparent',
+          stroke: '#16a34a',
+          strokeWidth: 2.5,
+          strokeDashArray: [5, 4],
+          selectable: false,
+          evented: false,
+        });
+        correctHintRing.meta = {
+          quizCardManaged: true,
+          type: 'quiz_feedback_mark',
+          question_id: qId,
+          label: correctLabel,
+        };
+        fabricCanvas.add(correctHintRing);
+      }
+    }
+
     fabricCanvas.requestRenderAll();
   }
 
@@ -438,8 +503,20 @@ export function setupQuizBoard() {
     const { target, score } = matched;
     const question =
       quizState.questions.find((q) => q.id === target.questionId) ||
-      quizState.questions[quizState.currentIndex] ||
-      { id: target.questionId || 'q_board', number: quizState.currentIndex + 1, content: '' };
+      (!target.isLaidOutExamOption ? quizState.questions[quizState.currentIndex] : null) || {
+        id: target.questionId || 'q_board',
+        number: quizState.currentIndex + 1,
+        content: target.questionContent || '',
+        options: target.options || [],
+        correct_option: target.correctOption || null,
+        explanation: target.explanation || null,
+      };
+
+    const resolvedOptions =
+      Array.isArray(question.options) && question.options.length > 0
+        ? question.options.map((o) => ({ label: o.label, content: o.content }))
+        : target.options || null;
+    const resolvedContent = question.content || target.questionContent || null;
 
     const optionRegions = findOptionTargetsOnCanvas(fabricCanvas)
       .filter((opt) => !target.questionId || opt.questionId === target.questionId)
@@ -466,15 +543,16 @@ export function setupQuizBoard() {
       stroke_points_count: pointsCount,
       circularity_score: gesture.circularityScore,
       selection_method: state.tool === 'circle' || state.tool === 'ellipse' ? 'ELLIPSE_SHAPE' : 'CIRCLE_GESTURE',
-      question_content: question.content || null,
-      correct_label: question.correct_option || null,
-      explanation: question.explanation || null,
+      question_content: resolvedContent,
+      options: resolvedOptions,
+      correct_label: question.correct_option || target.correctOption || null,
+      explanation: question.explanation || target.explanation || null,
       subject: $('subjectSelect')?.value || quizState.subject,
     };
 
-    setStatus(`Đã nhận diện khoanh tròn phương án ${target.label} (khớp ${Math.round(score * 100)}%) — đang gửi Backend...`);
+    setStatus(`Đã nhận diện khoanh tròn phương án ${target.label} (khớp ${Math.round(score * 100)}%) — đang chấm bài...`);
     setQuizPanelStatus(
-      `Khoanh vùng (${Math.round(gesture.bbox.x)}, ${Math.round(gesture.bbox.y)}) → Phương án ${target.label}. Đang gửi Backend...`,
+      `Đã khoanh phương án ${target.label} — đang kiểm tra đáp án...`,
       'info'
     );
 
@@ -492,19 +570,25 @@ export function setupQuizBoard() {
       quizState.lastSubmission = data;
 
       const isCorrect = Boolean(data.grade_result?.is_correct);
-      highlightCircledOptionOnCanvas(target, isCorrect, data.matched_label);
+      const corrLbl = data.grade_result?.correct_label || null;
+      highlightCircledOptionOnCanvas(target, isCorrect, data.matched_label, corrLbl);
 
+      const detailExp = data.grade_result?.explanation ? ` · ${data.grade_result.explanation}` : '';
       const summaryText = isCorrect
-        ? `✓ Khoanh ${data.matched_label} CHÍNH XÁC! (${data.submission_id})`
-        : `✕ Khoanh ${data.matched_label} chưa đúng (Đáp án: ${data.grade_result?.correct_label}).`;
+        ? `✓ Khoanh ${data.matched_label} CHÍNH XÁC!${detailExp}`
+        : `✕ Khoanh ${data.matched_label} chưa đúng — Đáp án đúng là ${corrLbl}.${detailExp}`;
       setQuizPanelStatus(summaryText, isCorrect ? 'correct' : 'incorrect');
       setStatus(summaryText);
 
-      window.dispatchEvent(
-        new CustomEvent('app:show-grade-feedback', {
-          detail: { gradeResult: data.grade_result, question },
-        })
-      );
+      // Khi đang khoanh liên tiếp nhiều câu đã dàn trên mặt bảng thì hiển thị kết quả trực tiếp trên bảng,
+      // không tự bật modal chặn ngang nét bút của giáo viên/học sinh.
+      if (!target.isLaidOutExamOption) {
+        window.dispatchEvent(
+          new CustomEvent('app:show-grade-feedback', {
+            detail: { gradeResult: data.grade_result, question },
+          })
+        );
+      }
     } catch (err) {
       setQuizPanelStatus(`Không gửi được vùng khoanh: ${err.message}`, 'error');
       setStatus(`Lỗi gửi vùng khoanh: ${err.message}`);

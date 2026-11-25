@@ -48,12 +48,20 @@ class ExamService:
 
         cleaned_text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
 
-        # Tìm bảng đáp án ở cuối đề nếu có (ví dụ: 1.A 2.B 3.C ...)
+        # Tìm bảng đáp án ở cuối đề nếu có (chỉ quét sau tiêu đề BẢNG ĐÁP ÁN / ĐÁP ÁN CHI TIẾT / ANSWER KEY để không bắt nhầm số trong đề)
         table_keys: Dict[int, str] = {}
-        for match in re.finditer(r"(?:^|\s)(\d{1,3})\s*[\.\-:]\s*([A-D])(?:\s|$|,|;)", cleaned_text, re.IGNORECASE):
-            q_num = int(match.group(1))
-            ans = match.group(2).upper()
-            table_keys[q_num] = ans
+        ans_table_header = re.search(
+            r"(?:^|\n)\s*(?:BẢNG\s*ĐÁP\s*ÁN|ĐÁP\s*ÁN\s*CHI\s*TIẾT|HƯỚNG\s*DẪN\s*CHẤM|ANSWER\s*KEY)\b[:\s]*(.*)$",
+            cleaned_text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if ans_table_header:
+            answer_section_text = ans_table_header.group(1)
+            cleaned_text = cleaned_text[:ans_table_header.start()].rstrip()
+            for match in re.finditer(r"(?:^|\s|,|;)(\d{1,3})\s*[\.\-:]\s*([A-D])(?=\s|$|,|;)", answer_section_text, re.IGNORECASE):
+                q_num = int(match.group(1))
+                ans = match.group(2).upper()
+                table_keys[q_num] = ans
 
         matches = list(self.QUESTION_SPLIT_REGEX.finditer(cleaned_text))
         questions: List[Dict[str, Any]] = []
@@ -100,7 +108,9 @@ class ExamService:
             return self.parse_text(file_bytes.decode("utf-8", errors="ignore"), title=filename)
 
         full_paragraphs = []
-        bold_options_detected: Dict[str, str] = {}  # { "Câu 1": "A" }
+        colored_by_q: Dict[str, set] = {}
+        underlined_by_q: Dict[str, set] = {}
+        bold_by_q: Dict[str, set] = {}
 
         current_q_key = "1"
         for p in doc.paragraphs:
@@ -113,15 +123,47 @@ class ExamService:
             if q_match:
                 current_q_key = q_match.group(1)
 
-            # Quét các run trong paragraph để tìm run in đậm hoặc gạch chân (thường là đáp án đúng của GV)
+            # Quét các run trong paragraph: chỉ coi in đậm/gạch chân/tô màu là đáp án đúng nếu DUY NHẤT 1 phương án trong câu có định dạng đó
+            # (Tránh lỗi phổ biến khi đề Word in đậm cả 4 chữ cái A., B., C., D. làm hệ thống tưởng nhầm mọi câu đều đáp án A!)
             for run in p.runs:
-                if (run.bold or run.underline) and run.text:
-                    run_txt = run.text.strip()
-                    opt_match = re.search(r"\b([A-D])[\.\)]", run_txt)
-                    if opt_match and current_q_key not in bold_options_detected:
-                        bold_options_detected[current_q_key] = opt_match.group(1).upper()
+                if not run.text:
+                    continue
+                run_txt = run.text.strip()
+                opt_matches = re.findall(r"(?:^|\s|\n)([A-D])[\.\)]", " " + run_txt)
+                if not opt_matches:
+                    continue
+
+                has_color = False
+                try:
+                    if run.font and run.font.highlight_color is not None:
+                        has_color = True
+                    elif run.font and run.font.color and run.font.color.rgb is not None:
+                        rgb_hex = str(run.font.color.rgb).upper()
+                        if rgb_hex not in ("000000", "222222", "333333", "111111"):
+                            has_color = True
+                except Exception:
+                    has_color = False
+
+                for lbl_raw in opt_matches:
+                    lbl = lbl_raw.upper()
+                    if has_color:
+                        colored_by_q.setdefault(current_q_key, set()).add(lbl)
+                    if run.underline:
+                        underlined_by_q.setdefault(current_q_key, set()).add(lbl)
+                    if run.bold:
+                        bold_by_q.setdefault(current_q_key, set()).add(lbl)
 
             full_paragraphs.append(text)
+
+        bold_options_detected: Dict[str, str] = {}
+        all_q_keys = set(colored_by_q) | set(underlined_by_q) | set(bold_by_q)
+        for qk in all_q_keys:
+            if len(colored_by_q.get(qk, set())) == 1:
+                bold_options_detected[qk] = next(iter(colored_by_q[qk]))
+            elif len(underlined_by_q.get(qk, set())) == 1:
+                bold_options_detected[qk] = next(iter(underlined_by_q[qk]))
+            elif len(bold_by_q.get(qk, set())) == 1:
+                bold_options_detected[qk] = next(iter(bold_by_q[qk]))
 
         raw_text = "\n".join(full_paragraphs)
         result = self.parse_text(raw_text, title=filename)
@@ -162,6 +204,49 @@ class ExamService:
         result["source_type"] = "PDF"
         return result
 
+    async def enrich_missing_answers(
+        self,
+        exam_data: Dict[str, Any],
+        subject: str = "TOAN",
+    ) -> Dict[str, Any]:
+        """
+        Tự động giải và bổ sung đáp án đúng + lời giải cho các câu trắc nghiệm chưa có sẵn đáp án trong tệp đề tải lên:
+        - Bước 1: Bộ giải toán tất định tức thời (< 1ms) cho cấu tạo số, phép tính, phương trình tìm x/?, min/max.
+        - Bước 2: Gemini AI giải hàng loạt cho các câu hỏi đọc hiểu, lý thuyết hoặc liên môn còn lại.
+        """
+        from app.services.grading_service import grading_service
+
+        unresolved_for_ai: List[Dict[str, Any]] = []
+        for q in exam_data.get("questions", []):
+            opts = q.get("options") or []
+            if len(opts) < 2 or q.get("correct_option"):
+                continue
+
+            det = grading_service.infer_mcq_correct_option_deterministic(q.get("content"), opts)
+            if det:
+                corr_lbl, det_exp = det
+                q["correct_option"] = corr_lbl
+                if not q.get("explanation"):
+                    q["explanation"] = det_exp
+                for opt in opts:
+                    opt["is_correct"] = (opt.get("label") == corr_lbl)
+            else:
+                unresolved_for_ai.append(q)
+
+        if unresolved_for_ai:
+            ai_resolved = await grading_service.solve_mcqs_batch_with_ai(unresolved_for_ai, subject=subject)
+            for q in unresolved_for_ai:
+                hit = ai_resolved.get(str(q.get("id", "")))
+                if hit and hit.get("correct_option"):
+                    corr_lbl = hit["correct_option"]
+                    q["correct_option"] = corr_lbl
+                    if not q.get("explanation") and hit.get("explanation"):
+                        q["explanation"] = hit["explanation"]
+                    for opt in q.get("options", []):
+                        opt["is_correct"] = (opt.get("label") == corr_lbl)
+
+        return exam_data
+
     # -------------------------------------------------------------
     # 4. Tự động ẩn đáp án đúng cho Học sinh (Student Security Mode)
     # -------------------------------------------------------------
@@ -171,6 +256,8 @@ class ExamService:
         - Nếu mode == 'STUDENT': Tự động ẩn HOÀN TOÀN đáp án đúng (is_correct=False, correct_option=None, explanation=None).
         - Nếu mode == 'TEACHER': Giữ nguyên toàn bộ đáp án đúng, phân tích lỗi sai và lời giải chi tiết.
         """
+        from app.services.grading_service import grading_service
+
         clean_mode = (mode or "STUDENT").strip().upper()
         is_student = clean_mode == "STUDENT"
 
@@ -178,24 +265,45 @@ class ExamService:
         for q in exam_data.get("questions", []):
             q_copy = dict(q)
             q_id = q.get("id")
-            if q_id and (q.get("correct_option") or q.get("explanation")):
+            opts = q.get("options") or []
+            corr_opt = q.get("correct_option")
+            exp_txt = q.get("explanation")
+
+            # Nếu vẫn chưa có đáp án đúng, thử suy luận tất định ngay tại bước lọc
+            if not corr_opt and len(opts) >= 2:
+                det = grading_service.infer_mcq_correct_option_deterministic(q.get("content"), opts)
+                if det:
+                    corr_opt, det_exp = det
+                    q_copy["correct_option"] = corr_opt
+                    if not exp_txt:
+                        exp_txt = det_exp
+                        q_copy["explanation"] = exp_txt
+
+            if q_id:
                 in_memory_exam_answer_keys[q_id] = {
-                    "correct_option": q.get("correct_option"),
-                    "explanation": q.get("explanation"),
+                    "correct_option": corr_opt,
+                    "explanation": exp_txt,
+                    "content": q.get("content"),
+                    "options": [{"label": o.get("label"), "content": o.get("content")} for o in opts],
                 }
             if is_student:
                 q_copy["correct_option"] = None
                 q_copy["explanation"] = None
                 filtered_options = []
-                for opt in q.get("options", []):
+                for opt in opts:
                     opt_copy = dict(opt)
                     opt_copy["is_correct"] = False
                     opt_copy["wrong_explanation"] = None
                     filtered_options.append(opt_copy)
                 q_copy["options"] = filtered_options
             else:
-                # Chế độ giáo viên giữ nguyên
-                filtered_options = [dict(opt) for opt in q.get("options", [])]
+                # Chế độ giáo viên giữ nguyên (và bật cờ is_correct nếu vừa giải được corr_opt)
+                filtered_options = []
+                for opt in opts:
+                    opt_copy = dict(opt)
+                    if corr_opt and opt_copy.get("label") == corr_opt:
+                        opt_copy["is_correct"] = True
+                    filtered_options.append(opt_copy)
                 q_copy["options"] = filtered_options
 
             filtered_questions.append(q_copy)

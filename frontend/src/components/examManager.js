@@ -1,4 +1,4 @@
-import { $, fabricCanvas, state, setStatus, isDarkBoardActive } from '../utils/context.js';
+import { $, fabricCanvas, state, eraserTools, setStatus, isDarkBoardActive } from '../utils/context.js';
 import { snapshot, remember, updateHint } from './history.js';
 import { escapeHtml } from '../utils/escape.js';
 import { authFetch } from '../utils/auth_client.js';
@@ -6,6 +6,7 @@ import { computeCleanBoardPlacement, panViewportToShowWorldRect } from '../utils
 import { FabricText, Line, Textbox } from 'https://cdn.jsdelivr.net/npm/fabric@6.7.1/+esm';
 
 let currentExamData = null;
+let rawLoadedExamData = null;
 
 export function setupExamManager() {
   const examModal = $('examModal');
@@ -271,9 +272,10 @@ export function setupExamManager() {
   // Thay đổi mode (Học sinh / Giáo viên)
   document.querySelectorAll('input[name="examMode"]').forEach((radio) => {
     radio.addEventListener('change', () => {
-      if (currentExamData) {
+      const baseData = rawLoadedExamData || currentExamData;
+      if (baseData) {
         if (getSelectedMode() === 'STUDENT') {
-          const masked = JSON.parse(JSON.stringify(currentExamData));
+          const masked = JSON.parse(JSON.stringify(baseData));
           masked.mode = 'STUDENT';
           masked.hidden_answers = true;
           masked.questions.forEach((q) => {
@@ -281,9 +283,9 @@ export function setupExamManager() {
             q.explanation = null;
             q.options.forEach((opt) => (opt.is_correct = false));
           });
-          renderExamPreview(masked);
+          renderExamPreview(masked, { preserveRaw: true });
         } else {
-          renderExamPreview(currentExamData);
+          renderExamPreview(baseData, { preserveRaw: true });
         }
       }
     });
@@ -303,6 +305,9 @@ export function setupExamManager() {
         correct_label: question.correct_option || null,
         explanation: question.explanation || null,
         question_content: question.content,
+        options: Array.isArray(question.options)
+          ? question.options.map((o) => ({ label: o.label, content: o.content }))
+          : null,
         subject: subject,
       };
 
@@ -402,8 +407,11 @@ export function setupExamManager() {
   }
 
   // Render danh sách preview câu hỏi
-  function renderExamPreview(data) {
+  function renderExamPreview(data, { preserveRaw = false } = {}) {
     currentExamData = data;
+    if (!preserveRaw) {
+      rawLoadedExamData = JSON.parse(JSON.stringify(data));
+    }
     window.dispatchEvent(new CustomEvent('app:exam-loaded', { detail: data }));
     examPreviewSection.hidden = false;
     layoutToBoardBtn.disabled = false;
@@ -564,6 +572,10 @@ export function setupExamManager() {
       cursorY += stemH + 14;
 
       const opts = Array.isArray(q.options) ? q.options : [];
+      const cleanOptions = opts.map((o) => ({
+        label: String(o.label || '').trim().toUpperCase(),
+        content: String(o.content || '').trim(),
+      }));
       if (opts.length > 0) {
         opts.forEach((opt) => {
           const label = String(opt.label || '').trim().toUpperCase();
@@ -591,7 +603,14 @@ export function setupExamManager() {
           optTb.meta = {
             type: 'answer_option',
             question_id: q.id || `q_${qNum}`,
+            question_number: qNum,
+            question_content: String(q.content || '').trim(),
+            correct_option: q.correct_option || null,
+            explanation: q.explanation || null,
+            options: cleanOptions,
             label,
+            badgeX: startLeft + 29,
+            badgeY: cursorY + optH / 2,
             aiState: 'formatted',
           };
           fabricCanvas.add(optTb);
@@ -686,6 +705,7 @@ export function setupExamManager() {
     const elapsedMs = performance.now() - start.t;
     const movedPx = Math.hypot(pt.x - start.x, pt.y - start.y);
     if (elapsedMs > 350 || movedPx > 10) return;
+    if (eraserTools?.has(state.tool) || state.tool === 'hand' || state.tool === 'text') return;
 
     const objects = fabricCanvas.getObjects();
     for (let i = objects.length - 1; i >= 0; i -= 1) {
@@ -701,11 +721,19 @@ export function setupExamManager() {
         const { question_id: questionId, label } = obj.meta;
         let questionObj = null;
         if (currentExamData && currentExamData.questions) {
-          questionObj = currentExamData.questions.find((q) => q.id === questionId) || currentExamData.questions[0];
+          questionObj = currentExamData.questions.find((q) => q.id === questionId) || null;
         }
-        if (questionObj) {
-          gradeStudentChoice(questionObj, label);
+        if (!questionObj) {
+          questionObj = {
+            id: questionId,
+            number: obj.meta.question_number || 1,
+            content: obj.meta.question_content || '',
+            correct_option: obj.meta.correct_option || null,
+            explanation: obj.meta.explanation || null,
+            options: obj.meta.options || [],
+          };
         }
+        gradeStudentChoice(questionObj, label);
         break;
       }
     }

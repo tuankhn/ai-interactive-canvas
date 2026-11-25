@@ -39,6 +39,7 @@ class GradeMCQRequest(BaseModel):
     session_id: Optional[str] = "default-session"
     student_id: Optional[str] = None
     question_content: Optional[str] = None
+    options: Optional[List[Dict[str, Any]]] = None
     correct_label: Optional[str] = None
     explanation: Optional[str] = None
     distractor_map: Optional[Dict[str, str]] = None
@@ -190,6 +191,7 @@ class CircleAnswerSubmitRequest(BaseModel):
     circularity_score: Optional[float] = None
     selection_method: str = "CIRCLE_GESTURE"
     question_content: Optional[str] = None
+    options: Optional[List[Dict[str, Any]]] = None
     correct_label: Optional[str] = None
     explanation: Optional[str] = None
     distractor_map: Optional[Dict[str, str]] = None
