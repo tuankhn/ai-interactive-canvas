@@ -1934,8 +1934,14 @@ class GradingService:
 
         raw_json = ""
         try:
-            mod = gemini_service.active_model_name
-            if gemini_service._client_type == "google-genai" and gemini_service.client is not None:
+            if getattr(gemini_service, "_client_type", None) == "httpx-v1beta":
+                raw_json = await gemini_service.generate_text_with_pool(
+                    prompt_text,
+                    json_mode=True,
+                    max_tokens=500,
+                    timeout=6.5,
+                )
+            elif gemini_service._client_type == "google-genai" and gemini_service.client is not None:
                 gen_cfg = None
                 try:
                     from google.genai import types

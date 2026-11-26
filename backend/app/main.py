@@ -111,8 +111,18 @@ _AI_TRACKED_PATHS = {
 
 @app.middleware("http")
 async def track_ai_quota_middleware(request: Request, call_next):
-    """Tự động ghi nhận số lượt gọi API Gemini / Mathpix cho trang Admin mà không sửa file module AI."""
-    response = await call_next(request)
+    """Tự động nạp header X-Gemini-Api-Keys dự phòng (nếu có) và ghi nhận số lượt gọi AI cho trang Admin."""
+    from app.ai.gemini_service import gemini_service, request_extra_gemini_keys_ctx
+    from app.core.config import parse_gemini_api_keys
+
+    header_keys_raw = request.headers.get("X-Gemini-Api-Keys") or request.headers.get("X-Gemini-Api-Key") or ""
+    extra_keys = tuple(parse_gemini_api_keys(header_keys_raw)) if header_keys_raw else ()
+    ctx_token = request_extra_gemini_keys_ctx.set(extra_keys)
+    try:
+        response = await call_next(request)
+    finally:
+        request_extra_gemini_keys_ctx.reset(ctx_token)
+
     task_type = _AI_TRACKED_PATHS.get(request.url.path)
     if request.method == "POST" and task_type and response.status_code < 400:
         try:
@@ -123,7 +133,9 @@ async def track_ai_quota_middleware(request: Request, call_next):
 
         try:
             data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
-            has_live_gemini = bool((settings.GEMINI_API_KEY or "").strip())
+            has_live_gemini = (
+                bool((settings.GEMINI_API_KEY or "").strip()) and gemini_service.has_any_key()
+            ) or bool(extra_keys)
             default_provider = (
                 ("chalkboard-gemini" if has_live_gemini else "chalkboard-mock")
                 if task_type == "VOCAB_IMAGE"

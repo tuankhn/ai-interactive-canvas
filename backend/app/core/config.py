@@ -13,6 +13,21 @@ for _env_path in _candidate_envs:
         load_dotenv(_env_path, override=True)
 
 
+def parse_gemini_api_keys(*raw_sources: Optional[str]) -> list[str]:
+    """Tách danh sách nhiều Gemini API Key từ chuỗi ngăn bởi dấu phẩy, chấm phẩy, khoảng trắng hoặc ngoặc đơn."""
+    import re
+    seen: list[str] = []
+    for src in raw_sources:
+        if not src:
+            continue
+        cleaned = str(src).strip()
+        for tok in re.split(r"[,;\s\r\n()\"']+", cleaned):
+            k = tok.strip()
+            if len(k) >= 12 and k not in seen:
+                seen.append(k)
+    return seen
+
+
 class Settings:
     APP_NAME: str = os.getenv("APP_NAME", "AI Interactive Canvas API")
     APP_ENV: str = os.getenv("APP_ENV", "development")
@@ -59,13 +74,20 @@ class Settings:
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
     SMTP_FROM: str = os.getenv("SMTP_FROM", "noreply@aicanvas.edu.vn")
 
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    GEMINI_API_KEYS: list[str] = parse_gemini_api_keys(
+        os.getenv("GEMINI_API_KEYS", ""),
+        os.getenv("GEMINI_API_KEY", ""),
+        os.getenv("GOOGLE_API_KEY", ""),
+    )
+    GEMINI_API_KEY: str = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else (
+        os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    )
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     GEMINI_FALLBACK_MODELS: list[str] = [
         model.strip()
         for model in os.getenv(
             "GEMINI_FALLBACK_MODELS",
-            "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash",
+            "gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.1-flash-lite,gemini-flash-lite-latest,gemini-flash-latest",
         ).split(",")
         if model.strip()
     ]

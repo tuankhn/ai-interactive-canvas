@@ -774,13 +774,19 @@ Hãy trả về định dạng JSON hợp lệ dạng danh sách các biến th�
 Chỉ trả về JSON thuần túy trong dấu ngoặc vuông [], không thêm markdown thừa thãi.
 """
         from app.ai.gemini_service import gemini_service
-        # Giả lập hoặc gọi gemini_service nếu client đã khởi tạo
-        if not hasattr(gemini_service, "client") or not gemini_service.is_configured:
+        if not gemini_service.ensure_configured():
             return []
 
-        # Gọi Gemini SDK
+        # Gọi Gemini qua Multi-Key Pool v1beta (hoặc SDK mock)
         try:
-            if gemini_service._client_type == "google-genai":
+            if getattr(gemini_service, "_client_type", None) == "httpx-v1beta":
+                raw_text = await gemini_service.generate_text_with_pool(
+                    prompt,
+                    json_mode=True,
+                    max_tokens=900,
+                    timeout=12.0,
+                )
+            elif gemini_service._client_type == "google-genai":
                 response = gemini_service.client.models.generate_content(
                     model=self.gemini_model,
                     contents=prompt,
