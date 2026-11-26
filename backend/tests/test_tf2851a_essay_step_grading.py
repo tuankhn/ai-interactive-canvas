@@ -282,3 +282,117 @@ def test_biology_dash_solution_grading():
     assert res_bio_err.has_any_error is True
     assert res_bio_err.steps_evaluation[0].error_type == "CONCEPTUAL_ERROR"
 
+
+def test_arbitrary_wrong_binomial_expansion_and_latex_marked_incorrect():
+    """Regression: Đề bài (x + 3)^2, bước giải = x^3 + 20x + 10 (kể cả dạng LaTeX) bắt buộc phải chấm SAI."""
+    res_plain = grading_service.evaluate_essay_solution(
+        question_id="reg_user_case_1",
+        question_content="(x + 3)^2",
+        steps=["= x^3 + 20x + 10"],
+        subject="TOAN",
+        target_answer="x^2 + 6x + 9",
+    )
+    assert res_plain.has_any_error is True
+    assert res_plain.correct_steps == 0
+    assert res_plain.incorrect_steps == 1
+    assert res_plain.score == 0.0
+    step_eval = res_plain.steps_evaluation[0]
+    assert step_eval.is_step_correct is False
+    assert step_eval.decoration_type == "RED_UNDERLINE"
+    assert step_eval.icon == "✕"
+    assert step_eval.no_leak_guarantee is True
+    assert "x^2 + 6x + 9" not in (step_eval.guidance or "")
+
+    # Dạng LaTeX từ KaTeX / AI Recognition
+    res_latex = grading_service.evaluate_essay_solution(
+        question_id="reg_user_case_latex",
+        question_content=r"\left(x + 3\right)^{2}",
+        steps=[r"= x^{3} + 20x + 10"],
+        subject="TOAN",
+    )
+    assert res_latex.has_any_error is True
+    assert res_latex.steps_evaluation[0].is_step_correct is False
+
+    # Sai hệ số tự do hoặc sai dấu hạng tử giữa
+    for wrong_step in ["= x^2 + 6x + 6", "= x^2 - 6x + 9", "= 2x + 6"]:
+        r = grading_service.evaluate_essay_solution(
+            question_id="reg_coef",
+            question_content="(x + 3)^2",
+            steps=[wrong_step],
+            subject="TOAN",
+        )
+        assert r.has_any_error is True, f"Bỏ sót bước khai triển sai: {wrong_step}"
+
+    # Multi-step khai triển đúng hoàn toàn phải được chấm 10 điểm
+    res_valid_chain = grading_service.evaluate_essay_solution(
+        question_id="reg_valid_chain",
+        question_content="(x + 3)^2",
+        steps=[r"= x^{2} + 2 \cdot x \cdot 3 + 3^{2}", "= x^2 + 6x + 9"],
+        subject="TOAN",
+    )
+    assert res_valid_chain.has_any_error is False
+    assert res_valid_chain.correct_steps == 2
+    assert res_valid_chain.score == 10.0
+
+
+def test_equation_root_equivalence_and_stray_dot_rejected():
+    """Kiểm tra phương trình sai nghiệm & chấm nhiễu '.' không bao giờ được chấm tích xanh."""
+    # Phương trình biến đổi sai nghiệm (2x + 4 = 10 -> 2x = 8 -> x = 4)
+    res_eq_wrong = grading_service.evaluate_essay_solution(
+        question_id="eq_wrong_roots",
+        question_content="2x + 4 = 10",
+        steps=["2x = 8", "x = 4"],
+        subject="TOAN",
+    )
+    assert res_eq_wrong.has_any_error is True
+    assert res_eq_wrong.incorrect_steps == 2
+    assert all(not ev.is_step_correct for ev in res_eq_wrong.steps_evaluation)
+
+    # Phương trình bậc hai biến đổi đúng vs sai dấu nghiệm
+    res_quad_ok = grading_service.evaluate_essay_solution(
+        question_id="quad_eq_ok",
+        question_content="x^2 - 5x + 6 = 0",
+        steps=["(x - 2)(x - 3) = 0", "x = 2", "x = 3"],
+        subject="TOAN",
+    )
+    assert res_quad_ok.has_any_error is False
+    assert res_quad_ok.correct_steps == 3
+
+    res_quad_bad = grading_service.evaluate_essay_solution(
+        question_id="quad_eq_bad",
+        question_content="x^2 - 5x + 6 = 0",
+        steps=["(x + 2)(x + 3) = 0", "x = -2"],
+        subject="TOAN",
+    )
+    assert res_quad_bad.has_any_error is True
+    assert res_quad_bad.incorrect_steps == 2
+
+    # Ký tự nhiễu dấu chấm '.' hoặc '\cdot' không được chấm tích xanh
+    for noise_tok in [".", r"\cdot", "-", "="]:
+        noise_eval = grading_service.evaluate_essay_step(
+            question_id="noise_q",
+            step_number=1,
+            written_text=noise_tok,
+            question_content="(x + 3)^2",
+        )
+        assert noise_eval.is_step_correct is False
+        assert noise_eval.error_type == "INCOMPLETE_STEP"
+
+    # Kiểm chứng qua HTTP API endpoint
+    resp = client.post(
+        "/api/v1/exam/grade-essay-solution",
+        json={
+            "question_id": "api_reg_user_case",
+            "question_content": "(x + 3)^2",
+            "subject": "TOAN",
+            "steps": ["= x^3 + 20x + 10"],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["has_any_error"] is True
+    assert body["score"] == 0.0
+    assert body["steps_evaluation"][0]["is_step_correct"] is False
+    assert body["steps_evaluation"][0]["decoration_type"] == "RED_UNDERLINE"
+
+

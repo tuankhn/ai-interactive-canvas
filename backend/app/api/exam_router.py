@@ -459,7 +459,7 @@ async def grade_essay_single_step(payload: GradeEssayStepRequest):
             detail="Nội dung bước giải tự luận không được để trống.",
         )
 
-    res = grading_service.evaluate_essay_step(
+    res = await grading_service.evaluate_essay_step_async(
         question_id=payload.question_id,
         step_number=payload.step_number,
         written_text=payload.written_text,
@@ -485,7 +485,7 @@ async def grade_essay_full_solution(payload: GradeEssaySolutionRequest):
             detail="Vui lòng cung cấp danh sách các bước hoặc văn bản lời giải để chấm.",
         )
 
-    res = grading_service.evaluate_essay_solution(
+    res = await grading_service.evaluate_essay_solution_async(
         question_id=payload.question_id,
         steps=payload.steps,
         raw_text=payload.raw_text,
