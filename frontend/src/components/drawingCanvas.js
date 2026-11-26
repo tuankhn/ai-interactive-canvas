@@ -15,8 +15,13 @@ const MAX_ZOOM = 5.0;
 let activeInlineTextInput = null;
 let isSpacePressed = false;
 let panDragState = null; // { pointerId, lastX, lastY }
-const activeTouches = new Map(); // pointerId -> { x, y }
 let pinchState = null; // { dist, midX, midY }
+let pinchCooldownUntil = 0;
+let pendingTouchTextTap = null; // { pointerId, startX, startY, worldPt }
+
+function isTouchPinchActive() {
+  return Boolean(pinchState) || performance.now() < pinchCooldownUntil;
+}
 
 function applyPreviewTransform() {
   const ratio = window.devicePixelRatio || 1;
@@ -185,6 +190,9 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
   const align = existingTextObj ? (existingTextObj.textAlign || state.textAlign || 'left') : (state.textAlign || 'left');
   const textOpacity = existingTextObj ? (existingTextObj.opacity ?? 1) : ((state.opacity ?? 100) / 100);
   const scaledFontPx = Math.max(12, baseFontSize * zoom);
+  // Giữ font-size thực trên DOM >= 16px để iPadOS/iOS Safari không bao giờ tự zoom trang khi focus textarea
+  const domFontPx = Math.max(16, scaledFontPx);
+  const visualScale = scaledFontPx / domFontPx;
 
   const safe = getSafeAreaScreen(18);
   let worldX = existingTextObj ? existingTextObj.left : point.x;
@@ -216,7 +224,7 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
     left: `${sx}px`,
     top: `${sy}px`,
     minWidth: '24px',
-    minHeight: `${Math.ceil(scaledFontPx * 1.35)}px`,
+    minHeight: `${Math.ceil(domFontPx * 1.35)}px`,
     padding: '0',
     margin: '0',
     border: '0',
@@ -227,13 +235,15 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
     resize: 'none',
     overflow: 'hidden',
     whiteSpace: 'pre',
-    fontSize: `${scaledFontPx}px`,
+    fontSize: `${domFontPx}px`,
     lineHeight: '1.32',
     fontFamily: resolvedFontFamily,
     textAlign: align,
     color: strokeColor,
     caretColor: strokeColor,
     opacity: String(textOpacity),
+    transformOrigin: 'top left',
+    transform: visualScale < 1 ? `scale(${visualScale})` : 'none',
     zIndex: '28',
   });
 
@@ -242,11 +252,13 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
     const longest = Math.max(2, ...lines.map((l) => l.length + 1));
     textarea.style.width = '1px';
     textarea.style.height = '1px';
-    const nextW = Math.max(Math.ceil(scaledFontPx * 0.65 * longest), textarea.scrollWidth + 8);
-    const nextH = Math.max(Math.ceil(scaledFontPx * 1.35 * lines.length), textarea.scrollHeight + 2);
-    textarea.style.width = `${nextW}px`;
-    textarea.style.height = `${nextH}px`;
+    const domW = Math.max(Math.ceil(domFontPx * 0.65 * longest), textarea.scrollWidth + 8);
+    const domH = Math.max(Math.ceil(domFontPx * 1.35 * lines.length), textarea.scrollHeight + 2);
+    textarea.style.width = `${domW}px`;
+    textarea.style.height = `${domH}px`;
     if (!existingTextObj) {
+      const nextW = domW * visualScale;
+      const nextH = domH * visualScale;
       const clampedSx = clampRange(sx, safe.left, safe.right - nextW);
       const clampedSy = clampRange(sy, safe.top, safe.bottom - nextH);
       textarea.style.left = `${Math.round(clampedSx)}px`;
@@ -364,11 +376,18 @@ export function openDirectCanvasTextEditor(point, existingTextObj = null) {
   stage.appendChild(textarea);
   activeInlineTextInput = textarea;
   autoResize();
-  requestAnimationFrame(() => {
-    textarea.focus();
+  const focusEditorNoScroll = () => {
+    if (!textarea.isConnected) return;
+    try {
+      textarea.focus({ preventScroll: true });
+    } catch {
+      textarea.focus();
+    }
     const len = textarea.value.length;
     textarea.setSelectionRange(len, len);
-  });
+  };
+  focusEditorNoScroll();
+  requestAnimationFrame(focusEditorNoScroll);
 }
 
 function resizeCanvas() {
@@ -701,26 +720,9 @@ function pointerDown(event) {
     return;
   }
 
-  // Theo dõi chụm 2 ngón tay trên Tablet / màn hình cảm ứng (khi chưa khoá trang)
-  if (!state.boardLocked && pointerType === 'touch' && !state.penInUse) {
-    // Nếu đây là ngón tay chính mới chạm xuống và không đang trong cử chỉ pinch -> dọn sạch touch bị rớt trước đó
-    if (event.isPrimary && !pinchState && !state.stroke) {
-      activeTouches.clear();
-    }
-    const sp = getScreenPoint(event);
-    activeTouches.set(event.pointerId, { x: sp.x, y: sp.y });
-    if (activeTouches.size === 2) {
-      if (state.stroke) finishStroke(false);
-      panDragState = null;
-      const pts = Array.from(activeTouches.values());
-      pinchState = {
-        dist: Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)),
-        midX: (pts[0].x + pts[1].x) / 2,
-        midY: (pts[0].y + pts[1].y) / 2,
-      };
-      event.preventDefault();
-      return;
-    }
+  // Nếu đang trong cử chỉ chụm 2 ngón (pinch-zoom) hoặc vừa nhấc 1 ngón sau khi pinch -> bỏ qua nét vẽ/tap đơn
+  if (pointerType === 'touch' && isTouchPinchActive()) {
+    return;
   }
 
   // Kéo di chuyển bảng vô hạn (công cụ Kéo bảng, giữ phím Space, hoặc nhấn chuột giữa)
@@ -770,6 +772,16 @@ function pointerDown(event) {
 
   if (state.tool === 'text') {
     const p = getPoint(event);
+    if (pointerType === 'touch') {
+      // Đợi pointerUp cho chạm đơn để không chặn cử chỉ chụm 2 ngón thu phóng khi đang chọn công cụ Chữ (T)
+      pendingTouchTextTap = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        worldPt: p,
+      };
+      return;
+    }
     openDirectCanvasTextEditor(p, null);
     return;
   }
@@ -797,25 +809,7 @@ function pointerDown(event) {
 
 function pointerMove(event) {
   if (event.pointerType === 'pen') state.lastPenSeenAt = performance.now();
-
-  if (event.pointerType === 'touch' && activeTouches.has(event.pointerId)) {
-    const sp = getScreenPoint(event);
-    activeTouches.set(event.pointerId, { x: sp.x, y: sp.y });
-    if (activeTouches.size === 2 && pinchState) {
-      event.preventDefault();
-      const pts = Array.from(activeTouches.values());
-      const nextDist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
-      const nextMidX = (pts[0].x + pts[1].x) / 2;
-      const nextMidY = (pts[0].y + pts[1].y) / 2;
-
-      panBy(nextMidX - pinchState.midX, nextMidY - pinchState.midY);
-      const currentZoom = fabricCanvas.getZoom() || 1;
-      zoomAt(currentZoom * (nextDist / pinchState.dist), nextMidX, nextMidY);
-
-      pinchState = { dist: nextDist, midX: nextMidX, midY: nextMidY };
-      return;
-    }
-  }
+  if (event.pointerType === 'touch' && isTouchPinchActive()) return;
 
   if (panDragState && event.pointerId === panDragState.pointerId) {
     event.preventDefault();
@@ -839,10 +833,6 @@ function pointerMove(event) {
 }
 
 function endTouchOrPan(event) {
-  if (event.pointerType === 'touch') {
-    activeTouches.delete(event.pointerId);
-    if (activeTouches.size < 2) pinchState = null;
-  }
   if (event.pointerType === 'pen' && (!state.stroke || event.pointerId !== state.activePointer)) {
     state.penInUse = false;
   }
@@ -855,6 +845,19 @@ function endTouchOrPan(event) {
 }
 
 function pointerUp(event) {
+  if (pendingTouchTextTap && event.pointerId === pendingTouchTextTap.pointerId) {
+    const tap = pendingTouchTextTap;
+    pendingTouchTextTap = null;
+    if (
+      !state.ended &&
+      state.tool === 'text' &&
+      !isTouchPinchActive() &&
+      Math.hypot(event.clientX - tap.startX, event.clientY - tap.startY) <= 14
+    ) {
+      openDirectCanvasTextEditor(tap.worldPt, null);
+    }
+    return;
+  }
   if (endTouchOrPan(event)) return;
   if (event.pointerId !== state.activePointer || !state.stroke) {
     if (event.pointerType === 'pen' && !state.stroke) state.penInUse = false;
@@ -868,6 +871,9 @@ function pointerUp(event) {
 }
 
 function pointerCancel(event) {
+  if (pendingTouchTextTap && event.pointerId === pendingTouchTextTap.pointerId) {
+    pendingTouchTextTap = null;
+  }
   if (endTouchOrPan(event)) return;
   if (event.pointerId !== state.activePointer || !state.stroke) {
     if (event.pointerType === 'pen' && !state.stroke) state.penInUse = false;
@@ -901,6 +907,25 @@ function onStageWheel(event) {
 
 function setupInfiniteViewportControls() {
   stage.addEventListener('wheel', onStageWheel, { passive: false });
+
+  // Khóa hoàn toàn browser-zoom (Smart Zoom nhấp đúp & Gesture Zoom) của Safari iPadOS / macOS
+  // để giao diện không bao giờ bị phóng to lệch khung hình; mọi thu phóng đều diễn ra mượt trên mặt bảng Canvas
+  const preventNativeBrowserZoom = (event) => {
+    event.preventDefault();
+  };
+  document.addEventListener('gesturestart', preventNativeBrowserZoom, { passive: false });
+  document.addEventListener('gesturechange', preventNativeBrowserZoom, { passive: false });
+  document.addEventListener('gestureend', preventNativeBrowserZoom, { passive: false });
+  document.addEventListener('dblclick', preventNativeBrowserZoom, { passive: false });
+  document.addEventListener(
+    'touchmove',
+    (event) => {
+      if (event.touches && event.touches.length > 1) {
+        event.preventDefault();
+      }
+    },
+    { passive: false }
+  );
 
   $('zoomInBtn')?.addEventListener('click', () => {
     zoomAt((fabricCanvas.getZoom() || 1) * 1.2);
@@ -973,44 +998,107 @@ export function setupDrawingCanvas() {
   window.addEventListener('pointerup', pointerUp, { passive: false });
   window.addEventListener('pointercancel', pointerCancel, { passive: false });
 
-  // Chặn cử chỉ cuộn/zoom mặc định của Safari iPadOS (giữ ngoại lệ cho select, text & note để bật bàn phím ảo bình thường)
-  surface.addEventListener(
+  // Thu phóng & kéo 2 ngón trực tiếp dựa trên danh sách chạm vật lý event.touches (không bao giờ bị kẹt ghost pointer
+  // và hoạt động xuyên suốt mọi công cụ P / V / T / N / H / E ngay cả khi chạm trên khung chọn hoặc ô chữ)
+  stage.addEventListener(
     'touchstart',
     (event) => {
-      if (!state.ended && state.tool !== 'select' && state.tool !== 'text' && state.tool !== 'note') {
+      if (state.ended) return;
+      if (event.touches.length >= 2 && !state.boardLocked && !state.penInUse) {
+        event.preventDefault();
+        if (state.stroke) finishStroke(false);
+        state.activePointer = null;
+        panDragState = null;
+        pendingTouchTextTap = null;
+        stage.classList.remove('is-panning-active');
+        window.dispatchEvent(new CustomEvent('app:pinch-start'));
+
+        const rect = surface.getBoundingClientRect();
+        const x0 = event.touches[0].clientX - rect.left;
+        const y0 = event.touches[0].clientY - rect.top;
+        const x1 = event.touches[1].clientX - rect.left;
+        const y1 = event.touches[1].clientY - rect.top;
+        const rawDist = Math.hypot(x1 - x0, y1 - y0);
+        if (rawDist >= 24) {
+          pinchState = {
+            dist: rawDist,
+            midX: (x0 + x1) / 2,
+            midY: (y0 + y1) / 2,
+          };
+        }
+        return;
+      }
+
+      if (
+        event.touches.length === 1 &&
+        event.target === surface &&
+        state.tool !== 'select' &&
+        state.tool !== 'text' &&
+        state.tool !== 'note'
+      ) {
         event.preventDefault();
       }
     },
     { passive: false }
   );
 
-  surface.addEventListener(
+  stage.addEventListener(
     'touchmove',
     (event) => {
-      if (state.stroke || panDragState || pinchState) {
+      if (!state.ended && !state.boardLocked && event.touches.length >= 2 && !state.penInUse) {
+        event.preventDefault();
+        const rect = surface.getBoundingClientRect();
+        const x0 = event.touches[0].clientX - rect.left;
+        const y0 = event.touches[0].clientY - rect.top;
+        const x1 = event.touches[1].clientX - rect.left;
+        const y1 = event.touches[1].clientY - rect.top;
+        const nextDist = Math.max(24, Math.hypot(x1 - x0, y1 - y0));
+        const nextMidX = (x0 + x1) / 2;
+        const nextMidY = (y0 + y1) / 2;
+
+        if (!pinchState) {
+          pinchState = { dist: nextDist, midX: nextMidX, midY: nextMidY };
+          return;
+        }
+
+        panBy(nextMidX - pinchState.midX, nextMidY - pinchState.midY);
+        const currentZoom = fabricCanvas.getZoom() || 1;
+        zoomAt(currentZoom * (nextDist / pinchState.dist), nextMidX, nextMidY);
+        pinchState = { dist: nextDist, midX: nextMidX, midY: nextMidY };
+        return;
+      }
+
+      if (state.stroke || panDragState) {
         event.preventDefault();
       }
     },
     { passive: false }
   );
 
-  // Dọn sạch activeTouches nếu ngón tay trượt ra ngoài mép canvas trên iPadOS
-  const clearStaleTouch = (event) => {
-    if (event.pointerType === 'touch') {
-      activeTouches.delete(event.pointerId);
-      if (activeTouches.size < 2) pinchState = null;
-    } else if (event.pointerType === 'pen' && !state.stroke) {
+  const onStageTouchEnd = (event) => {
+    if (event.touches.length < 2 && pinchState) {
+      pinchState = null;
+      pinchCooldownUntil = performance.now() + 140;
+    }
+  };
+  stage.addEventListener('touchend', onStageTouchEnd, { passive: true });
+  stage.addEventListener('touchcancel', onStageTouchEnd, { passive: true });
+
+  window.visualViewport?.addEventListener('resize', resizeCanvas);
+
+  const clearPenIfIdle = (event) => {
+    if (event.pointerType === 'pen' && !state.stroke) {
       state.penInUse = false;
     }
   };
-  window.addEventListener('pointerup', clearStaleTouch, { passive: true });
-  window.addEventListener('pointercancel', clearStaleTouch, { passive: true });
+  window.addEventListener('pointerup', clearPenIfIdle, { passive: true });
+  window.addEventListener('pointercancel', clearPenIfIdle, { passive: true });
 
   stage.addEventListener('contextmenu', (event) => event.preventDefault());
   window.addEventListener('blur', () => {
     isSpacePressed = false;
-    activeTouches.clear();
     pinchState = null;
+    pendingTouchTextTap = null;
     panDragState = null;
     state.penInUse = false;
     stage.classList.remove('is-panning-active');

@@ -211,6 +211,10 @@
   color: var(--primary);
 }
 
+:where(html, body, body *) {
+  touch-action: manipulation;
+}
+
 html, body {
   width: 100%;
   height: 100%;
@@ -221,6 +225,8 @@ html, body {
   caret-color: var(--primary);
   scrollbar-color: var(--border-strong) transparent;
   overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   overflow-wrap: break-word;
   line-height: 1.5;
 }
@@ -563,12 +569,50 @@ button[aria-disabled="true"] {
    1. EXCALIDRAW FULL-BLEED CANVAS & FLOATING CORNER ISLANDS
    ============================================================================== */
 .app {
-  position: relative;
-  width: 100vw;
+  position: fixed;
+  inset: 0;
+  width: 100%;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   background: var(--bg-app);
+}
+
+@media (pointer: coarse) {
+  dialog input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  dialog select,
+  dialog textarea,
+  .students input,
+  .tool-popover input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  .pg-panel input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  .pg-panel select {
+    font-size: 16px;
+  }
+
+  .zoom-controls button {
+    min-inline-size: 38px;
+    min-block-size: 38px;
+    font-size: 15px;
+  }
+
+  #zoomResetBtn {
+    min-inline-size: 58px;
+    font-size: 13px;
+  }
+}
+
+@media (pointer: coarse) and (min-width: 680px) {
+  .subject-select,
+  .class-select {
+    font-size: 16px;
+    height: 38px;
+    min-block-size: 38px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .class-select {
+    max-inline-size: 108px;
+  }
 }
 
 /* Top-Left & Top-Right Floating Islands */
@@ -1991,6 +2035,11 @@ button[aria-disabled="true"] {
   pointer-events: none;
 }
 
+.selection-bounding-box,
+.selection-bounding-box * {
+  touch-action: none;
+}
+
 .selection-bounding-box {
   position: absolute;
   border: 1.5px dashed var(--accent-primary);
@@ -2253,6 +2302,11 @@ button[aria-disabled="true"] {
 }
 
 /* Interactive Smartboard Ruler Overlay (Drag, Rotate & Straight-Edge Snap) */
+.virtual-ruler,
+.virtual-ruler * {
+  touch-action: none;
+}
+
 .virtual-ruler {
   position: absolute;
   z-index: 18;
@@ -2282,7 +2336,12 @@ button[aria-disabled="true"] {
 }
 
 :root[data-theme="dark"] .virtual-ruler,
-.canvas-stage.is-dark-board .virtual-ruler {
+.canvas-stage.is-dark-board .virtual-ruler,
+.virtual-ruler * {
+  touch-action: none;
+}
+
+.virtual-ruler {
   background: rgba(35, 33, 30, 0.92);
   border-top-color: #D97757;
   border-bottom-color: #D97757;

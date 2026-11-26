@@ -181,7 +181,7 @@ body.hw-selecting .toolbar .tool-button.is-active:not(#handwritingTool) {
   color: var(--ink, #18181b);
   box-shadow: var(--shadow-dialog, 0 20px 44px rgba(24, 24, 27, 0.2));
   font: 13.5px/1.55 var(--font-sans, 'Be Vietnam Pro', system-ui, sans-serif);
-  touch-action: auto;
+  touch-action: manipulation;
   user-select: text;
 }
 .pg-panel[hidden] { display: none !important; }
