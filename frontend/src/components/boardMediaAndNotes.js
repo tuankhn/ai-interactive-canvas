@@ -430,10 +430,23 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
   const syncTextareaMetrics = () => {
     const fitted = layoutStickyNoteText(textarea.value || 'A', innerW, innerH, m.fontSize || 22, fontFam);
     const scaledFontPx = Math.max(11, Math.round(fitted.fontSize * zoom * (noteGroup.scaleY || 1)));
-    const estTextBlockH = fitted.linesCount * scaledFontPx * NOTE_LINE_HEIGHT;
-    const verticalPad = Math.max(4, Math.floor((screenH - estTextBlockH) / 2));
-    textarea.style.fontSize = `${scaledFontPx}px`;
+    // Giữ font-size DOM >= 16px để iPadOS Safari không tự phóng to trang khi focus ô ghi chú ở mức zoom nhỏ
+    const domFontPx = Math.max(16, scaledFontPx);
+    const visualScale = scaledFontPx / domFontPx;
+    const domW = screenW / visualScale;
+    const domH = screenH / visualScale;
+    const estTextBlockH = fitted.linesCount * domFontPx * NOTE_LINE_HEIGHT;
+    const verticalPad = Math.max(4, Math.floor((domH - estTextBlockH) / 2));
+    const rotPart = noteGroup.angle ? `rotate(${noteGroup.angle}deg)` : '';
+    const scalePart = visualScale < 1 ? `scale(${visualScale})` : '';
+
+    textarea.style.left = `${Math.round(screenCx - domW / 2)}px`;
+    textarea.style.top = `${Math.round(screenCy - domH / 2)}px`;
+    textarea.style.width = `${Math.round(domW)}px`;
+    textarea.style.height = `${Math.round(domH)}px`;
+    textarea.style.fontSize = `${domFontPx}px`;
     textarea.style.paddingTop = `${verticalPad}px`;
+    textarea.style.transform = [rotPart, scalePart].filter(Boolean).join(' ') || 'none';
   };
 
   Object.assign(textarea.style, {
@@ -500,11 +513,18 @@ export function openStickyNoteEditor(noteGroup, { isNew = false, beforeSnapshot 
 
   stage.appendChild(textarea);
   activeNoteEditorEl = textarea;
-  requestAnimationFrame(() => {
-    textarea.focus();
+  const focusNoteNoScroll = () => {
+    if (!textarea.isConnected) return;
+    try {
+      textarea.focus({ preventScroll: true });
+    } catch {
+      textarea.focus();
+    }
     const len = textarea.value.length;
     textarea.setSelectionRange(len, len);
-  });
+  };
+  focusNoteNoScroll();
+  requestAnimationFrame(focusNoteNoScroll);
 }
 
 /**
@@ -705,9 +725,15 @@ export function setupBoardMediaAndNotes() {
     return previewBoxEl;
   }
 
+  window.addEventListener('app:pinch-start', () => {
+    noteDrag = null;
+    if (previewBoxEl) previewBoxEl.hidden = true;
+  });
+
   surface?.addEventListener('pointerdown', (event) => {
     if (state.tool !== 'note' || state.ended || state.pageBusy) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (event.pointerType === 'touch' && !event.isPrimary) return;
     if (stage.classList.contains('is-panning') || stage.classList.contains('is-panning-active')) return;
 
     event.preventDefault();

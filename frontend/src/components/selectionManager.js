@@ -460,6 +460,7 @@ export function setupSelectionManager() {
   // Kéo di chuyển hoặc kéo 8 nút góc/cạnh trên khung chọn (#selectionBoundingBox)
   boxEl.addEventListener('pointerdown', (event) => {
     if (state.tool !== 'select' || state.ended || event.button !== 0) return;
+    if (event.pointerType === 'touch' && !event.isPrimary) return;
     const current = getSelectedObjects();
     if (!current.length) return;
     event.preventDefault();
@@ -763,9 +764,23 @@ export function setupSelectionManager() {
 
   // Khoanh vùng trỏ chuột (Marquee Selection) hoặc Click chọn trên mặt bảng
   let marqueePointerId = null;
+
+  // Hủy ngay thao tác kéo/khoanh 1 ngón khi người dùng đặt ngón thứ 2 để chụm thu phóng (pinch-zoom)
+  window.addEventListener('app:pinch-start', () => {
+    if (gesture && gesture.changed && gesture.before) {
+      restore(gesture.before);
+    }
+    gesture = null;
+    marqueePointerId = null;
+    marqueeStartWorld = null;
+    if (marqueeEl) marqueeEl.hidden = true;
+    syncSelectionOverlay();
+  });
+
   surface.addEventListener('pointerdown', (event) => {
     if (state.tool !== 'select' || state.ended || state.pageBusy) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (event.pointerType === 'touch' && !event.isPrimary) return;
     if (stage.classList.contains('is-panning') || stage.classList.contains('is-panning-active')) return;
 
     event.preventDefault();
