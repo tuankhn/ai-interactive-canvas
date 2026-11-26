@@ -131,12 +131,38 @@ function clusterRawStrokes2D(strokes) {
     groups.get(root).push(items[i].obj);
   }
 
-  return Array.from(groups.values())
-    .map((grpStrokes) => ({
-      strokes: grpStrokes,
-      region: computeBoundingRegion(grpStrokes),
-    }))
-    .filter((c) => Boolean(c.region))
+  const rawClusters = Array.from(groups.values())
+    .map((grpStrokes) => {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const s of grpStrokes) {
+        const b = s.getBoundingRect();
+        if (!b) continue;
+        minX = Math.min(minX, b.left);
+        minY = Math.min(minY, b.top);
+        maxX = Math.max(maxX, b.left + b.width);
+        maxY = Math.max(maxY, b.top + b.height);
+      }
+      const rawW = Number.isFinite(minX) ? maxX - minX : 0;
+      const rawH = Number.isFinite(minY) ? maxY - minY : 0;
+      return {
+        strokes: grpStrokes,
+        region: computeBoundingRegion(grpStrokes),
+        rawW,
+        rawH,
+      };
+    })
+    .filter((c) => Boolean(c.region));
+
+  const nonSpeckClusters = rawClusters.filter(
+    (c) => !(c.strokes.length <= 2 && c.rawW < 10 && c.rawH < 10)
+  );
+  const effectiveClusters = nonSpeckClusters.length > 0 ? nonSpeckClusters : rawClusters;
+
+  return effectiveClusters
+    .map(({ strokes: grpStrokes, region }) => ({ strokes: grpStrokes, region }))
     .sort((a, b) => {
       const sameRow = Math.abs(a.region.top - b.region.top) <= 38;
       return sameRow ? a.region.left - b.region.left : a.region.top - b.region.top;

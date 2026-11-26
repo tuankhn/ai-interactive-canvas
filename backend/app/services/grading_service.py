@@ -2,12 +2,13 @@ import ast
 import asyncio
 import json
 import logging
+import math
 import operator
 import re
 import sys
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from app.schemas.quiz import (
     GradeMCQResponse,
     GradeEssayStepResponse,
@@ -784,6 +785,666 @@ class GradingService:
     # Đánh dấu tích xanh ở bước đúng, gạch chân đỏ dòng sai và gợi ý không lộ đáp án
     # =========================================================================
 
+    _MATH_FN_MAP: Dict[str, Any] = {
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "cot": lambda x: 1.0 / math.tan(x),
+        "asin": math.asin,
+        "acos": math.acos,
+        "atan": math.atan,
+        "sqrt": lambda x: math.sqrt(x) if x >= 0 else float("nan"),
+        "ln": lambda x: math.log(x) if x > 0 else float("nan"),
+        "log": lambda x: math.log10(x) if x > 0 else float("nan"),
+        "exp": math.exp,
+        "abs": abs,
+    }
+    _KNOWN_MATH_WORDS: Set[str] = {
+        "sin", "cos", "tan", "cot", "asin", "acos", "atan",
+        "sqrt", "ln", "log", "exp", "abs", "pi", "delta",
+    }
+
+    @classmethod
+    def _is_meaningless_step_text(cls, raw_text: str) -> bool:
+        s = re.sub(
+            r"\\(?:cdot|bullet|quad|qquad|,|;|!|:|displaystyle|textstyle)\b",
+            " ",
+            str(raw_text or ""),
+        )
+        s = re.sub(r"[$.,;:!?'\"`\-_·⋅=+<>→⇒⇔/\\()\s]", "", s).strip()
+        return len(s) == 0
+
+    @classmethod
+    def _replace_latex_brace_1(cls, text: str, cmd: str, fmt: str) -> Optional[str]:
+        s = text
+        needle = f"\\{cmd}{{"
+        guard = 0
+        while needle in s and guard < 24:
+            guard += 1
+            idx = s.find(needle)
+            depth = 1
+            cur = idx + len(needle)
+            while cur < len(s) and depth > 0:
+                if s[cur] == "{":
+                    depth += 1
+                elif s[cur] == "}":
+                    depth -= 1
+                cur += 1
+            if depth != 0:
+                return None
+            inner = s[idx + len(needle) : cur - 1]
+            s = s[:idx] + fmt.format(inner) + s[cur:]
+        return s
+
+    @classmethod
+    def _replace_latex_frac(cls, text: str, cmd: str) -> Optional[str]:
+        s = text
+        needle = f"\\{cmd}{{"
+        guard = 0
+        while needle in s and guard < 24:
+            guard += 1
+            idx = s.find(needle)
+            depth = 1
+            c1 = idx + len(needle)
+            while c1 < len(s) and depth > 0:
+                if s[c1] == "{":
+                    depth += 1
+                elif s[c1] == "}":
+                    depth -= 1
+                c1 += 1
+            if depth != 0:
+                return None
+            num = s[idx + len(needle) : c1 - 1]
+            while c1 < len(s) and s[c1].isspace():
+                c1 += 1
+            if c1 >= len(s) or s[c1] != "{":
+                return None
+            depth = 1
+            c2 = c1 + 1
+            while c2 < len(s) and depth > 0:
+                if s[c2] == "{":
+                    depth += 1
+                elif s[c2] == "}":
+                    depth -= 1
+                c2 += 1
+            if depth != 0:
+                return None
+            den = s[c1 + 1 : c2 - 1]
+            s = f"{s[:idx]}(({num})/({den})){s[c2:]}"
+        return s
+
+    @classmethod
+    def _latex_to_python_ast_expr(cls, raw_expr: str) -> Optional[Tuple[ast.AST, Set[str]]]:
+        s = str(raw_expr or "").strip()
+        if not s or len(s) > 220:
+            return None
+        if re.search(r"[à-ỹÀ-Ỹ]", s):
+            return None
+
+        s = s.replace("$", "")
+        s = re.sub(r"\\(?:displaystyle|textstyle|quad|qquad|,|;|!)", " ", s)
+        s = re.sub(r"\\left\s*\(", "(", s)
+        s = re.sub(r"\\right\s*\)", ")", s)
+        s = re.sub(r"\\left\s*\[", "(", s)
+        s = re.sub(r"\\right\s*\]", ")", s)
+        s = re.sub(r"\\left\s*\|([^|]+)\\right\s*\|", r"abs(\1)", s)
+
+        for frac_cmd in ("dfrac", "tfrac", "frac"):
+            s_next = cls._replace_latex_frac(s, frac_cmd)
+            if s_next is None:
+                return None
+            s = s_next
+
+        s = re.sub(r"\\sqrt\s*\[\s*([^\]]+)\s*\]\s*\{([^{}]+)\}", r"((\2)**(1/(\1)))", s)
+        s_sqrt = cls._replace_latex_brace_1(s, "sqrt", "sqrt({0})")
+        if s_sqrt is None:
+            return None
+        s = s_sqrt
+
+        sup_map = {"²": "2", "³": "3", "⁴": "4"}
+        s = re.sub(
+            r"\\?(sin|cos|tan|cot)\s*(?:\^\s*\{?\s*(\d+)\s*\}?|([²³⁴]))\s*(\([^()]+\)|[a-zA-Z0-9]+)",
+            lambda m: f"(({m.group(1).lower()}({m.group(4)}))**{m.group(2) or sup_map.get(m.group(3), '2')})",
+            s,
+            flags=re.IGNORECASE,
+        )
+        s = re.sub(
+            r"\\?(sin|cos|tan|cot|ln|log|sqrt)\s+(?!\()([+-]?\d*[a-zA-Z]+(?:\^\s*\{?\d+\}?)?)",
+            lambda m: f"{m.group(1).lower()}({m.group(2)})",
+            s,
+            flags=re.IGNORECASE,
+        )
+        s = re.sub(
+            r"\\(sin|cos|tan|cot|ln|log|exp|pi|Delta|delta)\b",
+            lambda m: m.group(1).lower(),
+            s,
+        )
+
+        guard = 0
+        while "^{" in s and guard < 24:
+            guard += 1
+            idx = s.find("^{")
+            depth = 1
+            cur = idx + 2
+            while cur < len(s) and depth > 0:
+                if s[cur] == "{":
+                    depth += 1
+                elif s[cur] == "}":
+                    depth -= 1
+                cur += 1
+            if depth != 0:
+                return None
+            exp_inner = s[idx + 2 : cur - 1]
+            s = f"{s[:idx]}**({exp_inner}){s[cur:]}"
+
+        s = re.sub(r"_\s*\{([a-zA-Z0-9]+)\}", r"_\1", s)
+        s = re.sub(
+            r"([⁰¹²³⁴⁵⁶⁷⁸⁹]+)",
+            lambda m: "**" + m.group(1).translate(str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")),
+            s,
+        )
+        s = (
+            s.replace("\\cdot", "*")
+            .replace("\\times", "*")
+            .replace("×", "*")
+            .replace("⋅", "*")
+            .replace("·", "*")
+            .replace("\\div", "/")
+            .replace("÷", "/")
+            .replace("−", "-")
+            .replace("–", "-")
+            .replace("[", "(")
+            .replace("]", ")")
+            .replace("{", "(")
+            .replace("}", ")")
+            .replace("^", "**")
+        )
+
+        fn_tokens: List[str] = []
+
+        def _protect_word(match: re.Match) -> str:
+            w = match.group(0)
+            lw = w.lower()
+            if lw in cls._KNOWN_MATH_WORDS or re.match(r"^[a-z]_\d+$", lw):
+                idx_tok = len(fn_tokens)
+                fn_tokens.append(lw)
+                return f"__MFN{idx_tok}__"
+            if len(w) == 1:
+                return lw
+            if len(w) <= 3 and re.match(r"^[abcxyzmnptuvw]+$", lw):
+                return "*".join(list(lw))
+            return "__INVALID_PROSE__"
+
+        s = re.sub(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", _protect_word, s)
+        if "__INVALID_PROSE__" in s:
+            return None
+
+        s = re.sub(r"(\d)\s*([a-z(]|__MFN\d+__)", r"\1*\2", s)
+        s = re.sub(r"(\))\s*(\d|[a-z(]|__MFN\d+__)", r"\1*\2", s)
+        s = re.sub(r"\b([a-z])\s*(\(|__MFN\d+__)", r"\1*\2", s)
+        s = re.sub(r"__MFN(\d+)__", lambda m: fn_tokens[int(m.group(1))], s)
+
+        try:
+            tree = ast.parse(s, mode="eval")
+        except Exception:
+            return None
+
+        free_vars: Set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if not isinstance(node.func, ast.Name) or node.func.id not in cls._MATH_FN_MAP or len(node.args) != 1:
+                    return None
+            elif isinstance(node, ast.Name):
+                if node.id not in cls._MATH_FN_MAP and node.id not in ("pi", "e"):
+                    free_vars.add(node.id)
+            elif not isinstance(
+                node,
+                (
+                    ast.Expression,
+                    ast.Constant,
+                    ast.BinOp,
+                    ast.UnaryOp,
+                    ast.Load,
+                    ast.Add,
+                    ast.Sub,
+                    ast.Mult,
+                    ast.Div,
+                    ast.Pow,
+                    ast.UAdd,
+                    ast.USub,
+                ),
+            ):
+                return None
+
+        return tree, free_vars
+
+    @classmethod
+    def _eval_parsed_ast(cls, tree: ast.AST, env: Dict[str, float]) -> Optional[float]:
+        def _ev(node: ast.AST) -> float:
+            if isinstance(node, ast.Expression):
+                return _ev(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            if isinstance(node, ast.Name):
+                if node.id == "pi":
+                    return math.pi
+                if node.id == "e" and "e" not in env:
+                    return math.e
+                if node.id in env:
+                    return float(env[node.id])
+                raise ValueError(f"Unbound var {node.id}")
+            if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_AST_UNARY_OPS:
+                return float(_SAFE_AST_UNARY_OPS[type(node.op)](_ev(node.operand)))
+            if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_AST_BIN_OPS:
+                lv = _ev(node.left)
+                rv = _ev(node.right)
+                if isinstance(node.op, ast.Pow):
+                    if abs(rv) > 24 and abs(lv) > 2:
+                        raise ValueError("Exponent overflow")
+                    if lv < 0 and abs(rv - round(rv)) > 1e-9:
+                        return float("nan")
+                res_v = _SAFE_AST_BIN_OPS[type(node.op)](lv, rv)
+                if isinstance(res_v, complex):
+                    return float("nan")
+                return float(res_v)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                fn = cls._MATH_FN_MAP[node.func.id]
+                return float(fn(_ev(node.args[0])))
+            raise ValueError("Unsupported AST")
+
+        try:
+            out = _ev(tree)
+            if isinstance(out, complex) or math.isnan(out) or math.isinf(out):
+                return None
+            return float(out)
+        except Exception:
+            return None
+
+    @classmethod
+    def _parse_side_with_derivative(cls, raw_side: str) -> Optional[Dict[str, Any]]:
+        s = str(raw_side or "").strip()
+        m_deriv = re.match(r"^\((.+)\)\s*'$", s) or re.match(r"^\\left\((.+)\\right\)\s*'$", s)
+        if m_deriv:
+            parsed = cls._latex_to_python_ast_expr(m_deriv.group(1))
+            if not parsed:
+                return None
+            tree, fvars = parsed
+            if len(fvars) > 1:
+                return None
+            v_name = next(iter(fvars), "x")
+
+            def _eval_deriv(env: Dict[str, float]) -> Optional[float]:
+                if not fvars:
+                    return 0.0
+                x0 = env.get(v_name, 1.0)
+                h = 1e-4
+                pts = [
+                    cls._eval_parsed_ast(tree, {**env, v_name: x0 + 2 * h}),
+                    cls._eval_parsed_ast(tree, {**env, v_name: x0 + h}),
+                    cls._eval_parsed_ast(tree, {**env, v_name: x0 - h}),
+                    cls._eval_parsed_ast(tree, {**env, v_name: x0 - 2 * h}),
+                ]
+                if any(p is None for p in pts):
+                    return None
+                return (-pts[0] + 8.0 * pts[1] - 8.0 * pts[2] + pts[3]) / (12.0 * h)  # type: ignore[operator]
+
+            return {"vars": fvars, "is_derivative": True, "eval": _eval_deriv}
+
+        parsed = cls._latex_to_python_ast_expr(s)
+        if not parsed:
+            return None
+        tree, fvars = parsed
+        return {
+            "vars": fvars,
+            "is_derivative": False,
+            "eval": lambda env: cls._eval_parsed_ast(tree, env),
+        }
+
+    @classmethod
+    def _are_sides_equivalent(cls, lhs_raw: str, rhs_raw: str) -> Optional[bool]:
+        lhs = cls._parse_side_with_derivative(lhs_raw)
+        rhs = cls._parse_side_with_derivative(rhs_raw)
+        if not lhs or not rhs:
+            return None
+
+        all_vars = sorted(lhs["vars"] | rhs["vars"])
+        if not all_vars:
+            v1 = lhs["eval"]({})
+            v2 = rhs["eval"]({})
+            if v1 is None or v2 is None:
+                return None
+            return abs(v1 - v2) <= 1e-5 * max(1.0, abs(v1), abs(v2))
+
+        bases = [1.37, 2.41, 0.73, 3.19, 1.83, -0.73, -1.89, -2.63]
+        valid_pts = 0
+        for b in bases:
+            env = {v: b + idx * 0.31 for idx, v in enumerate(all_vars)}
+            v1 = lhs["eval"](env)
+            v2 = rhs["eval"](env)
+            if v1 is None or v2 is None:
+                continue
+            valid_pts += 1
+            tol = 1e-4 * max(1.0, abs(v1), abs(v2))
+            if abs(v1 - v2) > tol:
+                return False
+
+        return True if valid_pts >= 3 else None
+
+    @classmethod
+    def _find_real_roots_1d(cls, lhs_obj: Dict[str, Any], rhs_obj: Dict[str, Any], var_name: str) -> List[float]:
+        def _f(x: float) -> Optional[float]:
+            lv = lhs_obj["eval"]({var_name: x})
+            rv = rhs_obj["eval"]({var_name: x})
+            if lv is None or rv is None:
+                return None
+            return lv - rv
+
+        roots: List[float] = []
+
+        def _add_root(r: float) -> None:
+            lv = lhs_obj["eval"]({var_name: r})
+            rv = rhs_obj["eval"]({var_name: r})
+            if lv is None or rv is None:
+                return
+            if abs(lv - rv) > 1e-4 * max(1.0, abs(lv), abs(rv)):
+                return
+            if not any(abs(existing - r) < 1e-3 for existing in roots):
+                roots.append(r)
+
+        grid: List[float] = []
+        for i in range(-30, 31):
+            grid.append(float(i))
+            if i < 30:
+                grid.append(i + 0.5)
+
+        prev_x: Optional[float] = None
+        prev_y: Optional[float] = None
+        for x in grid:
+            y = _f(x)
+            if y is None:
+                prev_x, prev_y = None, None
+                continue
+            if abs(y) <= 1e-7:
+                _add_root(x)
+            if prev_x is not None and prev_y is not None and prev_y * y < 0:
+                lo, hi, flo = prev_x, x, prev_y
+                for _ in range(36):
+                    mid = 0.5 * (lo + hi)
+                    fmid = _f(mid)
+                    if fmid is None:
+                        break
+                    if abs(fmid) <= 1e-10:
+                        lo = hi = mid
+                        break
+                    if flo * fmid <= 0:
+                        hi = mid
+                    else:
+                        lo, flo = mid, fmid
+                _add_root(0.5 * (lo + hi))
+            prev_x, prev_y = x, y
+
+        return roots
+
+    @staticmethod
+    def _strip_step_prefix(raw_line: str) -> str:
+        s = str(raw_line or "").strip()
+        s = re.sub(r"^(?:bước\s*\d+|buoc\s*\d+|ta\s*có|suy\s*ra|vậy|vay)\s*[:.]?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"^(?:\\Leftrightarrow|\\Rightarrow|<=>|⇔|=>|⇒|->)\s*", "", s)
+        return s.strip()
+
+    @staticmethod
+    def _split_top_level_equals(expr_str: str) -> List[str]:
+        parts: List[str] = []
+        depth = 0
+        start = 0
+        n = len(expr_str)
+        for i, ch in enumerate(expr_str):
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+            elif depth == 0 and ch == "=":
+                prev_c = expr_str[i - 1] if i > 0 else ""
+                next_c = expr_str[i + 1] if i + 1 < n else ""
+                if prev_c in "<>!=" or next_c in "=>":
+                    continue
+                parts.append(expr_str[start:i].strip())
+                start = i + 1
+        parts.append(expr_str[start:].strip())
+        return parts
+
+    @classmethod
+    def _verify_math_step_equivalence(
+        cls,
+        current_text: str,
+        previous_steps: List[str],
+        question_content: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, str]], bool]:
+        """
+        Kiểm chứng tương đương toán học tổng quát bằng AST đa điểm & nghiệm phương trình.
+        Trả về: (error_dict_hoặc_None, đã_xác_minh_bằng_toán_học_hay_chưa).
+        """
+        body = cls._strip_step_prefix(current_text)
+        if not body:
+            return None, False
+
+        q_raw = str(question_content or "").strip()
+        q_clean = re.sub(r"^[^:]{1,45}:\s*", "", q_raw).strip()
+        q_is_solve = bool(re.search(r"giải\s+phương\s+trình|tìm\s+[a-z]|nghiệm", q_raw, flags=re.IGNORECASE))
+
+        anchor_expr: Optional[str] = None
+        problem_eq: Optional[Dict[str, Any]] = None
+
+        if q_clean:
+            q_parts = cls._split_top_level_equals(q_clean)
+            if len(q_parts) == 1:
+                if cls._parse_side_with_derivative(q_parts[0]):
+                    anchor_expr = q_parts[0]
+            elif len(q_parts) == 2:
+                is_label = (
+                    not q_is_solve
+                    and bool(re.match(r"^(?:[A-Z]|[fghPQMNS]\s*\(\s*[a-z]\s*\))$", q_parts[0]))
+                    and q_parts[0] not in ("X", "Y", "Z")
+                )
+                if is_label and cls._parse_side_with_derivative(q_parts[1]):
+                    anchor_expr = q_parts[1]
+                else:
+                    lp = cls._parse_side_with_derivative(q_parts[0])
+                    rp = cls._parse_side_with_derivative(q_parts[1])
+                    if lp and rp:
+                        eq_vars = lp["vars"] | rp["vars"]
+                        if len(eq_vars) == 1:
+                            v_eq = next(iter(eq_vars))
+                            problem_eq = {
+                                "lhs": lp,
+                                "rhs": rp,
+                                "var": v_eq,
+                                "roots": cls._find_real_roots_1d(lp, rp, v_eq),
+                            }
+        elif previous_steps:
+            first_prev = cls._strip_step_prefix(previous_steps[0])
+            p_parts = cls._split_top_level_equals(first_prev)
+            if len(p_parts) == 1 and cls._parse_side_with_derivative(p_parts[0]):
+                anchor_expr = p_parts[0]
+            elif len(p_parts) == 2 and p_parts[0]:
+                lp = cls._parse_side_with_derivative(p_parts[0])
+                rp = cls._parse_side_with_derivative(p_parts[1])
+                if lp and rp:
+                    eq_vars = lp["vars"] | rp["vars"]
+                    if len(eq_vars) == 1:
+                        v_eq = next(iter(eq_vars))
+                        problem_eq = {
+                            "lhs": lp,
+                            "rhs": rp,
+                            "var": v_eq,
+                            "roots": cls._find_real_roots_1d(lp, rp, v_eq),
+                        }
+
+        # Trường hợp A: Dòng nối tiếp bắt đầu bằng dấu '=' (VD: '= x^3 + 20x + 10')
+        if body.startswith("="):
+            rhs_chain = [p for p in cls._split_top_level_equals(body[1:].strip()) if p]
+            if not rhs_chain:
+                return None, False
+            ref_expr = anchor_expr
+            if not ref_expr and previous_steps:
+                ref_expr = re.sub(r"^=\s*", "", cls._strip_step_prefix(previous_steps[-1])).strip()
+            if ref_expr:
+                verified_any = False
+                for rhs_part in rhs_chain:
+                    eq_res = cls._are_sides_equivalent(ref_expr, rhs_part)
+                    if eq_res is False:
+                        is_binom = bool(re.search(r"\([^()]+\)\s*(?:\^|\*\*)\s*\{?\s*[23]\s*\}?|[²³]", ref_expr))
+                        if is_binom:
+                            return (
+                                {
+                                    "error_type": "FORMULA_ERROR",
+                                    "reason": "Khai triển hằng đẳng thức chưa chính xác: Bậc lũy thừa hoặc các hệ số không khớp với biểu thức đề bài.",
+                                    "guidance": "💡 Gợi ý: Hãy kiểm tra lại hằng đẳng thức (A ± B)² = A² ± 2AB + B² (hoặc bậc 3), chú ý đúng số mũ của biến và từng hệ số.",
+                                },
+                                True,
+                            )
+                        return (
+                            {
+                                "error_type": "CALCULATION_ERROR",
+                                "reason": "Biến đổi đại số chưa tương đương: Giá trị biểu thức sau dấu '=' không bằng biểu thức trước đó.",
+                                "guidance": "💡 Gợi ý: Hãy kiểm tra lại dấu, số mũ và hệ số của từng hạng tử ở dòng biến đổi này.",
+                            },
+                            True,
+                        )
+                    if eq_res is True:
+                        verified_any = True
+                return None, verified_any
+            return None, False
+
+        # Trường hợp B: Chuỗi nhiều dấu '=' trên cùng dòng (VD: 3x = 15 + 12 = 25)
+        parts = cls._split_top_level_equals(body)
+        if len(parts) >= 3:
+            verified_chain = False
+            for i in range(len(parts) - 1):
+                pa = cls._parse_side_with_derivative(parts[i])
+                pb = cls._parse_side_with_derivative(parts[i + 1])
+                if pa and pb and pa["vars"] == pb["vars"]:
+                    eq_pair = cls._are_sides_equivalent(parts[i], parts[i + 1])
+                    if eq_pair is False:
+                        return (
+                            {
+                                "error_type": "CALCULATION_ERROR",
+                                "reason": "Các vế biến đổi nối tiếp trên cùng dòng không bằng nhau.",
+                                "guidance": "💡 Gợi ý: Kiểm tra lại phép tính hoặc rút gọn giữa các dấu '=' trên dòng này.",
+                            },
+                            True,
+                        )
+                    if eq_pair is True:
+                        verified_chain = True
+            if verified_chain:
+                return None, True
+
+        # Trường hợp C: Đẳng thức hoặc phương trình 2 vế LHS = RHS
+        if len(parts) == 2 and parts[0] and parts[1]:
+            lhs_str, rhs_str = parts
+            lhs_p = cls._parse_side_with_derivative(lhs_str)
+            rhs_p = cls._parse_side_with_derivative(rhs_str)
+            if not lhs_p or not rhs_p:
+                return None, False
+
+            union_vars = lhs_p["vars"] | rhs_p["vars"]
+            is_identity = cls._are_sides_equivalent(lhs_str, rhs_str)
+
+            # 1. Biểu thức số thuần túy (0 biến)
+            if len(union_vars) == 0:
+                if is_identity is False:
+                    return (
+                        {
+                            "error_type": "CALCULATION_ERROR",
+                            "reason": f"Tính toán sai giá trị số học: {lhs_str} không bằng {rhs_str}.",
+                            "guidance": "💡 Gợi ý: Hãy thực hiện lại phép tính cộng, trừ, nhân, chia hoặc lũy thừa ở dòng này.",
+                        },
+                        True,
+                    )
+                return None, bool(is_identity)
+
+            # 2. Đạo hàm (f(x))' = g(x)
+            if lhs_p["is_derivative"] or rhs_p["is_derivative"]:
+                if is_identity is False:
+                    return (
+                        {
+                            "error_type": "FORMULA_ERROR",
+                            "reason": "Áp dụng chưa đúng quy tắc tính đạo hàm.",
+                            "guidance": "💡 Gợi ý: Kiểm tra lại bảng đạo hàm cơ bản và quy tắc nhân hệ số / dấu khi lấy đạo hàm.",
+                        },
+                        True,
+                    )
+                return None, bool(is_identity)
+
+            # 3. Đề bài là biểu thức khai triển / rút gọn (không phải giải phương trình)
+            if anchor_expr and not problem_eq:
+                vs_anchor = cls._are_sides_equivalent(anchor_expr, rhs_str)
+                if is_identity is False or vs_anchor is False:
+                    return (
+                        {
+                            "error_type": "FORMULA_ERROR",
+                            "reason": "Phép khai triển hoặc rút gọn chưa tương đương với biểu thức đề bài.",
+                            "guidance": "💡 Gợi ý: Đối chiếu lại từng số mũ và hệ số khi khai triển hoặc thu gọn biểu thức.",
+                        },
+                        True,
+                    )
+                return None, True
+
+            # 4. Đề bài là giải phương trình 1 ẩn: đối chiếu tập nghiệm thực
+            if problem_eq and len(union_vars) == 1 and next(iter(union_vars)) == problem_eq["var"]:
+                if is_identity is True:
+                    return None, True
+                v_name = problem_eq["var"]
+                step_roots = cls._find_real_roots_1d(lhs_p, rhs_p, v_name)
+                is_radical_eq = bool(re.search(r"sqrt|\\sqrt", q_clean))
+                p_roots: List[float] = problem_eq["roots"]
+                if p_roots:
+                    preserves_any_root = any(
+                        (lv := lhs_p["eval"]({v_name: r0})) is not None
+                        and (rv := rhs_p["eval"]({v_name: r0})) is not None
+                        and abs(lv - rv) <= 1e-3 * max(1.0, abs(lv), abs(rv))
+                        for r0 in p_roots
+                    )
+                    has_wrong_root = (not is_radical_eq) and any(
+                        (lv0 := problem_eq["lhs"]["eval"]({v_name: rk})) is None
+                        or (rv0 := problem_eq["rhs"]["eval"]({v_name: rk})) is None
+                        or abs(lv0 - rv0) > 1e-3 * max(1.0, abs(lv0), abs(rv0))
+                        for rk in step_roots
+                    )
+                    if not preserves_any_root or has_wrong_root:
+                        return (
+                            {
+                                "error_type": "CALCULATION_ERROR",
+                                "reason": "Phương trình biến đổi không tương đương (nhầm dấu chuyển vế hoặc tính sai hệ số/nghiệm).",
+                                "guidance": "💡 Gợi ý: Kiểm tra lại dấu khi chuyển vế và phép tính rút gọn hai vế của phương trình.",
+                            },
+                            True,
+                        )
+                    return None, True
+
+            # 5. Dòng đơn lẻ không có đề bài: bắt các hằng đẳng thức / lượng giác / căn thức sai
+            if not problem_eq:
+                if is_identity is True:
+                    return None, True
+                if is_identity is False:
+                    looks_like_identity = (
+                        len(union_vars) >= 2
+                        or bool(re.search(r"\([^()]+\)\s*(?:\^|\*\*)\s*\{?\s*[234]\s*\}?|[²³⁴]", lhs_str))
+                        or bool(re.search(r"\)\s*\(", lhs_str))
+                        or bool(re.search(r"sin|cos|tan|cot|sqrt|ln|log", body, flags=re.IGNORECASE))
+                    )
+                    if looks_like_identity and rhs_str != "0" and len(rhs_p["vars"]) > 0:
+                        return (
+                            {
+                                "error_type": "FORMULA_ERROR",
+                                "reason": "Hai vế của đẳng thức không bằng nhau với mọi giá trị của biến.",
+                                "guidance": "💡 Gợi ý: Kiểm tra lại hằng đẳng thức hoặc công thức biến đổi ở dòng này.",
+                            },
+                            True,
+                        )
+
+        return None, False
+
     @classmethod
     def detect_step_error(
         cls,
@@ -797,18 +1458,35 @@ class GradingService:
         Phát hiện sai sót trong dòng biến đổi tự luận hiện tại:
         - Nhầm công thức toán/lý/hóa (Hằng đẳng thức, Đạo hàm, Tích phân, Lượng giác...)
         - Nhầm dấu (chuyển vế không đổi dấu, nhân chia số âm không đổi chiều...)
-        - Tính sai số học (phép cộng/trừ/nhân/chia nhẩm sai)
-        - Vi phạm điều kiện xác định
+        - Tính sai số học & kiểm chứng tương đương đại số / nghiệm phương trình bằng AST đa điểm
         Trả về dict {error_type, reason, guidance} hoặc None nếu bước biến đổi hợp lệ.
         """
+        if cls._is_meaningless_step_text(current_text):
+            return {
+                "error_type": "INCOMPLETE_STEP",
+                "reason": "Dòng viết chưa có biểu thức hoặc nội dung hợp lệ để chấm.",
+                "guidance": "💡 Gợi ý: Hãy xóa nét chấm thừa hoặc viết đầy đủ phép biến đổi tiếp theo.",
+            }
+
         text = current_text.strip()
-        text_clean = re.sub(r"\s+", " ", text.lower())
+        text_norm_latex = (
+            text.replace("\\left(", "(")
+            .replace("\\right)", ")")
+            .replace("$", "")
+        )
+        text_norm_latex = re.sub(r"\^\s*\{\s*(\d+)\s*\}", r"^\1", text_norm_latex)
+        text_clean = re.sub(r"\s+", " ", text_norm_latex.lower())
 
         # Hỗ trợ học sinh viết dòng bắt đầu bằng '=' liên kết với bước trước hoặc đề bài
         chained_text = text_clean
         if text_clean.startswith("=") and (previous_steps or question_content):
-            anchor = (previous_steps[-1] if previous_steps else question_content or "").strip().lower()
-            chained_text = f"{anchor} {text_clean}"
+            anchor_raw = (previous_steps[-1] if previous_steps else question_content or "").strip()
+            anchor_norm = re.sub(
+                r"\^\s*\{\s*(\d+)\s*\}",
+                r"^\1",
+                anchor_raw.replace("\\left(", "(").replace("\\right)", ")").replace("$", ""),
+            ).lower()
+            chained_text = f"{anchor_norm} {text_clean}"
 
         # 1. Kiểm tra nhầm hằng đẳng thức đáng nhớ (x + b)^2 hoặc (a + b)^2
         # Khai triển bình phương nhưng vế phải chỉ có 2 số hạng (thiếu 2ab)
@@ -998,6 +1676,15 @@ class GradingService:
                         "reason": "Sai tỉ lệ phân li kiểu gen F1: Phép lai thể dị hợp Aa x Aa cho tỉ lệ 1 AA : 2 Aa : 1 aa.",
                         "guidance": "💡 Gợi ý: Lập khung Punnett 2x2 để kết hợp giao tử đực và cái chính xác.",
                     }
+
+        # 8. Kiểm chứng tương đương toán học tổng quát (Đa thức, Lượng giác, Đạo hàm, Phương trình)
+        math_err, _ = cls._verify_math_step_equivalence(
+            current_text=current_text,
+            previous_steps=previous_steps,
+            question_content=question_content,
+        )
+        if math_err is not None:
+            return math_err
 
         return None
 
@@ -1193,6 +1880,317 @@ class GradingService:
             correct_steps=correct_count,
             incorrect_steps=incorrect_count,
             steps_evaluation=evaluations,
+            has_any_error=has_error,
+            first_error_step=first_err,
+            overall_feedback=feedback,
+            score=score,
+        )
+
+    @classmethod
+    async def _gemini_verify_unparsed_steps(
+        cls,
+        effective_question: Optional[str],
+        step_lines: List[str],
+        unverified_indices: List[int],
+        subject: str = "TOAN",
+    ) -> Dict[int, Dict[str, str]]:
+        """
+        Dùng Gemini 2.5/3.5 Flash để kiểm chứng các bước lời giải tự luận dạng chữ / Lý / Hóa / Sinh / Anh
+        chưa thể phân tích bằng bộ AST toán học thuần túy. Đảm bảo tuyệt đối không lộ đáp án cuối.
+        """
+        if not unverified_indices or "pytest" in sys.modules:
+            return {}
+        try:
+            from app.ai.gemini_service import gemini_service
+            if not gemini_service.ensure_configured():
+                return {}
+        except Exception:
+            return {}
+
+        prompt_obj = {
+            "task": "Chấm tính đúng/sai cho từng bước giải của học sinh. TUYỆT ĐỐI KHÔNG tiết lộ đáp số hay kết quả đúng trong reason/guidance.",
+            "subject": subject,
+            "question": effective_question or "(Không có đề bài riêng, bước 1 là ngữ cảnh)",
+            "all_steps": [{"step_number": i + 1, "text": s} for i, s in enumerate(step_lines)],
+            "steps_to_check": [i + 1 for i in unverified_indices],
+            "output_schema": {
+                "errors": [
+                    {
+                        "step_number": 1,
+                        "error_type": "FORMULA_ERROR | CALCULATION_ERROR | SIGN_ERROR | GRAMMAR_ERROR | CONCEPTUAL_ERROR",
+                        "reason": "Giải thích ngắn gọn vì sao bước này sai (tiếng Việt, không nêu đáp số đúng)",
+                        "guidance": "💡 Gợi ý: Hướng dẫn cách tự kiểm tra và sửa lại (tiếng Việt, không lộ đáp án)",
+                    }
+                ]
+            },
+        }
+        prompt_text = (
+            "Bạn là giáo viên chấm bài tự luận nghiêm ngặt. Hãy kiểm tra các bước trong `steps_to_check`.\n"
+            "Nếu bước giải ĐÚNG, không đưa vào mảng `errors`. Nếu bước giải SAI (sai công thức, sai hóa trị/cân bằng phương trình, "
+            "sai ngữ pháp, sai lập luận hoặc tính toán sai), hãy thêm vào mảng `errors`.\n"
+            "Chỉ trả về JSON hợp lệ theo `output_schema`:\n"
+            + json.dumps(prompt_obj, ensure_ascii=False)
+        )
+
+        raw_json = ""
+        try:
+            mod = gemini_service.active_model_name
+            if gemini_service._client_type == "google-genai" and gemini_service.client is not None:
+                gen_cfg = None
+                try:
+                    from google.genai import types
+                    cfg_kw: Dict[str, Any] = {
+                        "response_mime_type": "application/json",
+                        "temperature": 0.0,
+                        "max_output_tokens": 500,
+                    }
+                    if hasattr(types, "ThinkingConfig"):
+                        try:
+                            cfg_kw["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                        except Exception:
+                            pass
+                    gen_cfg = types.GenerateContentConfig(**cfg_kw)
+                except Exception:
+                    gen_cfg = None
+
+                if hasattr(gemini_service.client, "aio") and hasattr(gemini_service.client.aio, "models"):
+                    resp = await asyncio.wait_for(
+                        gemini_service.client.aio.models.generate_content(
+                            model=mod,
+                            contents=prompt_text,
+                            config=gen_cfg,
+                        ),
+                        timeout=5.5,
+                    )
+                else:
+                    resp = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            gemini_service.client.models.generate_content,
+                            model=mod,
+                            contents=prompt_text,
+                            config=gen_cfg,
+                        ),
+                        timeout=5.5,
+                    )
+                raw_json = (resp.text or "").strip()
+        except Exception as exc:
+            logger.debug(f"Bỏ qua Gemini essay fallback (giữ kết quả deterministic): {exc}")
+            return {}
+
+        if not raw_json:
+            return {}
+
+        try:
+            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_json.strip(), flags=re.IGNORECASE)
+            parsed = json.loads(cleaned)
+            err_list = parsed.get("errors", []) if isinstance(parsed, dict) else []
+            out: Dict[int, Dict[str, str]] = {}
+            for item in err_list:
+                if not isinstance(item, dict):
+                    continue
+                s_num = int(item.get("step_number", 0))
+                reason = str(item.get("reason", "")).strip()
+                guidance = str(item.get("guidance", "")).strip()
+                if s_num >= 1 and reason:
+                    if not guidance.startswith("💡"):
+                        guidance = f"💡 Gợi ý: {guidance or 'Hãy kiểm tra lại công thức và phép biến đổi ở dòng này.'}"
+                    out[s_num] = {
+                        "error_type": str(item.get("error_type") or "CONCEPTUAL_ERROR"),
+                        "reason": reason,
+                        "guidance": guidance,
+                    }
+            return out
+        except Exception:
+            return {}
+
+    @classmethod
+    async def evaluate_essay_step_async(
+        cls,
+        question_id: str,
+        step_number: int,
+        written_text: str,
+        previous_steps: Optional[List[str]] = None,
+        question_content: Optional[str] = None,
+        subject: str = "TOAN",
+        target_answer: Optional[str] = None,
+        line_bounding_box: Optional[Dict[str, Any]] = None,
+    ) -> GradeEssayStepResponse:
+        sync_res = cls.evaluate_essay_step(
+            question_id=question_id,
+            step_number=step_number,
+            written_text=written_text,
+            previous_steps=previous_steps,
+            question_content=question_content,
+            subject=subject,
+            target_answer=target_answer,
+            line_bounding_box=line_bounding_box,
+        )
+        if not sync_res.is_step_correct:
+            return sync_res
+
+        prev = previous_steps or []
+        _, verified_math = cls._verify_math_step_equivalence(
+            current_text=written_text,
+            previous_steps=prev,
+            question_content=question_content,
+        )
+        if verified_math:
+            return sync_res
+
+        all_lines = [*prev, written_text]
+        ai_errs = await cls._gemini_verify_unparsed_steps(
+            effective_question=question_content,
+            step_lines=all_lines,
+            unverified_indices=[len(all_lines) - 1],
+            subject=subject,
+        )
+        err_info = ai_errs.get(len(all_lines))
+        if not err_info:
+            return sync_res
+
+        safe_guidance = cls.sanitize_guidance_no_leak(err_info["guidance"], target_answer=target_answer)
+        safe_reason = cls.sanitize_guidance_no_leak(err_info["reason"], target_answer=target_answer) or err_info["reason"]
+        default_box = line_bounding_box or {
+            "left": 50,
+            "top": 50 + (step_number - 1) * 36,
+            "width": max(200, len(written_text) * 12),
+            "height": 28,
+        }
+        return GradeEssayStepResponse(
+            step_number=step_number,
+            written_text=written_text,
+            is_step_correct=False,
+            status="INCORRECT",
+            icon="✕",
+            badge_color="#dc2626",
+            decoration_type="RED_UNDERLINE",
+            has_math_error=True,
+            error_type=err_info["error_type"],
+            feedback=f"⚠️ Dòng {step_number} phát hiện lỗi: {safe_reason}",
+            guidance=safe_guidance,
+            no_leak_guarantee=True,
+            canvas_annotation={
+                "step_number": step_number,
+                "type": "red_underline",
+                "color": "#dc2626",
+                "icon": "✕",
+                "left": default_box.get("left", 50),
+                "top": default_box.get("top", 50) + default_box.get("height", 24),
+                "width": default_box.get("width", 300),
+                "tooltip": f"⚠️ Lỗi dòng {step_number}: {safe_reason}",
+                "guidance": safe_guidance,
+            },
+        )
+
+    @classmethod
+    async def evaluate_essay_solution_async(
+        cls,
+        question_id: str,
+        steps: Optional[List[str]] = None,
+        raw_text: Optional[str] = None,
+        question_content: Optional[str] = None,
+        subject: str = "TOAN",
+        target_answer: Optional[str] = None,
+    ) -> GradeEssaySolutionResponse:
+        sync_sol = cls.evaluate_essay_solution(
+            question_id=question_id,
+            steps=steps,
+            raw_text=raw_text,
+            question_content=question_content,
+            subject=subject,
+            target_answer=target_answer,
+        )
+        if not sync_sol.steps_evaluation:
+            return sync_sol
+
+        effective_question = question_content
+        step_lines = [ev.written_text for ev in sync_sol.steps_evaluation]
+        raw_input_lines = (
+            [s.strip() for s in steps if s.strip()]
+            if steps
+            else [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
+        )
+        if not effective_question and len(raw_input_lines) == len(step_lines) + 1:
+            effective_question = raw_input_lines[0]
+
+        unverified_indices: List[int] = []
+        prev_acc: List[str] = []
+        for idx, ev in enumerate(sync_sol.steps_evaluation):
+            if ev.is_step_correct:
+                _, verified_math = cls._verify_math_step_equivalence(
+                    current_text=ev.written_text,
+                    previous_steps=prev_acc,
+                    question_content=effective_question,
+                )
+                if not verified_math:
+                    unverified_indices.append(idx)
+            prev_acc.append(ev.written_text)
+
+        if not unverified_indices:
+            return sync_sol
+
+        ai_errs = await cls._gemini_verify_unparsed_steps(
+            effective_question=effective_question,
+            step_lines=step_lines,
+            unverified_indices=unverified_indices,
+            subject=subject,
+        )
+        if not ai_errs:
+            return sync_sol
+
+        updated_evals: List[GradeEssayStepResponse] = []
+        for idx, ev in enumerate(sync_sol.steps_evaluation, start=1):
+            err_info = ai_errs.get(idx)
+            if ev.is_step_correct and err_info:
+                safe_guidance = cls.sanitize_guidance_no_leak(err_info["guidance"], target_answer=target_answer)
+                safe_reason = cls.sanitize_guidance_no_leak(err_info["reason"], target_answer=target_answer) or err_info["reason"]
+                updated_evals.append(
+                    GradeEssayStepResponse(
+                        step_number=idx,
+                        written_text=ev.written_text,
+                        is_step_correct=False,
+                        status="INCORRECT",
+                        icon="✕",
+                        badge_color="#dc2626",
+                        decoration_type="RED_UNDERLINE",
+                        has_math_error=True,
+                        error_type=err_info["error_type"],
+                        feedback=f"⚠️ Dòng {idx} phát hiện lỗi: {safe_reason}",
+                        guidance=safe_guidance,
+                        no_leak_guarantee=True,
+                        canvas_annotation={
+                            "step_number": idx,
+                            "type": "red_underline",
+                            "color": "#dc2626",
+                            "icon": "✕",
+                            "left": 50,
+                            "top": 50 + (idx - 1) * 36 + 28,
+                            "width": max(200, len(ev.written_text) * 12),
+                            "tooltip": f"⚠️ Lỗi dòng {idx}: {safe_reason}",
+                            "guidance": safe_guidance,
+                        },
+                    )
+                )
+            else:
+                updated_evals.append(ev)
+
+        correct_count = sum(1 for e in updated_evals if e.is_step_correct)
+        incorrect_count = len(updated_evals) - correct_count
+        has_error = incorrect_count > 0
+        first_err = next((e.step_number for e in updated_evals if not e.is_step_correct), None)
+        if not has_error:
+            feedback = "Toàn bộ các bước giải đều hoàn hảo! Lập luận chặt chẽ và chính xác."
+            score = 10.0
+        else:
+            feedback = f"Bài giải có {incorrect_count} bước cần lưu ý. Hãy xem gợi ý gạch chân đỏ tại dòng {first_err} để chỉnh sửa mà không cần xem đáp án cuối."
+            score = max(0.0, round((correct_count / len(updated_evals)) * 10.0, 1))
+
+        return GradeEssaySolutionResponse(
+            question_id=question_id,
+            total_steps=len(updated_evals),
+            correct_steps=correct_count,
+            incorrect_steps=incorrect_count,
+            steps_evaluation=updated_evals,
             has_any_error=has_error,
             first_error_step=first_err,
             overall_feedback=feedback,

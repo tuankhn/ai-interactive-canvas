@@ -57,13 +57,639 @@ export function clearGradingOverlays() {
 }
 
 /**
- * Gom các nét viết tay (Path) thành từng dòng độc lập theo trục dọc Y.
+ * Kiểm tra chuỗi nhận diện OCR có phải chỉ là dấu chấm / nhiễu ký tự vô nghĩa không.
+ */
+function isMeaninglessStepText(rawText) {
+  const s = String(rawText || '')
+    .replace(/\\(?:cdot|bullet|quad|qquad|,|;|!|:|displaystyle|textstyle)\b/g, ' ')
+    .replace(/[$.,;:!?'"`\-_·⋅=+<>→⇒⇔/\\()\s]/g, '')
+    .trim();
+  return s.length === 0;
+}
+
+const CLIENT_MATH_FN_NAMES = new Set([
+  'sin', 'cos', 'tan', 'cot', 'asin', 'acos', 'atan',
+  'sqrt', 'ln', 'log', 'exp', 'abs', 'pi', 'delta',
+]);
+
+function replaceLatexBraceCmd1(input, cmd, replacer) {
+  let s = input;
+  const needle = `\\${cmd}{`;
+  let guard = 0;
+  while (s.includes(needle) && guard < 24) {
+    guard += 1;
+    const idx = s.indexOf(needle);
+    if (idx < 0) break;
+    let depth = 1;
+    let cursor = idx + needle.length;
+    while (cursor < s.length && depth > 0) {
+      if (s[cursor] === '{') depth += 1;
+      else if (s[cursor] === '}') depth -= 1;
+      cursor += 1;
+    }
+    if (depth !== 0) return null;
+    const arg = s.slice(idx + needle.length, cursor - 1);
+    s = s.slice(0, idx) + replacer(arg) + s.slice(cursor);
+  }
+  return s;
+}
+
+function replaceLatexFracCmd(input, cmd) {
+  let s = input;
+  const needle = `\\${cmd}{`;
+  let guard = 0;
+  while (s.includes(needle) && guard < 24) {
+    guard += 1;
+    const idx = s.indexOf(needle);
+    if (idx < 0) break;
+    let depth = 1;
+    let c1 = idx + needle.length;
+    while (c1 < s.length && depth > 0) {
+      if (s[c1] === '{') depth += 1;
+      else if (s[c1] === '}') depth -= 1;
+      c1 += 1;
+    }
+    if (depth !== 0) return null;
+    const num = s.slice(idx + needle.length, c1 - 1);
+    while (c1 < s.length && /\s/.test(s[c1])) c1 += 1;
+    if (s[c1] !== '{') return null;
+    depth = 1;
+    let c2 = c1 + 1;
+    while (c2 < s.length && depth > 0) {
+      if (s[c2] === '{') depth += 1;
+      else if (s[c2] === '}') depth -= 1;
+      c2 += 1;
+    }
+    if (depth !== 0) return null;
+    const den = s.slice(c1 + 1, c2 - 1);
+    s = `${s.slice(0, idx)}((${num})/(${den}))${s.slice(c2)}`;
+  }
+  return s;
+}
+
+function normalizeLatexExprToJs(rawExpr) {
+  let s = String(rawExpr || '').trim();
+  if (!s || s.length > 220) return null;
+  if (/[à-ỹÀ-Ỹ]/.test(s)) return null;
+
+  s = s
+    .replace(/\$/g, '')
+    .replace(/\\(?:displaystyle|textstyle|quad|qquad|,|;|!)/g, ' ')
+    .replace(/\\left\s*\(/g, '(')
+    .replace(/\\right\s*\)/g, ')')
+    .replace(/\\left\s*\[/g, '(')
+    .replace(/\\right\s*\]/g, ')')
+    .replace(/\\left\s*\|([^|]+)\\right\s*\|/g, 'abs($1)');
+
+  for (const fracCmd of ['dfrac', 'tfrac', 'frac']) {
+    s = replaceLatexFracCmd(s, fracCmd);
+    if (s === null) return null;
+  }
+
+  // \sqrt[n]{arg}
+  s = s.replace(/\\sqrt\s*\[\s*([^\]]+)\s*\]\s*\{([^{}]+)\}/g, '(($2)**(1/($1)))');
+  s = replaceLatexBraceCmd1(s, 'sqrt', (arg) => `sqrt(${arg})`);
+  if (s === null) return null;
+
+  // Lũy thừa hàm lượng giác: \sin^2 x, sin²(x), \cos^{2}(x)
+  s = s.replace(
+    /\\?(sin|cos|tan|cot)\s*(?:\^\s*\{?\s*(\d+)\s*\}?|([²³⁴]))\s*(\([^()]+\)|[a-zA-Z0-9]+)/gi,
+    (_, fn, d1, sup, arg) => {
+      const expMap = { '²': '2', '³': '3', '⁴': '4' };
+      const exp = d1 || expMap[sup] || '2';
+      return `((${fn.toLowerCase()}(${arg}))**${exp})`;
+    }
+  );
+  s = s.replace(
+    /\\?(sin|cos|tan|cot|ln|log|sqrt)\s+(?!\()([+-]?\d*[a-zA-Z]+(?:\^\s*\{?\d+\}?)?)/gi,
+    (_, fn, arg) => `${fn.toLowerCase()}(${arg})`
+  );
+  s = s
+    .replace(/\\(sin|cos|tan|cot|ln|log|exp|pi|Delta|delta)\b/g, (_, w) => w.toLowerCase());
+
+  // Mũ dạng ^{...}
+  let guard = 0;
+  while (s.includes('^{') && guard < 24) {
+    guard += 1;
+    const idx = s.indexOf('^{');
+    let depth = 1;
+    let cur = idx + 2;
+    while (cur < s.length && depth > 0) {
+      if (s[cur] === '{') depth += 1;
+      else if (s[cur] === '}') depth -= 1;
+      cur += 1;
+    }
+    if (depth !== 0) return null;
+    const expInner = s.slice(idx + 2, cur - 1);
+    s = `${s.slice(0, idx)}**(${expInner})${s.slice(cur)}`;
+  }
+  s = s.replace(/_\s*\{([a-zA-Z0-9]+)\}/g, '_$1');
+  s = s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g, (m) => {
+    const map = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+    return `**${Array.from(m).map((c) => map[c] ?? '').join('')}`;
+  });
+  s = s
+    .replace(/\\(?:cdot|times)/g, '*')
+    .replace(/[×⋅·]/g, '*')
+    .replace(/\\div|÷/g, '/')
+    .replace(/[−–]/g, '-')
+    .replace(/\[/g, '(')
+    .replace(/\]/g, ')')
+    .replace(/\{/g, '(')
+    .replace(/\}/g, ')')
+    .replace(/\^/g, '**');
+
+  const fnTable = [];
+  s = s.replace(/\b[a-zA-Z_][a-zA-Z0-9_]*\b/g, (word) => {
+    const lower = word.toLowerCase();
+    if (CLIENT_MATH_FN_NAMES.has(lower)) {
+      const idx = fnTable.length;
+      fnTable.push(lower);
+      return `__MFN${idx}__`;
+    }
+    if (/^[a-zA-Z]_\d+$/.test(word)) {
+      const idx = fnTable.length;
+      fnTable.push(lower);
+      return `__MFN${idx}__`;
+    }
+    if (word.length === 1) return lower;
+    if (word.length <= 3 && /^[abcxyzmnptuvw]+$/i.test(word)) {
+      return Array.from(lower).join('*');
+    }
+    return '__INVALID_WORD__';
+  });
+  if (s.includes('__INVALID_WORD__')) return null;
+
+  s = s.replace(/(\d)\s*([a-z(]|__MFN\d+__)/g, '$1*$2');
+  s = s.replace(/(\))\s*(\d|[a-z(]|__MFN\d+__)/g, '$1*$2');
+  s = s.replace(/\b([a-z])\s*(\(|__MFN\d+__)/g, '$1*$2');
+
+  const vars = new Set();
+  for (const m of s.matchAll(/\b([a-z])\b/g)) {
+    if (m[1] !== 'e') vars.add(m[1]);
+  }
+
+  s = s.replace(/__MFN(\d+)__/g, (_, idxStr) => {
+    const fn = fnTable[Number(idxStr)];
+    if (fn === 'pi') return 'Math.PI';
+    if (fn === 'delta') {
+      vars.add('delta');
+      return 'delta';
+    }
+    if (/^[a-z]_\d+$/.test(fn)) {
+      vars.add(fn);
+      return fn;
+    }
+    const fnMap = {
+      sin: 'Math.sin',
+      cos: 'Math.cos',
+      tan: 'Math.tan',
+      cot: '__cot',
+      asin: 'Math.asin',
+      acos: 'Math.acos',
+      atan: 'Math.atan',
+      sqrt: 'Math.sqrt',
+      ln: 'Math.log',
+      log: 'Math.log10',
+      exp: 'Math.exp',
+      abs: 'Math.abs',
+    };
+    return fnMap[fn] || fn;
+  });
+  s = s.replace(/\be\b/g, 'Math.E');
+
+  // Whitelist an toàn tuyệt đối trước khi biên dịch biểu thức số học
+  const strippedCheck = s
+    .replace(/Math\.(?:sin|cos|tan|asin|acos|atan|sqrt|log10|log|exp|abs|PI|E)|__cot/g, '')
+    .replace(/\b(?:delta|[a-z](?:_\d+)?)\b/g, '')
+    .replace(/[\d.+\-*/()\s]/g, '');
+  if (strippedCheck.length > 0) return null;
+
+  try {
+    const varList = Array.from(vars);
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(
+      '__cot',
+      ...varList,
+      `"use strict"; return (${s});`
+    );
+    return { fn, vars: varList };
+  } catch {
+    return null;
+  }
+}
+
+function parseMathSideWithDerivative(rawSide) {
+  const s = String(rawSide || '').trim();
+  const mDeriv = s.match(/^\((.+)\)\s*'$/) || s.match(/^\\left\((.+)\\right\)\s*'$/);
+  if (mDeriv) {
+    const inner = normalizeLatexExprToJs(mDeriv[1]);
+    if (!inner || inner.vars.length > 1) return null;
+    const vName = inner.vars[0] || 'x';
+    return {
+      vars: inner.vars,
+      isDerivative: true,
+      evalAt(env) {
+        if (inner.vars.length === 0) return 0;
+        const x = env[vName];
+        const h = 1e-4;
+        const cot = (t) => 1 / Math.tan(t);
+        const f = (t) => inner.fn(cot, t);
+        return (-f(x + 2 * h) + 8 * f(x + h) - 8 * f(x - h) + f(x - 2 * h)) / (12 * h);
+      },
+    };
+  }
+  const parsed = normalizeLatexExprToJs(s);
+  if (!parsed) return null;
+  return {
+    vars: parsed.vars,
+    isDerivative: false,
+    evalAt(env) {
+      const cot = (t) => 1 / Math.tan(t);
+      const args = parsed.vars.map((v) => env[v]);
+      return parsed.fn(cot, ...args);
+    },
+  };
+}
+
+function areClientMathSidesEquivalent(lhsRaw, rhsRaw) {
+  const lhs = parseMathSideWithDerivative(lhsRaw);
+  const rhs = parseMathSideWithDerivative(rhsRaw);
+  if (!lhs || !rhs) return null;
+
+  const allVars = Array.from(new Set([...lhs.vars, ...rhs.vars])).sort();
+  if (allVars.length === 0) {
+    const v1 = lhs.evalAt({});
+    const v2 = rhs.evalAt({});
+    if (!Number.isFinite(v1) || !Number.isFinite(v2)) return null;
+    return Math.abs(v1 - v2) <= 1e-5 * Math.max(1, Math.abs(v1), Math.abs(v2));
+  }
+
+  const bases = [1.37, 2.41, 0.73, 3.19, 1.83, -0.73, -1.89, -2.63];
+  let validCount = 0;
+  for (const base of bases) {
+    const env = {};
+    allVars.forEach((v, idx) => {
+      env[v] = base + idx * 0.31;
+    });
+    const v1 = lhs.evalAt(env);
+    const v2 = rhs.evalAt(env);
+    if (!Number.isFinite(v1) || !Number.isFinite(v2)) continue;
+    validCount += 1;
+    const tol = 1e-4 * Math.max(1, Math.abs(v1), Math.abs(v2));
+    if (Math.abs(v1 - v2) > tol) return false;
+  }
+  return validCount >= 3 ? true : null;
+}
+
+function findRealRoots1D(lhsParsed, rhsParsed, vName) {
+  const f = (x) => lhsParsed.evalAt({ [vName]: x }) - rhsParsed.evalAt({ [vName]: x });
+  const roots = [];
+  const addRoot = (r) => {
+    if (!Number.isFinite(r)) return;
+    const lv = lhsParsed.evalAt({ [vName]: r });
+    const rv = rhsParsed.evalAt({ [vName]: r });
+    if (!Number.isFinite(lv) || !Number.isFinite(rv)) return;
+    const tol = 1e-4 * Math.max(1, Math.abs(lv), Math.abs(rv));
+    if (Math.abs(lv - rv) > tol) return;
+    if (!roots.some((existing) => Math.abs(existing - r) < 1e-3)) {
+      roots.push(r);
+    }
+  };
+
+  const grid = [];
+  for (let i = -30; i <= 30; i += 1) {
+    grid.push(i);
+    if (i < 30) grid.push(i + 0.5);
+  }
+
+  let prevX = null;
+  let prevY = null;
+  for (const x of grid) {
+    const y = f(x);
+    if (!Number.isFinite(y)) {
+      prevX = null;
+      prevY = null;
+      continue;
+    }
+    if (Math.abs(y) <= 1e-7) addRoot(x);
+    if (prevX !== null && prevY !== null && prevY * y < 0) {
+      let lo = prevX;
+      let hi = x;
+      let flo = prevY;
+      for (let it = 0; it < 36; it += 1) {
+        const mid = 0.5 * (lo + hi);
+        const fmid = f(mid);
+        if (!Number.isFinite(fmid)) break;
+        if (Math.abs(fmid) <= 1e-10) {
+          lo = mid;
+          hi = mid;
+          break;
+        }
+        if (flo * fmid <= 0) {
+          hi = mid;
+        } else {
+          lo = mid;
+          flo = fmid;
+        }
+      }
+      addRoot(0.5 * (lo + hi));
+    }
+    prevX = x;
+    prevY = y;
+  }
+  return roots;
+}
+
+function stripStepPrefixClient(rawLine) {
+  return String(rawLine || '')
+    .trim()
+    .replace(/^(?:bước\s*\d+|buoc\s*\d+|ta\s*có|suy\s*ra|vậy|vay)\s*[:.]?\s*/i, '')
+    .replace(/^(?:\\Leftrightarrow|\\Rightarrow|<=>|⇔|=>|⇒|->)\s*/, '')
+    .trim();
+}
+
+function splitTopLevelEqualsClient(str) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    const ch = str[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && ch === '=') {
+      const prev = str[i - 1] || '';
+      const next = str[i + 1] || '';
+      if (prev === '<' || prev === '>' || prev === '!' || prev === '=' || next === '=' || next === '>') {
+        continue;
+      }
+      parts.push(str.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  parts.push(str.slice(start).trim());
+  return parts;
+}
+
+function detectClientStepMathError(currentText, previousSteps, questionContent) {
+  if (isMeaninglessStepText(currentText)) {
+    return {
+      error_type: 'INCOMPLETE_STEP',
+      reason: 'Dòng viết chưa có biểu thức hoặc nội dung hợp lệ để chấm.',
+      guidance: '💡 Gợi ý: Hãy xóa nét chấm thừa hoặc viết đầy đủ phép biến đổi tiếp theo.',
+    };
+  }
+
+  const body = stripStepPrefixClient(currentText);
+  if (!body) return null;
+
+  const qRaw = String(questionContent || '').trim();
+  const qClean = qRaw.replace(/^[^:]{1,40}:\s*/, '').trim();
+  const qIsSolvePrompt = /giải\s+phương\s+trình|tìm\s+[a-z]|nghiệm/i.test(qRaw);
+
+  // Tách ngữ cảnh Đề bài: Phương trình vs Biểu thức rút gọn/khai triển
+  let anchorExpr = null;
+  let problemEq = null;
+
+  if (qClean) {
+    const qParts = splitTopLevelEqualsClient(qClean);
+    if (qParts.length === 1) {
+      if (parseMathSideWithDerivative(qParts[0])) anchorExpr = qParts[0];
+    } else if (qParts.length === 2) {
+      const isLabelDef = !qIsSolvePrompt && /^[A-Z]$|^[fghPQMNS]\s*\(\s*[a-z]\s*\)$/i.test(qParts[0]) && !/^[xXyYzZ]$/.test(qParts[0]);
+      if (isLabelDef && parseMathSideWithDerivative(qParts[1])) {
+        anchorExpr = qParts[1];
+      } else {
+        const lP = parseMathSideWithDerivative(qParts[0]);
+        const rP = parseMathSideWithDerivative(qParts[1]);
+        const eqVars = lP && rP ? Array.from(new Set([...lP.vars, ...rP.vars])) : [];
+        if (lP && rP && eqVars.length === 1) {
+          problemEq = { lhs: lP, rhs: rP, varName: eqVars[0], roots: findRealRoots1D(lP, rP, eqVars[0]) };
+        }
+      }
+    }
+  } else if (previousSteps.length > 0) {
+    const firstPrev = stripStepPrefixClient(previousSteps[0]);
+    const pParts = splitTopLevelEqualsClient(firstPrev);
+    if (pParts.length === 1 && parseMathSideWithDerivative(pParts[0])) {
+      anchorExpr = pParts[0];
+    } else if (pParts.length === 2 && pParts[0]) {
+      const lP = parseMathSideWithDerivative(pParts[0]);
+      const rP = parseMathSideWithDerivative(pParts[1]);
+      const eqVars = lP && rP ? Array.from(new Set([...lP.vars, ...rP.vars])) : [];
+      if (lP && rP && eqVars.length === 1) {
+        problemEq = { lhs: lP, rhs: rP, varName: eqVars[0], roots: findRealRoots1D(lP, rP, eqVars[0]) };
+      }
+    }
+  }
+
+  // Trường hợp A: Dòng bắt đầu bằng '=' (VD: '= x^3 + 20x + 10')
+  if (body.startsWith('=')) {
+    const rhsChain = splitTopLevelEqualsClient(body.slice(1).trim()).filter(Boolean);
+    if (rhsChain.length === 0) return null;
+    const refExpr =
+      anchorExpr ||
+      (previousSteps.length > 0 ? stripStepPrefixClient(previousSteps[previousSteps.length - 1]).replace(/^=\s*/, '') : '');
+    if (refExpr) {
+      for (const rhsPart of rhsChain) {
+        const eq = areClientMathSidesEquivalent(refExpr, rhsPart);
+        if (eq === false) {
+          const isBinom = /\([^()]+\)\s*(?:\^|\*\*)\s*\{?\s*[23]\s*\}?|[²³]/.test(refExpr);
+          return isBinom
+            ? {
+                error_type: 'FORMULA_ERROR',
+                reason: 'Khai triển hằng đẳng thức chưa chính xác: Bậc lũy thừa hoặc các hệ số không khớp với biểu thức đề bài.',
+                guidance: '💡 Gợi ý: Kiểm tra lại hằng đẳng thức (A ± B)² = A² ± 2AB + B² (hoặc bậc 3), chú ý đúng số mũ và từng hệ số.',
+              }
+            : {
+                error_type: 'CALCULATION_ERROR',
+                reason: 'Biến đổi đại số chưa tương đương: Giá trị biểu thức sau dấu "=" không bằng biểu thức ban đầu.',
+                guidance: '💡 Gợi ý: Hãy kiểm tra lại dấu, số mũ và hệ số của từng hạng tử ở dòng biến đổi này.',
+              };
+        }
+      }
+    }
+    return null;
+  }
+
+  // Trường hợp B: Dòng có dấu '=' ở giữa
+  const parts = splitTopLevelEqualsClient(body);
+  if (parts.length >= 3) {
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      const pA = parseMathSideWithDerivative(parts[i]);
+      const pB = parseMathSideWithDerivative(parts[i + 1]);
+      if (pA && pB && pA.vars.join(',') === pB.vars.join(',')) {
+        if (areClientMathSidesEquivalent(parts[i], parts[i + 1]) === false) {
+          return {
+            error_type: 'CALCULATION_ERROR',
+            reason: 'Các vế biến đổi nối tiếp trên cùng dòng không tương đương nhau.',
+            guidance: '💡 Gợi ý: Kiểm tra lại phép rút gọn hoặc tính nhẩm giữa các dấu "=" trên dòng này.',
+          };
+        }
+      }
+    }
+  }
+
+  if (parts.length === 2 && parts[0] && parts[1]) {
+    const [lhsStr, rhsStr] = parts;
+    const lhsP = parseMathSideWithDerivative(lhsStr);
+    const rhsP = parseMathSideWithDerivative(rhsStr);
+    if (!lhsP || !rhsP) return null;
+
+    const unionVars = Array.from(new Set([...lhsP.vars, ...rhsP.vars]));
+    const isIdentity = areClientMathSidesEquivalent(lhsStr, rhsStr);
+
+    if (unionVars.length === 0 && isIdentity === false) {
+      return {
+        error_type: 'CALCULATION_ERROR',
+        reason: `Tính toán sai giá trị số học: ${lhsStr} không bằng ${rhsStr}.`,
+        guidance: '💡 Gợi ý: Hãy tính lại từng phép cộng, trừ, nhân, chia hoặc lũy thừa ở dòng này.',
+      };
+    }
+
+    if ((lhsP.isDerivative || rhsP.isDerivative) && isIdentity === false) {
+      return {
+        error_type: 'FORMULA_ERROR',
+        reason: 'Áp dụng chưa đúng quy tắc tính đạo hàm.',
+        guidance: '💡 Gợi ý: Kiểm tra lại bảng đạo hàm cơ bản và quy tắc nhân hệ số / dấu khi lấy đạo hàm.',
+      };
+    }
+
+    if (anchorExpr && !problemEq) {
+      const checkVsAnchor = areClientMathSidesEquivalent(anchorExpr, rhsStr);
+      if (isIdentity === false || checkVsAnchor === false) {
+        return {
+          error_type: 'FORMULA_ERROR',
+          reason: 'Phép khai triển hoặc rút gọn chưa tương đương với biểu thức đề bài.',
+          guidance: '💡 Gợi ý: Đối chiếu lại từng số mũ và hệ số khi khai triển biểu thức.',
+        };
+      }
+      return null;
+    }
+
+    if (problemEq && unionVars.length === 1 && unionVars[0] === problemEq.varName) {
+      if (isIdentity === true) return null;
+      const stepRoots = findRealRoots1D(lhsP, rhsP, problemEq.varName);
+      const isRadicalEq = /sqrt|\\sqrt/.test(qClean);
+      if (problemEq.roots.length > 0) {
+        const preservesAnyRoot = problemEq.roots.some((r0) => {
+          const lv = lhsP.evalAt({ [problemEq.varName]: r0 });
+          const rv = rhsP.evalAt({ [problemEq.varName]: r0 });
+          const tol = 1e-3 * Math.max(1, Math.abs(lv), Math.abs(rv));
+          return Number.isFinite(lv) && Number.isFinite(rv) && Math.abs(lv - rv) <= tol;
+        });
+        const hasWrongRoot =
+          !isRadicalEq &&
+          stepRoots.some((rk) => {
+            const lv0 = problemEq.lhs.evalAt({ [problemEq.varName]: rk });
+            const rv0 = problemEq.rhs.evalAt({ [problemEq.varName]: rk });
+            const tol0 = 1e-3 * Math.max(1, Math.abs(lv0), Math.abs(rv0));
+            return !Number.isFinite(lv0) || !Number.isFinite(rv0) || Math.abs(lv0 - rv0) > tol0;
+          });
+        if (!preservesAnyRoot || hasWrongRoot) {
+          return {
+            error_type: 'CALCULATION_ERROR',
+            reason: 'Phương trình biến đổi không tương đương (sai dấu chuyển vế hoặc tính nhẩm sai hệ số/nghiệm).',
+            guidance: '💡 Gợi ý: Kiểm tra lại dấu khi chuyển vế và phép tính rút gọn hai vế của phương trình.',
+          };
+        }
+      }
+      return null;
+    }
+
+    if (!problemEq && isIdentity === false) {
+      const looksLikeIdentityAttempt =
+        unionVars.length >= 2 ||
+        /\([^()]+\)\s*(?:\^|\*\*)\s*\{?\s*[234]\s*\}?|[²³⁴]/.test(lhsStr) ||
+        /\)\s*\(/.test(lhsStr) ||
+        /sin|cos|tan|cot|sqrt|ln|log/i.test(body);
+      if (looksLikeIdentityAttempt && rhsStr !== '0' && rhsP.vars.length > 0) {
+        return {
+          error_type: 'FORMULA_ERROR',
+          reason: 'Hai vế của đẳng thức không bằng nhau với mọi giá trị của biến.',
+          guidance: '💡 Gợi ý: Kiểm tra lại hằng đẳng thức hoặc công thức biến đổi ở dòng này.',
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Lớp bảo vệ kiểm chứng toán học đồng bộ ở phía Client: đảm bảo ngay cả khi máy chủ Cloud
+ * đang khởi động lại hoặc chưa kịp cập nhật, đáp án sai tuyệt đối không bao giờ bị chấm đúng (✓).
+ */
+function verifyEssaySolutionClientSide(gradeData, { questionContent = '', steps = [] } = {}) {
+  if (!gradeData || !Array.isArray(gradeData.steps_evaluation)) return gradeData;
+
+  let effectiveQ = String(questionContent || '').trim();
+  let effectiveSteps = Array.isArray(steps) && steps.length > 0
+    ? steps.slice()
+    : gradeData.steps_evaluation.map((e) => e.written_text || '');
+
+  if (!effectiveQ && effectiveSteps.length > gradeData.steps_evaluation.length) {
+    effectiveQ = effectiveSteps[0];
+    effectiveSteps = effectiveSteps.slice(1);
+  }
+
+  let mutated = false;
+  const prevAccum = [];
+
+  const updatedEvals = gradeData.steps_evaluation.map((ev, idx) => {
+    const stepText = effectiveSteps[idx] ?? ev.written_text ?? '';
+    if (!ev.is_step_correct) {
+      prevAccum.push(stepText);
+      return ev;
+    }
+    const localErr = detectClientStepMathError(stepText, prevAccum, effectiveQ);
+    prevAccum.push(stepText);
+    if (!localErr) return ev;
+
+    mutated = true;
+    return {
+      ...ev,
+      is_step_correct: false,
+      status: 'INCORRECT',
+      icon: '✕',
+      badge_color: '#dc2626',
+      decoration_type: 'RED_UNDERLINE',
+      has_math_error: true,
+      error_type: localErr.error_type,
+      feedback: `⚠️ Dòng ${ev.step_number || idx + 1} phát hiện lỗi: ${localErr.reason}`,
+      guidance: localErr.guidance,
+      no_leak_guarantee: true,
+    };
+  });
+
+  if (!mutated) return gradeData;
+
+  const correctCount = updatedEvals.filter((e) => e.is_step_correct).length;
+  const incorrectCount = updatedEvals.length - correctCount;
+  const firstErrObj = updatedEvals.find((e) => !e.is_step_correct);
+  const firstErrStep = firstErrObj ? firstErrObj.step_number : 1;
+
+  return {
+    ...gradeData,
+    steps_evaluation: updatedEvals,
+    correct_steps: correctCount,
+    incorrect_steps: incorrectCount,
+    has_any_error: incorrectCount > 0,
+    first_error_step: firstErrStep,
+    score: updatedEvals.length > 0 ? Math.max(0, Math.round((correctCount / updatedEvals.length) * 100) / 10) : 0,
+    overall_feedback: `Bài giải có ${incorrectCount} bước cần lưu ý. Hãy xem gợi ý gạch chân đỏ tại dòng ${firstErrStep} để chỉnh sửa mà không cần xem đáp án cuối.`,
+  };
+}
+
+/**
+ * Gom các nét viết tay (Path) thành từng dòng độc lập theo trục dọc Y
+ * và loại bỏ các chấm nhiễu vô tình (specks < 10x10px đứng cô lập).
  */
 function clusterStrokesIntoLines(strokeObjects) {
   if (!strokeObjects.length) return [];
 
   const items = strokeObjects
     .map((obj) => ({ obj, bbox: obj.getBoundingRect() }))
+    .filter((it) => it.bbox && Number.isFinite(it.bbox.left))
     .sort((a, b) => a.bbox.top - b.bbox.top);
 
   const lines = [];
@@ -96,7 +722,8 @@ function clusterStrokesIntoLines(strokeObjects) {
       lines.push({ objects: [item.obj], bbox: { ...item.bbox } });
     }
   }
-  return lines;
+
+  return lines.filter((line) => !(line.objects.length <= 2 && line.bbox.width < 10 && line.bbox.height < 10));
 }
 
 /**
@@ -425,6 +1052,19 @@ export async function gradeEssayDirectlyOnBoard() {
   try {
     if (questions.length > 0) {
       const assignedBuckets = assignObjectsToQuestions2D(questions, answerZones, allObjects);
+      const anyQuestionHasUngradedWork = questions.some((qItem, qIdx) => {
+        const gId = qItem.obj.meta.questionGroupId || `board_q_${qIdx + 1}`;
+        const rObjs = assignedBuckets.get(gId) || [];
+        const newRaw = rObjs.some((obj) => obj instanceof Path && obj?.meta?.aiState !== 'graded');
+        const newFmt = rObjs.some(
+          (obj) => obj?.meta?.dataRole === 'answer_formatted' && obj?.meta?.aiState !== 'graded'
+        );
+        return qItem.obj?.meta?.aiState !== 'graded' || newRaw || newFmt;
+      });
+      const forceRegradeAll = !anyQuestionHasUngradedWork;
+      if (forceRegradeAll) {
+        clearGradingOverlays();
+      }
 
       for (let i = 0; i < questions.length; i += 1) {
         const q = questions[i];
@@ -437,7 +1077,7 @@ export async function gradeEssayDirectlyOnBoard() {
         const hasNewFormattedSteps = regionObjects.some(
           (obj) => obj?.meta?.dataRole === 'answer_formatted' && obj?.meta?.aiState !== 'graded'
         );
-        if (q.obj?.meta?.aiState === 'graded' && !hasNewRawStrokes && !hasNewFormattedSteps) {
+        if (!forceRegradeAll && q.obj?.meta?.aiState === 'graded' && !hasNewRawStrokes && !hasNewFormattedSteps) {
           skippedGradedQuestions += 1;
           continue;
         }
@@ -485,19 +1125,22 @@ export async function gradeEssayDirectlyOnBoard() {
         );
 
         const orderedSteps = [...formattedSteps, ...ocrSteps]
-          .filter((s) => s.writtenText.length > 0)
+          .filter((s) => s.writtenText.length > 0 && !isMeaninglessStepText(s.writtenText))
           .sort((a, b) => a.bbox.top - b.bbox.top);
 
         if (orderedSteps.length === 0) continue;
+
+        const questionText = q.obj.meta.rawLatex || q.obj.meta.rawQuestionText || '';
+        const stepTexts = orderedSteps.map((s) => s.writtenText);
 
         const resp = await authFetch('/api/v1/exam/grade-essay-solution', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question_id: qGroupId,
-            question_content: q.obj.meta.rawLatex || q.obj.meta.rawQuestionText || '',
+            question_content: questionText,
             subject,
-            steps: orderedSteps.map((s) => s.writtenText),
+            steps: stepTexts,
           }),
         });
 
@@ -506,7 +1149,10 @@ export async function gradeEssayDirectlyOnBoard() {
           throw new Error(errBody.detail || `Lỗi chấm bài (HTTP ${resp.status})`);
         }
 
-        const gradeData = await resp.json();
+        const gradeData = verifyEssaySolutionClientSide(await resp.json(), {
+          questionContent: questionText,
+          steps: stepTexts,
+        });
         const evaluations = Array.isArray(gradeData.steps_evaluation)
           ? gradeData.steps_evaluation
           : [];
@@ -547,10 +1193,13 @@ export async function gradeEssayDirectlyOnBoard() {
           };
         })
       );
-      const validLines = ocrLines.filter((l) => l.writtenText.length > 0);
+      const validLines = ocrLines.filter(
+        (l) => l.writtenText.length > 0 && !isMeaninglessStepText(l.writtenText)
+      );
       if (validLines.length >= 2) {
         const problemLine = validLines[0];
         const answerLines = validLines.slice(1);
+        const answerTexts = answerLines.map((s) => s.writtenText);
         const resp = await authFetch('/api/v1/exam/grade-essay-solution', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -558,14 +1207,17 @@ export async function gradeEssayDirectlyOnBoard() {
             question_id: freehandId,
             question_content: problemLine.writtenText,
             subject,
-            steps: answerLines.map((s) => s.writtenText),
+            steps: answerTexts,
           }),
         });
         if (!resp.ok) {
           const errBody = await resp.json().catch(() => ({}));
           throw new Error(errBody.detail || `Lỗi chấm bài (HTTP ${resp.status})`);
         }
-        const gradeData = await resp.json();
+        const gradeData = verifyEssaySolutionClientSide(await resp.json(), {
+          questionContent: problemLine.writtenText,
+          steps: answerTexts,
+        });
         const evaluations = Array.isArray(gradeData.steps_evaluation)
           ? gradeData.steps_evaluation
           : [];
@@ -892,7 +1544,13 @@ export function setupEssayGradingManager() {
           throw new Error(errData.detail || 'Lỗi khi chấm bài giải tự luận');
         }
 
-        const data = await res.json();
+        const rawLines = text
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && !isMeaninglessStepText(s));
+        const data = verifyEssaySolutionClientSide(await res.json(), {
+          steps: rawLines,
+        });
         lastEssayResult = data;
         renderEssayResult(data);
         showStatus(
