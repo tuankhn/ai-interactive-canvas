@@ -358,3 +358,67 @@ async def test_gemini_fallback_chain_and_preferred_model_memoization():
     res2 = await service.analyze_board(b64_img, subject="TOAN")
     assert res2.recognized_text == "2x + 3 = 7"
     assert called_models == [first_working]
+
+
+@pytest.mark.anyio
+async def test_multi_key_pool_rotates_on_429_and_recovers_from_400_config():
+    """Kiểm tra Multi-Key Pool trên REST v1beta: Key 1 dính 429 tự xoay sang Key 2; gặp 400 config tự hạ xuống cấu hình chuẩn."""
+    from app.core.config import parse_gemini_api_keys
+
+    parsed = parse_gemini_api_keys("(AQ.KeyOne123456789) (AQ.KeyTwo987654321) , AQ.KeyThree55555555")
+    assert parsed == ["AQ.KeyOne123456789", "AQ.KeyTwo987654321", "AQ.KeyThree55555555"]
+
+    service = GeminiAIService()
+    service.api_keys = ["AQ.KeyOne123456789", "AQ.KeyTwo987654321"]
+    service.api_key = service.api_keys[0]
+    service._client_type = "httpx-v1beta"
+    service.is_configured = True
+
+    seen_calls = []
+
+    async def fake_post(url, headers=None, json=None, timeout=None):
+        used_key = (headers or {}).get("x-goog-api-key")
+        gen_cfg = (json or {}).get("generationConfig", {})
+        seen_calls.append((url, used_key, "responseMimeType" in gen_cfg))
+        resp = MagicMock()
+        if used_key == "AQ.KeyOne123456789":
+            resp.status_code = 429
+            resp.text = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
+            return resp
+        if "thinkingConfig" in gen_cfg:
+            resp.status_code = 400
+            resp.text = '{"error": {"code": 400, "status": "INVALID_ARGUMENT"}}'
+            return resp
+        resp.status_code = 200
+        resp.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": '{"recognized_text": "(x+3)^2", "latex": "(x+3)^2", "subject": "TOAN", "confidence": 0.99}'
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        return resp
+
+    mock_http = MagicMock()
+    mock_http.is_closed = False
+    mock_http.post = AsyncMock(side_effect=fake_post)
+    service._http_client = mock_http
+    import asyncio
+    service._http_client_loop_id = id(asyncio.get_running_loop())
+
+    tiny_img = generate_test_stroke_base64("x+3", width=20, height=20)
+    res = await service.analyze_board(tiny_img, subject="TOAN", fast_mode=True)
+
+    assert res.latex == "(x+3)^2"
+    assert res.degraded_reason is None
+    assert all("v1beta/models/" in u for u, _, _ in seen_calls)
+    # Key 1 đã được đưa vào cooldown nên lần chọn kế tiếp ưu tiên thẳng Key 2 trước
+    next_order = service._select_ordered_keys_for_request()
+    assert next_order[0] == "AQ.KeyTwo987654321"
+

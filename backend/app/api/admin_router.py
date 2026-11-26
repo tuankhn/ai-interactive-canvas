@@ -675,3 +675,32 @@ async def admin_record_ai_usage(
         room_id=payload.room_id,
     )
     return {"status": "recorded", "entry": entry}
+
+
+@router.get("/ai-keys", summary="Kiểm tra trạng thái cụm API Key Gemini (Multi-Key Pool)")
+async def admin_get_gemini_key_pool(authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    from app.ai.gemini_service import gemini_service
+    return gemini_service.get_pool_status()
+
+
+@router.post("/ai-keys", summary="Cập nhật nóng cụm API Key Gemini xoay vòng không cần restart server")
+async def admin_update_gemini_key_pool(
+    payload: Dict[str, Any],
+    authorization: Optional[str] = Header(default=None),
+):
+    require_admin(authorization)
+    from app.ai.gemini_service import gemini_service
+
+    raw_input = payload.get("keys")
+    if isinstance(raw_input, str):
+        key_list = [raw_input]
+    elif isinstance(raw_input, list):
+        key_list = [str(x) for x in raw_input if x]
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vui lòng truyền trường 'keys' (chuỗi cách nhau dấu phẩy hoặc mảng các API key).",
+        )
+    pool_info = gemini_service.set_runtime_keys(key_list, persist=True)
+    return {"status": "updated", **pool_info}

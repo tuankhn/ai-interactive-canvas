@@ -27,12 +27,15 @@ from app.schemas.canvas_schema import (
 logger = logging.getLogger(__name__)
 
 _RECOGNITION_CACHE: "OrderedDict[str, Tuple[float, RecognizeResponse]]" = OrderedDict()
-_RECOGNITION_CACHE_MAX = 64
-_RECOGNITION_CACHE_TTL_SEC = 60.0
+_RECOGNITION_CACHE_MAX = 512
+_RECOGNITION_CACHE_TTL_SEC = 900.0
+_INFLIGHT_GEMINI_CALLS: Dict[str, asyncio.Future] = {}
+_GEMINI_CONCURRENCY_SEM = asyncio.Semaphore(6)
 
 
 def clear_recognition_cache() -> None:
     _RECOGNITION_CACHE.clear()
+    _INFLIGHT_GEMINI_CALLS.clear()
 
 # ==============================================================================
 # KHO CÔNG THỨC CHUẨN PHỔ THÔNG (TASK TF28522 BENCHMARK & CURRICULUM RECOGNITION)
@@ -472,7 +475,7 @@ class AIRecognitionService:
             else:
                 degraded_reason = f"Mathpix error: {m_res.get('error', 'unavailable')}"
                 g_res = (
-                    await self.gemini.analyze_board(
+                    await self._analyze_board_deduped(
                         processed_b64,
                         subject=subject_norm,
                         grade_level=request.grade_level or "THPT",
@@ -495,7 +498,7 @@ class AIRecognitionService:
         elif provider_choice == "gemini":
             # Ưu tiên Gemini đa phương thức
             self.gemini.ensure_configured()
-            g_res = await self.gemini.analyze_board(
+            g_res = await self._analyze_board_deduped(
                 processed_b64,
                 subject=subject_norm,
                 grade_level=request.grade_level or "THPT",
@@ -535,10 +538,11 @@ class AIRecognitionService:
 
             if not used_mathpix:
                 if self.gemini.ensure_configured():
-                    g_res = await self.gemini.analyze_board(
+                    g_res = await self._analyze_board_deduped(
                         processed_b64,
                         subject=subject_norm,
                         grade_level=request.grade_level or "THPT",
+                        fast_mode=bool(getattr(request, "fast_mode", False)),
                     )
                     recognized_text = g_res.recognized_text
                     latex_formula = g_res.latex or g_res.recognized_text
@@ -684,6 +688,43 @@ class AIRecognitionService:
                 _RECOGNITION_CACHE.popitem(last=False)
 
         return final_response
+
+    async def _analyze_board_deduped(
+        self,
+        processed_b64: str,
+        *,
+        subject: str,
+        grade_level: str,
+        fast_mode: bool,
+    ):
+        """Gộp các request trùng ảnh đang xử lý (In-Flight Deduplication) & điều tiết đồng thời."""
+        dedup_hash = hashlib.sha256(
+            f"{subject}|{grade_level}|{int(fast_mode)}|{processed_b64}".encode("utf-8")
+        ).hexdigest()
+        existing = _INFLIGHT_GEMINI_CALLS.get(dedup_hash)
+        if existing is not None and not existing.done():
+            return await asyncio.shield(existing)
+
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        _INFLIGHT_GEMINI_CALLS[dedup_hash] = fut
+        try:
+            async with _GEMINI_CONCURRENCY_SEM:
+                res = await self.gemini.analyze_board(
+                    processed_b64,
+                    subject=subject,
+                    grade_level=grade_level,
+                    fast_mode=fast_mode,
+                )
+            if not fut.done():
+                fut.set_result(res)
+            return res
+        except Exception as exc:
+            if not fut.done():
+                fut.set_exception(exc)
+            raise
+        finally:
+            _INFLIGHT_GEMINI_CALLS.pop(dedup_hash, None)
 
     def _normalize_subject(self, subject: str) -> str:
         """Chuẩn hóa mã môn học theo hệ thống."""

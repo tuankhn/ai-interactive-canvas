@@ -7,6 +7,15 @@
  */
 (function initRuntimeApiBridge() {
   const STORAGE_KEY = 'ai-canvas:api-base:v1';
+  const GEMINI_KEYS_STORAGE_KEY = 'ai-canvas:gemini-keys:v1';
+
+  function sanitizeGeminiKeysRaw(raw) {
+    return String(raw || '')
+      .split(/[,;\s\r\n()"']+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 12)
+      .join(',');
+  }
 
   function sanitizeBaseUrl(raw) {
     const trimmed = String(raw || '').trim().replace(/\/+$/, '');
@@ -64,6 +73,31 @@
     return window.__AI_CANVAS_API_BASE__;
   };
 
+  let activeGeminiKeys = '';
+  try {
+    activeGeminiKeys = sanitizeGeminiKeysRaw(localStorage.getItem(GEMINI_KEYS_STORAGE_KEY) || '');
+  } catch {
+    activeGeminiKeys = '';
+  }
+
+  window.getAiCanvasGeminiKeys = function getAiCanvasGeminiKeys() {
+    return activeGeminiKeys;
+  };
+
+  window.setAiCanvasGeminiKeys = function setAiCanvasGeminiKeys(rawKeys) {
+    activeGeminiKeys = sanitizeGeminiKeysRaw(rawKeys);
+    try {
+      if (activeGeminiKeys) {
+        localStorage.setItem(GEMINI_KEYS_STORAGE_KEY, activeGeminiKeys);
+      } else {
+        localStorage.removeItem(GEMINI_KEYS_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage quota errors
+    }
+    return activeGeminiKeys;
+  };
+
   function shouldRewritePath(pathname) {
     return (
       pathname.startsWith('/api/') ||
@@ -89,26 +123,45 @@
     return rawUrl;
   }
 
-  // Bọc window.fetch để tự động chuyển hướng /api/... sang Backend Cloud khi chạy trên GitHub Pages
+  // Bọc window.fetch để tự động chuyển hướng /api/... sang Backend Cloud và đính kèm X-Gemini-Api-Keys dự phòng nếu có
   const nativeFetch = window.fetch.bind(window);
   window.fetch = function patchedFetch(input, init) {
     const base = window.__AI_CANVAS_API_BASE__;
+    let targetUrl = '';
+    if (typeof input === 'string') targetUrl = input;
+    else if (input instanceof URL) targetUrl = input.toString();
+    else if (typeof Request !== 'undefined' && input instanceof Request) targetUrl = input.url;
+
+    const isApiReq =
+      targetUrl.startsWith('/api/') ||
+      targetUrl.includes('/api/v1/') ||
+      targetUrl === '/health';
+
+    let finalInit = init;
+    if (isApiReq && activeGeminiKeys) {
+      const mergedHeaders = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined) || {});
+      if (!mergedHeaders.has('X-Gemini-Api-Keys')) {
+        mergedHeaders.set('X-Gemini-Api-Keys', activeGeminiKeys);
+      }
+      finalInit = { ...(init || {}), headers: mergedHeaders };
+    }
+
     if (!base) {
-      return nativeFetch(input, init);
+      return nativeFetch(input, finalInit);
     }
     if (typeof input === 'string') {
-      return nativeFetch(rewriteHttpUrl(input), init);
+      return nativeFetch(rewriteHttpUrl(input), finalInit);
     }
     if (input instanceof URL) {
-      return nativeFetch(rewriteHttpUrl(input.toString()), init);
+      return nativeFetch(rewriteHttpUrl(input.toString()), finalInit);
     }
     if (typeof Request !== 'undefined' && input instanceof Request) {
       const nextUrl = rewriteHttpUrl(input.url);
       if (nextUrl !== input.url) {
-        return nativeFetch(new Request(nextUrl, input), init);
+        return nativeFetch(new Request(nextUrl, input), finalInit);
       }
     }
-    return nativeFetch(input, init);
+    return nativeFetch(input, finalInit);
   };
 
   // Bọc window.WebSocket để đồng bộ thời gian thực qua WSS của Backend Cloud

@@ -5,42 +5,150 @@
 
 import asyncio
 import base64
+from contextvars import ContextVar
 import json
 import logging
+from pathlib import Path
 import random
 import sys
 import time
 from io import BytesIO
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
+import httpx
 from PIL import Image
 
-from app.core.config import settings
+from app.core.config import settings, parse_gemini_api_keys
 from app.schemas.canvas import RecognizeCanvasResponse, AmbiguousToken, VisualizationData
 from app.ai.prompts import SYSTEM_PROMPT_TEMPLATE, get_prompt_for_subject
 
 logger = logging.getLogger(__name__)
 
+# Cho phép client/giáo viên truyền thêm API key dự phòng theo từng request qua header X-Gemini-Api-Keys
+request_extra_gemini_keys_ctx: ContextVar[Tuple[str, ...]] = ContextVar(
+    "request_extra_gemini_keys_ctx", default=()
+)
+
 
 class GeminiAIService:
     """
-    Dịch vụ kết nối Google Gemini 2.5 Flash đa phương thức (Multimodal Vision)
-    cho Màn hình tương tác thông minh All-in-one.
-    Đặc tả:
-      - Bóc tách chữ viết tay, ký hiệu Toán, Lý, Hóa, Tiếng Anh.
-      - Trả về mã LaTeX chuẩn, độ tin cậy và siêu dữ liệu trực quan hóa (2D Graph / 3D).
-      - Đảm bảo độ trễ phản hồi < 2.0 giây.
-      - Cung cấp Fallback Mock Engine thông minh khi chạy kiểm thử hoặc offline.
+    Dịch vụ kết nối Google Gemini đa phương thức (Multimodal Vision) trên chuẩn REST v1beta:
+      - Xoay vòng tự động nhiều API Key (Round-Robin Multi-Key Pool + Auto-Cooldown khi gặp 429).
+      - Gọi trực tiếp endpoint chuẩn v1beta (khắc phục triệt để lỗi 400 JSON mode on v1 với key AQ.*
+        và lỗi 400 thinkingBudget=0 trên dòng Gemini 3.x).
+      - Tự động hạ cấu hình về plain text JSON nếu model từ chối tham số nâng cao.
+      - Cung cấp Fallback Mock Engine thông minh khi chạy kiểm thử (pytest) hoặc chưa cấu hình key.
     """
 
+    V1BETA_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
     def __init__(self):
-        self.api_key = (settings.GEMINI_API_KEY or "").strip().strip('"').strip("'")
-        self.model_name = (settings.GEMINI_MODEL or "gemini-3.5-flash").strip()
+        self.api_keys: List[str] = list(getattr(settings, "GEMINI_API_KEYS", []) or [])
+        if not self.api_keys and settings.GEMINI_API_KEY:
+            self.api_keys = parse_gemini_api_keys(settings.GEMINI_API_KEY)
+        self.api_key: str = self.api_keys[0] if self.api_keys else ""
+        self.model_name = (settings.GEMINI_MODEL or "gemini-3.5-flash-lite").strip()
         self._preferred_model: Optional[str] = None
         self.client = None
         self.model = None
         self.is_configured = False
-        self._client_type = None
+        self._client_type: Optional[str] = None
+        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client_loop_id: Optional[int] = None
+        self._rr_counter: int = 0
+        self._key_cooldown_until: Dict[str, float] = {}
+        self._dead_keys: set[str] = set()
+        self._unsupported_models: set[str] = set()
+        self._runtime_keys: List[str] = self._load_persisted_runtime_keys()
+        self._sync_combined_keys()
         self._init_client()
+
+    @staticmethod
+    def _runtime_key_file() -> Path:
+        base_dir = Path(settings.SNAPSHOT_DIR).resolve().parent
+        base_dir.mkdir(parents=True, exist_ok=True)
+        return base_dir / ".runtime_gemini_keys.json"
+
+    def _load_persisted_runtime_keys(self) -> List[str]:
+        if "pytest" in sys.modules:
+            return []
+        try:
+            fp = self._runtime_key_file()
+            if fp.exists():
+                data = json.loads(fp.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and isinstance(data.get("keys"), list):
+                    return parse_gemini_api_keys(*[str(x) for x in data["keys"]])
+        except Exception:
+            pass
+        return []
+
+    def _sync_combined_keys(self) -> None:
+        merged = parse_gemini_api_keys(
+            *self._runtime_keys,
+            *(getattr(settings, "GEMINI_API_KEYS", []) or []),
+            settings.GEMINI_API_KEY,
+        )
+        self.api_keys = merged
+        self.api_key = merged[0] if merged else ""
+        if self.api_key:
+            settings.GEMINI_API_KEY = self.api_key
+            settings.GEMINI_API_KEYS = list(merged)
+
+    def set_runtime_keys(self, raw_keys: List[str], persist: bool = True) -> Dict[str, Any]:
+        """Cập nhật nóng cụm API Key Gemini trên server (không cần khởi động lại container)."""
+        parsed = parse_gemini_api_keys(*raw_keys)
+        self._runtime_keys = parsed
+        self._dead_keys.clear()
+        self._key_cooldown_until.clear()
+        self._sync_combined_keys()
+        if persist and "pytest" not in sys.modules:
+            try:
+                self._runtime_key_file().write_text(
+                    json.dumps({"keys": parsed, "updated_at": time.time()}),
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                logger.warning(f"Không thể lưu file runtime Gemini keys: {exc}")
+        self._init_client()
+        return self.get_pool_status()
+
+    @property
+    def pool_size(self) -> int:
+        extra = request_extra_gemini_keys_ctx.get()
+        return len(parse_gemini_api_keys(*extra, *self.api_keys))
+
+    @property
+    def healthy_key_count(self) -> int:
+        now = time.monotonic()
+        keys = parse_gemini_api_keys(*request_extra_gemini_keys_ctx.get(), *self.api_keys)
+        return sum(
+            1
+            for k in keys
+            if k not in self._dead_keys and self._key_cooldown_until.get(k, 0.0) <= now
+        )
+
+    def has_any_key(self) -> bool:
+        return self.pool_size > 0
+
+    def get_pool_status(self) -> Dict[str, Any]:
+        now = time.monotonic()
+        masked = []
+        for idx, k in enumerate(self.api_keys, start=1):
+            tail = k[-4:] if len(k) >= 8 else "****"
+            head = k[:5] if len(k) >= 8 else "***"
+            cooldown_rem = max(0.0, self._key_cooldown_until.get(k, 0.0) - now)
+            status_str = (
+                "invalid"
+                if k in self._dead_keys
+                else (f"cooldown_{int(cooldown_rem)}s" if cooldown_rem > 0 else "healthy")
+            )
+            masked.append({"slot": idx, "masked_key": f"{head}...{tail}", "status": status_str})
+        return {
+            "total_keys": len(self.api_keys),
+            "healthy_keys": self.healthy_key_count,
+            "active_model": self.active_model_name,
+            "transport": self._client_type or "mock",
+            "keys": masked,
+        }
 
     @property
     def active_model_name(self) -> str:
@@ -48,16 +156,17 @@ class GeminiAIService:
 
     def ensure_configured(self) -> bool:
         """
-        Kiểm tra và tự động nạp lại GEMINI_API_KEY từ file .env / biến môi trường
-        nếu người dùng vừa cập nhật hoặc khởi động lại container mà chưa kịp ăn key.
+        Kiểm tra và tự động nạp lại GEMINI_API_KEYS / GEMINI_API_KEY từ file .env,
+        runtime pool hoặc header X-Gemini-Api-Keys của request hiện tại.
         """
-        if self.is_configured:
-            return True
         if "pytest" in sys.modules:
-            return False
+            return self.is_configured
+
+        extra_req_keys = request_extra_gemini_keys_ctx.get()
+        if self.is_configured and (self.api_keys or extra_req_keys):
+            return True
 
         import os
-        from pathlib import Path
         from dotenv import load_dotenv
 
         candidate_envs = [
@@ -68,53 +177,265 @@ class GeminiAIService:
             if env_path.exists():
                 load_dotenv(env_path, override=True)
 
-        fresh_key = (
-            os.getenv("GEMINI_API_KEY", "")
-            or os.getenv("GOOGLE_API_KEY", "")
-            or settings.GEMINI_API_KEY
-            or ""
-        ).strip().strip('"').strip("'")
+        fresh_keys = parse_gemini_api_keys(
+            *extra_req_keys,
+            *self._runtime_keys,
+            os.getenv("GEMINI_API_KEYS", ""),
+            os.getenv("GEMINI_API_KEY", ""),
+            os.getenv("GOOGLE_API_KEY", ""),
+            *(getattr(settings, "GEMINI_API_KEYS", []) or []),
+            settings.GEMINI_API_KEY,
+        )
 
-        fresh_model = (os.getenv("GEMINI_MODEL", "") or settings.GEMINI_MODEL or "gemini-3.5-flash").strip()
+        fresh_model = (os.getenv("GEMINI_MODEL", "") or settings.GEMINI_MODEL or "gemini-3.5-flash-lite").strip()
         if fresh_model:
             self.model_name = fresh_model
             settings.GEMINI_MODEL = fresh_model
 
-        if fresh_key:
-            self.api_key = fresh_key
-            settings.GEMINI_API_KEY = fresh_key
+        if fresh_keys:
+            self.api_keys = fresh_keys
+            self.api_key = fresh_keys[0]
+            settings.GEMINI_API_KEY = fresh_keys[0]
+            settings.GEMINI_API_KEYS = list(fresh_keys)
             self._init_client()
 
-        return self.is_configured
+        return self.is_configured or bool(extra_req_keys)
 
     def _init_client(self):
-        """Khởi tạo client Google GenAI (hỗ trợ cả google-genai mới và google-generativeai)."""
-        if not self.api_key or len(self.api_key.strip()) == 0:
+        """Khởi tạo kết nối REST v1beta đa Key (trong pytest giữ chế độ Mock để chạy test tức thì)."""
+        if "pytest" in sys.modules:
             self.is_configured = False
             return
 
-        # Ưu tiên thử SDK google-genai mới nhất
-        try:
-            from google import genai
-            self.client = genai.Client(api_key=self.api_key.strip())
-            self._client_type = "google-genai"
-            self.is_configured = True
-            logger.info(f"Gemini ({self.model_name}) khởi tạo thành công với google-genai SDK.")
-            return
-        except Exception as e:
-            logger.debug(f"Không thể nạp google-genai: {e}, thử google-generativeai...")
-
-        # Dự phòng bằng google-generativeai
-        try:
-            import google.generativeai as legacy_genai
-            legacy_genai.configure(api_key=self.api_key.strip())
-            self.model = legacy_genai.GenerativeModel(self.model_name)
-            self._client_type = "google-generativeai"
-            self.is_configured = True
-            logger.info(f"Gemini khởi tạo thành công với legacy SDK ({self.model_name}).")
-        except Exception as e:
-            logger.warning(f"Chưa thể kết nối Gemini API: {e}")
+        if not self.api_keys and not self.api_key:
             self.is_configured = False
+            return
+
+        self._client_type = "httpx-v1beta"
+        self.is_configured = True
+        logger.info(
+            f"Gemini Multi-Key Pool ({len(self.api_keys)} keys, model={self.model_name}) sẵn sàng trên chuẩn REST v1beta."
+        )
+
+    def _get_async_http_client(self) -> httpx.AsyncClient:
+        loop_id = id(asyncio.get_running_loop())
+        if self._http_client is None or self._http_client.is_closed or self._http_client_loop_id != loop_id:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=4.0, read=12.0, write=6.0, pool=4.0),
+                limits=httpx.Limits(max_keepalive_connections=12, max_connections=24),
+            )
+            self._http_client_loop_id = loop_id
+        return self._http_client
+
+    def _select_ordered_keys_for_request(self) -> List[str]:
+        """Lấy danh sách key xoay vòng Round-Robin, ưu tiên key khỏe mạnh trước, key đang cooldown xếp cuối."""
+        req_extra = request_extra_gemini_keys_ctx.get()
+        all_keys = parse_gemini_api_keys(*req_extra, *self.api_keys, self.api_key)
+        live_keys = [k for k in all_keys if k not in self._dead_keys]
+        if not live_keys:
+            # Nếu tất cả đều từng bị đánh dấu lỗi thì thử lại toàn bộ một vòng để tự phục hồi
+            live_keys = all_keys
+        if not live_keys:
+            return []
+
+        start_idx = self._rr_counter % len(live_keys)
+        self._rr_counter += 1
+        rotated = live_keys[start_idx:] + live_keys[:start_idx]
+
+        now = time.monotonic()
+        healthy = [k for k in rotated if self._key_cooldown_until.get(k, 0.0) <= now]
+        cooling = sorted(
+            [k for k in rotated if self._key_cooldown_until.get(k, 0.0) > now],
+            key=lambda k: self._key_cooldown_until.get(k, 0.0),
+        )
+        return healthy + cooling
+
+    @staticmethod
+    def _ensure_min_vision_image(raw_bytes: bytes, mime_type: str) -> Tuple[bytes, str]:
+        """Đảm bảo ảnh gửi lên Vision có kích thước tối thiểu >= 48x48px tránh lỗi 400 ảnh quá bé."""
+        try:
+            with Image.open(BytesIO(raw_bytes)) as im:
+                w, h = im.size
+                if w >= 48 and h >= 48:
+                    return raw_bytes, mime_type
+                target_w = max(64, w + 24)
+                target_h = max(64, h + 24)
+                canvas = Image.new("RGB", (target_w, target_h), (255, 255, 255))
+                im_rgb = im.convert("RGB")
+                canvas.paste(im_rgb, ((target_w - w) // 2, (target_h - h) // 2))
+                out = BytesIO()
+                canvas.save(out, format="PNG")
+                return out.getvalue(), "image/png"
+        except Exception:
+            return raw_bytes, mime_type
+
+    @staticmethod
+    def _build_v1beta_gen_config(model_name: str, json_mode: bool, max_tokens: int, minimal_thinking: bool = True) -> Dict[str, Any]:
+        cfg: Dict[str, Any] = {
+            "temperature": 0.1,
+            "maxOutputTokens": max_tokens,
+        }
+        if json_mode:
+            cfg["responseMimeType"] = "application/json"
+        if minimal_thinking:
+            m_low = model_name.lower()
+            if "gemini-3" in m_low and "pro" not in m_low:
+                cfg["thinkingConfig"] = {"thinkingLevel": "MINIMAL"}
+            elif "gemini-2.5-flash" in m_low:
+                cfg["thinkingConfig"] = {"thinkingBudget": 0}
+        return cfg
+
+    async def _post_v1beta_with_pool(
+        self,
+        contents_parts: List[Dict[str, Any]],
+        *,
+        json_mode: bool = True,
+        max_tokens: int = 650,
+        timeout: float = 18.0,
+    ) -> str:
+        """
+        Gọi REST v1beta xoay vòng qua toàn bộ API keys & fallback models:
+        - Gặp 429: đưa key hiện tại vào cooldown 45s và đổi sang key kế tiếp ngay lập tức.
+        - Gặp 400 do tham số config (thinkingConfig / responseMimeType): tự hạ về config tối giản ngay trong cùng lượt gọi.
+        - Gặp 404 model không khả dụng: ghi nhớ bỏ qua model đó và sang model kế tiếp.
+        """
+        keys = self._select_ordered_keys_for_request()
+        if not keys:
+            raise RuntimeError("Chưa có API Key Gemini hợp lệ nào trong cấu hình.")
+
+        candidate_models: List[str] = []
+        for m in [
+            self._preferred_model,
+            self.model_name,
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest",
+            *settings.GEMINI_FALLBACK_MODELS,
+        ]:
+            if m and m not in candidate_models and m not in self._unsupported_models:
+                candidate_models.append(m)
+        if not candidate_models:
+            self._unsupported_models.clear()
+            candidate_models = [self.model_name or "gemini-3.5-flash-lite"]
+
+        total_budget = max(6.0, float(timeout or 18.0))
+        deadline = time.perf_counter() + total_budget
+        http_client = self._get_async_http_client()
+        last_err: Optional[Exception] = None
+
+        for mod in candidate_models[:4]:
+            for key in keys:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0.8:
+                    break
+                per_call_timeout = min(remaining, 9.5)
+                url = f"{self.V1BETA_BASE_URL}/{mod}:generateContent"
+
+                # Lần 1: Gửi cấu hình chuẩn (JSON mode + minimal thinking phù hợp từng dòng model)
+                # Lần 2 (chỉ khi dính 400 INVALID_ARGUMENT): Tự gọi lại cấu hình tối giản không thinking/json_mode
+                for strip_advanced in (False, True):
+                    gen_cfg = (
+                        {"temperature": 0.1, "maxOutputTokens": max_tokens}
+                        if strip_advanced
+                        else self._build_v1beta_gen_config(
+                            mod, json_mode=json_mode, max_tokens=max_tokens, minimal_thinking=True
+                        )
+                    )
+                    payload = {
+                        "contents": [{"parts": contents_parts}],
+                        "generationConfig": gen_cfg,
+                    }
+                    try:
+                        resp = await http_client.post(
+                            url,
+                            headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                            json=payload,
+                            timeout=per_call_timeout,
+                        )
+                    except (httpx.TimeoutException, asyncio.TimeoutError) as t_err:
+                        last_err = TimeoutError(f"Model {mod} phản hồi quá {per_call_timeout:.1f}s ({t_err})")
+                        break
+                    except Exception as net_err:
+                        last_err = net_err
+                        break
+
+                    if resp.status_code == 200:
+                        body = resp.json()
+                        cands = body.get("candidates") or []
+                        text_chunks: List[str] = []
+                        if cands:
+                            parts_out = (cands[0].get("content") or {}).get("parts") or []
+                            for p in parts_out:
+                                if isinstance(p, dict) and p.get("text") and not p.get("thought"):
+                                    text_chunks.append(str(p["text"]))
+                        joined = "\n".join(text_chunks).strip()
+                        if joined:
+                            self._preferred_model = mod
+                            self._key_cooldown_until.pop(key, None)
+                            return joined
+                        last_err = RuntimeError(f"Model {mod} trả về nội dung rỗng ({cands[0].get('finishReason') if cands else 'NO_CANDIDATES'})")
+                        if not strip_advanced:
+                            max_tokens = max(max_tokens, 950)
+                            continue
+                        break
+
+                    err_Snippet = resp.text[:220].replace("\n", " ")
+                    if resp.status_code == 429:
+                        # Đưa key này vào trạng thái nghỉ 45s và đổi sang key tiếp theo ngay lập tức!
+                        self._key_cooldown_until[key] = time.monotonic() + 45.0
+                        last_err = RuntimeError(f"429 RESOURCE_EXHAUSTED trên 1 key (đã tự xoay sang key dự phòng)")
+                        logger.warning(f"[Gemini Pool] Key ...{key[-4:]} chạm trần 429 trên {mod}, chuyển sang key tiếp theo.")
+                        break
+
+                    if resp.status_code in (401, 403) or (
+                        resp.status_code == 400 and "API_KEY_INVALID" in err_Snippet
+                    ):
+                        self._dead_keys.add(key)
+                        last_err = RuntimeError(f"API Key ...{key[-4:]} không hợp lệ hoặc bị khóa ({resp.status_code})")
+                        logger.warning(f"[Gemini Pool] Đánh dấu hỏng key ...{key[-4:]}: {err_Snippet[:120]}")
+                        break
+
+                    if resp.status_code == 404:
+                        self._unsupported_models.add(mod)
+                        last_err = RuntimeError(f"Model {mod} không khả dụng (404)")
+                        break
+
+                    if resp.status_code == 400 and not strip_advanced:
+                        logger.info(f"[Gemini v1beta] {mod} từ chối tham số nâng cao (400), tự thử lại cấu hình chuẩn...")
+                        continue
+
+                    last_err = RuntimeError(f"HTTP {resp.status_code} ({mod}): {err_Snippet}")
+                    break
+
+                # Nếu model vừa bị đánh dấu 404 thì thoát sang model kế tiếp luôn
+                if mod in self._unsupported_models:
+                    break
+
+        raise last_err or RuntimeError("Không thể kết nối tới cụm máy chủ Gemini AI.")
+
+    async def generate_text_with_pool(
+        self,
+        prompt: str,
+        *,
+        json_mode: bool = True,
+        max_tokens: int = 700,
+        timeout: float = 10.0,
+    ) -> str:
+        """Hàm dùng chung cho Chấm tự luận AI & Sinh câu hỏi biến thể qua Multi-Key Pool v1beta."""
+        if not self.ensure_configured():
+            return ""
+        if self._client_type == "httpx-v1beta":
+            return await self._post_v1beta_with_pool(
+                [{"text": prompt}],
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+        if self._client_type == "google-generativeai" and self.model is not None:
+            resp = await asyncio.wait_for(asyncio.to_thread(self.model.generate_content, prompt), timeout=timeout)
+            return (resp.text or "").strip()
+        return ""
 
     async def analyze_board(
         self,
@@ -126,18 +447,15 @@ class GeminiAIService:
     ) -> RecognizeCanvasResponse:
         """
         Phân tích ảnh vùng nét vẽ bằng Gemini Vision:
-        - Nếu chưa cấu hình GEMINI_API_KEY: dùng _mock_result() cho chế độ Demo/Test.
-        - Nếu đã cấu hình key nhưng gặp Timeout / 503 / 429 / lỗi mạng:
-          + Retry có Exponential Backoff + Jitter.
-          + Chuyển nhanh sang model fallback (gemini-3.5-flash-lite -> gemini-3.1-flash-lite).
-          + Nếu vẫn lỗi: trả về _error_result() minh bạch, KHÔNG trả công thức giả.
+        - Nếu chưa cấu hình GEMINI_API_KEY (hoặc đang chạy pytest mặc định): dùng _mock_result().
+        - Ở môi trường thực tế: chạy qua Multi-Key Pool REST v1beta tự xoay key & model dự phòng.
         """
         clean_b64 = image_base64.split(",", 1)[1] if "," in image_base64 else image_base64
 
         if not self.is_configured:
             self.ensure_configured()
 
-        if not self.is_configured:
+        if not self.is_configured and not request_extra_gemini_keys_ctx.get():
             logger.info("Gemini API Key chưa cấu hình. Kích hoạt Gemini Mock Engine dự phòng.")
             return self._mock_result(subject, clean_b64)
 
@@ -148,11 +466,29 @@ class GeminiAIService:
                 if image_base64.startswith("data:image/webp") or raw_bytes[:4] == b"RIFF"
                 else "image/png"
             )
-            pil_image = None
             prompt = get_prompt_for_subject(subject=subject, grade_level=grade_level or "THPT")
-
-            raw_text = ""
             total_budget = max(6.0, float(timeout or 18.0))
+
+            if self._client_type == "httpx-v1beta" or (
+                not self._client_type and request_extra_gemini_keys_ctx.get()
+            ):
+                safe_bytes, safe_mime = self._ensure_min_vision_image(raw_bytes, mime_type)
+                b64_payload = base64.b64encode(safe_bytes).decode("ascii")
+                parts = [
+                    {"inlineData": {"mimeType": safe_mime, "data": b64_payload}},
+                    {"text": prompt},
+                ]
+                raw_text = await self._post_v1beta_with_pool(
+                    parts,
+                    json_mode=True,
+                    max_tokens=550 if fast_mode else 800,
+                    timeout=total_budget,
+                )
+                parsed_data = self._parse_json_robust(raw_text, subject=subject)
+                return self._build_validated_response(parsed_data, subject=subject)
+
+            pil_image = None
+            raw_text = ""
             deadline = time.perf_counter() + total_budget
 
             candidate_models: list[str] = []

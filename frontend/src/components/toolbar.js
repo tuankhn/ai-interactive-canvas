@@ -424,15 +424,22 @@ function setupSystemPopoverPositioning() {
     $('clearButton')?.click();
   });
 
-  // Cấu hình nhanh địa chỉ Máy chủ AI Backend khi chạy trên GitHub Pages (.github.io)
+  // Cấu hình nhanh địa chỉ Máy chủ AI Backend & Cụm API Key dự phòng xoay vòng
   const apiInput = $('apiBackendUrlInput');
+  const keysInput = $('geminiApiKeysInput');
   const apiBadge = $('menuApiBadge');
   const apiHint = $('apiBackendHint');
   const syncApiConfigUi = () => {
     const currentBase = window.getAiCanvasApiBase?.() || '';
+    const currentKeys = window.getAiCanvasGeminiKeys?.() || '';
+    const keyCount = currentKeys ? currentKeys.split(',').filter(Boolean).length : 0;
     if (apiInput) apiInput.value = currentBase;
+    if (keysInput) keysInput.value = currentKeys;
     if (apiBadge) {
-      if (currentBase) {
+      if (keyCount > 0) {
+        apiBadge.textContent = `${keyCount} Key`;
+        apiBadge.dataset.state = 'ok';
+      } else if (currentBase) {
         try {
           apiBadge.textContent = new URL(currentBase).host.slice(0, 18);
           apiBadge.dataset.state = 'ok';
@@ -449,25 +456,32 @@ function setupSystemPopoverPositioning() {
 
   $('saveApiBackendBtn')?.addEventListener('click', async () => {
     const saved = window.setAiCanvasApiBase?.(apiInput?.value || '') || '';
+    const savedKeys = window.setAiCanvasGeminiKeys?.(keysInput?.value || '') || '';
+    const keyCount = savedKeys ? savedKeys.split(',').filter(Boolean).length : 0;
     syncApiConfigUi();
-    if (apiHint) apiHint.textContent = 'Đang kiểm tra kết nối /health...';
+    if (apiHint) apiHint.textContent = 'Đang kiểm tra kết nối /api/v1/recognize/providers...';
     try {
-      const res = await fetch('/health', { cache: 'no-store' });
+      const res = await fetch('/api/v1/recognize/providers', { cache: 'no-store' });
       if (res.ok) {
-        if (apiHint) apiHint.textContent = `Đã kết nối thành công tới ${saved || 'máy chủ hiện tại'}!`;
+        const info = await res.json().catch(() => ({}));
+        const poolTotal = info?.gemini?.pool_size ?? keyCount;
+        if (apiHint) {
+          apiHint.textContent = `Đã kết nối (${saved || 'local'}) · Sẵn sàng ${poolTotal} API Key xoay vòng!`;
+        }
         window.dispatchEvent(new CustomEvent('app:class-changed'));
       } else {
         if (apiHint) apiHint.textContent = `Đã lưu (${res.status}) — hãy kiểm tra lại URL Backend.`;
       }
     } catch {
-      if (apiHint) apiHint.textContent = 'Đã lưu URL — máy chủ Cloud đang khởi động hoặc chưa chạy.';
+      if (apiHint) apiHint.textContent = 'Đã lưu cấu hình — máy chủ Cloud đang khởi động hoặc chưa chạy.';
     }
   });
 
   $('resetApiBackendBtn')?.addEventListener('click', () => {
     window.setAiCanvasApiBase?.('');
+    window.setAiCanvasGeminiKeys?.('');
     syncApiConfigUi();
-    if (apiHint) apiHint.textContent = 'Đã khôi phục cấu hình Backend mặc định.';
+    if (apiHint) apiHint.textContent = 'Đã khôi phục cấu hình Backend & Key mặc định của máy chủ.';
   });
 }
 

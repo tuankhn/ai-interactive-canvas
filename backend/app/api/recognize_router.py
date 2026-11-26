@@ -154,6 +154,8 @@ async def get_providers_status():
             "model": settings.GEMINI_MODEL,
             "active_model": ai_recognition_service.gemini.active_model_name,
             "configured": gem_ready,
+            "pool_size": ai_recognition_service.gemini.pool_size,
+            "healthy_keys": ai_recognition_service.gemini.healthy_key_count,
             "status": "ready" if gem_ready else "mock_fallback",
         },
         "mathpix": {
